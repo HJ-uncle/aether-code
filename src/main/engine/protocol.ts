@@ -185,6 +185,12 @@ const REMOTE_CHAT_ROUTES = [
   /^\/api\/v1\/workbench\/clients$/,
   /^\/api\/v1\/workbench\/clients\/[a-zA-Z0-9_-]+\/(?:poll|state|results|disconnect)$/,
   /^\/api\/v1\/chat\/admission\/receipt$/,
+  // Durable Work continuation retries verify the exact predecessor and
+  // request key through this authenticated engine-side receipt. Keep it in
+  // the remote allow-list alongside ordinary admission receipts; otherwise
+  // an unknown ACK leaves the queue stuck in admission-unknown and blocks the
+  // next continuation attempt before its POST can be sent.
+  /^\/api\/v1\/chat\/continuation\/receipt$/,
   /^\/api\/v1\/chat(?:\/cancel)?$/,
   /^\/api\/v1\/utility\/chat$/,
   /^\/api\/v1\/models(?:\/detect-capabilities|\/[a-zA-Z0-9_-]+\/test)?$/,
@@ -209,6 +215,20 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   // import paths, tests and revisions. Renderer-local paths are never resolved.
   if (pathname === '/api/v1/plugins') return method === 'GET' || method === 'POST' ? null : '此插件路径不支持该方法。'
   if (pathname.startsWith('/api/v1/plugins/')) {
+    if (pathname === '/api/v1/plugins/runtime/changes') return method === 'GET' ? null : '插件目录变更订阅仅支持 GET。'
+    if (pathname === '/api/v1/plugins/runtime/events') return method === 'POST' ? null : '插件宿主事件仅支持 POST。'
+    if (pathname === '/api/v1/plugins/runtime/background') return method === 'GET' ? null : '插件后台状态仅支持 GET。'
+    if (pathname === '/api/v1/plugins/project/capabilities') return method === 'GET' ? null : '插件能力目录仅支持 GET。'
+    if (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}\/agent-tools$/.test(pathname)) return method === 'GET' || method === 'PUT' ? null : '插件 Agent 工具仅支持 GET 或 PUT。'
+    if (/^\/api\/v1\/plugins\/(?:[a-z0-9][a-z0-9-]{0,47}|dev\/[a-zA-Z0-9_-]+)\/agents\/[a-zA-Z0-9_-]+\/respond$/.test(pathname)) return method === 'POST' ? null : '插件任务确认仅支持 POST。'
+    if (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}\/permissions$/.test(pathname)) return method === 'PUT' ? null : '插件权限仅支持 PUT。'
+    if (/^\/api\/v1\/plugins\/dev(?:\/|$)/.test(pathname)) {
+      if (/^\/api\/v1\/plugins\/dev\/[a-zA-Z0-9_-]+\/agent-tools$/.test(pathname)) return method === 'GET' || method === 'PUT' ? null : '开发插件 Agent 工具仅支持 GET 或 PUT。'
+      if (/^\/api\/v1\/plugins\/dev\/[a-zA-Z0-9_-]+\/permissions$/.test(pathname)) return method === 'PUT' ? null : '开发插件权限仅支持 PUT。'
+      return method === 'POST' && (pathname === '/api/v1/plugins/dev/open' || /^\/api\/v1\/plugins\/dev\/[a-zA-Z0-9_-]+\/(?:refresh|invoke|close|capabilities\/(?:invoke|stream))$/.test(pathname)) ? null : '此插件开发路径或方法尚未接入远端服务。'
+    }
+    if (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}\/capabilities\/(?:invoke|stream)$/.test(pathname)) return method === 'POST' ? null : '插件能力仅支持 POST。'
+    if (pathname === '/api/v1/plugins/imports/preview-batch') return method === 'POST' ? null : '批量导入预览仅支持 POST。'
     if (/^\/api\/v1\/plugins\/runtime\/apps(?:\/|$)/.test(pathname)) {
       return (method === 'GET' && /^\/api\/v1\/plugins\/runtime\/apps\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname))
         || (method === 'POST' && /^\/api\/v1\/plugins\/runtime\/apps\/[a-z0-9][a-z0-9-]{0,47}\/invoke$/.test(pathname)) ? null : '此插件运行路径或方法尚未接入远端服务。'
@@ -221,7 +241,7 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
       return method === 'GET' && /^\/api\/v1\/plugins\/project\/exports\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname) ? null : '此插件导出路径或方法尚未接入远端服务。'
     }
     const supported = (method === 'GET' && (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname) || /^\/api\/v1\/plugins\/imports\/[a-zA-Z0-9_-]+$/.test(pathname)))
-      || (method === 'POST' && (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}\/(publish|test)$/.test(pathname) || pathname === '/api/v1/plugins/imports/preview' || /^\/api\/v1\/plugins\/imports\/[a-zA-Z0-9_-]+\/install$/.test(pathname)))
+      || (method === 'POST' && (/^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}\/(publish|test)$/.test(pathname) || ['/api/v1/plugins/imports/preview', '/api/v1/plugins/imports/preview-batch'].includes(pathname) || /^\/api\/v1\/plugins\/imports\/[a-zA-Z0-9_-]+\/install$/.test(pathname)))
       || (['PUT', 'PATCH', 'DELETE'].includes(method) && /^\/api\/v1\/plugins\/[a-z0-9][a-z0-9-]{0,47}$/.test(pathname))
       || (method === 'DELETE' && /^\/api\/v1\/plugins\/imports\/[a-zA-Z0-9_-]+$/.test(pathname))
     return supported ? null : '此插件路径或方法尚未接入远端服务。'

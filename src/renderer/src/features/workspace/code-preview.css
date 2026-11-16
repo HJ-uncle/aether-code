@@ -1,4 +1,6 @@
 .work-code-preview {
+  display: flex;
+  flex-direction: column;
   position: relative;
   flex: 1;
   min-width: 0;
@@ -6,6 +8,13 @@
   height: 100%;
   overflow: hidden;
 }
+.work-code-preview__editor { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.work-code-preview__plugin-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.work-code-preview__plugin-status { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 5px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-muted); }
+.work-code-preview__plugin-status [data-severity='error'] { color: var(--danger-fg); }
+.work-code-plugin-mark { background: var(--accent-soft); border-bottom: 1px solid var(--accent); }
+.work-code-plugin-mark--warning { border-bottom-style: dashed; }
+.work-code-plugin-mark--error { border-bottom-color: var(--danger-fg); }
 
 .work-artifact-panel-v2__content:has(> .work-code-preview),
 .work-artifact-panel-v2[data-resource-tab='true'] .work-artifact-panel-v2__content:has(> .work-code-preview) {

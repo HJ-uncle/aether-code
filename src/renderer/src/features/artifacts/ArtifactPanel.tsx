@@ -449,6 +449,7 @@ function ArtifactContent({
           </div>
         ) : (
           <CodePreview key={`${artifact.id}:${readVersion}`} content={content} name={artifact.name}
+            sessionId={sessionId} workspacePath={workspaceRoot}
             path={read.path ?? artifact.path} origin={inResourceTab ? 'workspace' : 'artifact'} reveal={reveal} active={active}
             onSelectionChange={setCodeSelections} onAddToConversation={onAddToConversation ? addCodeReference : undefined} />
         )}

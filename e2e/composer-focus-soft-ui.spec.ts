@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp/composer-focus-soft')
 const token = 'composer-soft-fixture', sessionId = 'work-composer-soft', modelId = 'composer-soft-model'
 const title = '输入框焦点样式核对', remoteRoot = '/remote/composer-soft'
 const errors: string[] = [], mutations: string[] = []

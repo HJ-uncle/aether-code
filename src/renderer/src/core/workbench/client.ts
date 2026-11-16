@@ -10,10 +10,18 @@ import { renderWorkbenchPage } from './render'
 export interface WorkbenchCommand {
   requestId: string; sessionId: string; action: typeof WORKBENCH_ACTIONS[number]; args: { path?: string; line?: number; terminalId?: string; maxLines?: number; page?: number; expectedHash?: string }
   execution: { rootSessionId: string; rootRunId: string; ownerRunId: string }; expiresAt: number
+  hostDelegation?: { kind: 'plugin'; pluginId: string; sessionId: string }
 }
 export interface WorkbenchAdapter {
   context(): Record<string, unknown> | Promise<Record<string, unknown>>
   open(path: string, line: number | undefined, current: () => boolean): Promise<Record<string, unknown>>
+}
+/** Commands arrive from the authenticated engine, with an exact active-receipt check before execution. */
+export function workbenchCommandMatchesSession(command: WorkbenchCommand, sessionId: string): boolean {
+  if (command.sessionId !== sessionId) return false
+  if (command.execution.rootSessionId === sessionId) return true
+  return command.hostDelegation?.kind === 'plugin' && command.hostDelegation.sessionId === sessionId
+    && typeof command.hostDelegation.pluginId === 'string' && command.hostDelegation.pluginId.length > 0
 }
 interface Registration { clientId: string; clientToken: string }
 class WorkbenchRequestError extends Error { constructor(message: string, readonly code?: number) { super(message) } }
@@ -115,7 +123,7 @@ export function useWorkbenchClient(sessionId: string | null, enabled: boolean, m
             let revoked = false
             const commandCurrent = () => !revoked && current() && command.expiresAt > Date.now()
             const state = await send<{ active: boolean }>(`${prefix}/state`, envelope)
-            if (!commandCurrent() || !state.active || command.sessionId !== sessionId || command.execution.rootSessionId !== sessionId) continue
+            if (!commandCurrent() || !state.active || !workbenchCommandMatchesSession(command, sessionId)) continue
             let result: { success: boolean; output: string; metadata: { code: string; operationPerformed: boolean | 'unknown' } }
             // Rendering may outlive the ordinary poll lease. Retain only this
             // command's exact run identity while the original bytes are painted.

@@ -8,6 +8,7 @@ import { hasEncodedPathTraversal } from '@shared/path-safety'
 import { requestOrThrow } from '../engine/client'
 import { assertEngineSource, getEngineSource, getExpectedEngine, isRemoteEngine } from '../engine/source'
 import { assertWorkspaceTarget, captureWorkspaceTarget, type WorkspaceTarget } from './connection'
+import { publishFileMutation } from './file-mutation-events'
 
 function bridge(): Window['aether'] {
   if (!window.aether) throw new Error('IPC 桥未就绪：preload 未加载')
@@ -714,6 +715,7 @@ export async function writeFile(path: string, content: string, target?: SessionF
     await sessionRequest(target.sessionId, target, { method: 'POST', path: '/workspace/file',
       body: { sessionId: target.sessionId, path: relative, content }, expectedEngine: target.expectedEngine })
     assertSessionFileTarget(target)
+    publishFileMutation({ source: target.source, sessionId: target.sessionId, workspacePath: target.root, path, operation: 'write' })
     const result = await sessionRequest<{ isDirectory: boolean; size: number; mtime?: number; mtimeMs?: number }>(target.sessionId, target, {
       method: 'GET', path: '/workspace/file/info', query: { sessionId: target.sessionId, path: relative }, expectedEngine: target.expectedEngine })
     assertSessionFileTarget(target)
@@ -743,13 +745,16 @@ async function mutate(path: string, route: string, target?: SessionFileTarget): 
     body: { ...scope(context.target), path: remoteWorkspaceRelativePath(context, path) } })
 }
 export function createFile(path: string, target?: SessionFileTarget): Promise<void> {
-  return target || isRemoteEngine() ? mutate(path, '/workspace/file/create', target) : bridge().fs.createFile(path)
+  const result = target || isRemoteEngine() ? mutate(path, '/workspace/file/create', target) : bridge().fs.createFile(path)
+  return result.then(() => { if (target) publishFileMutation({ source: target.source, sessionId: target.sessionId, workspacePath: target.root, path, operation: 'create' }) })
 }
 export function createFolder(path: string, target?: SessionFileTarget): Promise<void> {
-  return target || isRemoteEngine() ? mutate(path, '/workspace/folder/create', target) : bridge().fs.createFolder(path)
+  const result = target || isRemoteEngine() ? mutate(path, '/workspace/folder/create', target) : bridge().fs.createFolder(path)
+  return result.then(() => { if (target) publishFileMutation({ source: target.source, sessionId: target.sessionId, workspacePath: target.root, path, operation: 'mkdir' }) })
 }
 export function trash(path: string, target?: SessionFileTarget): Promise<void> {
-  return target || isRemoteEngine() ? mutate(path, '/workspace/file/trash', target) : bridge().fs.trash(path)
+  const result = target || isRemoteEngine() ? mutate(path, '/workspace/file/trash', target) : bridge().fs.trash(path)
+  return result.then(() => { if (target) publishFileMutation({ source: target.source, sessionId: target.sessionId, workspacePath: target.root, path, operation: 'delete' }) })
 }
 async function transfer(src: string, dest: string, route: string, target?: SessionFileTarget): Promise<void> {
   if (target) {
@@ -768,12 +773,14 @@ async function transfer(src: string, dest: string, route: string, target?: Sessi
   } })
 }
 export function rename(src: string, dest: string, target?: SessionFileTarget): Promise<void> {
-  return target || isRemoteEngine() ? transfer(src, dest, '/workspace/file/move', target) : bridge().fs.rename(src, dest)
+  const result = target || isRemoteEngine() ? transfer(src, dest, '/workspace/file/move', target) : bridge().fs.rename(src, dest)
+  return result.then(() => { if (target) publishFileMutation({ source: target.source, sessionId: target.sessionId, workspacePath: target.root, path: dest, previousPath: src, operation: 'move' }) })
 }
 export function copy(src: string, dest: string, target?: SessionFileTarget): Promise<void> {
   // Server-side copy preserves all bytes, hidden children and metadata. Never
   // reconstruct a copied file from editor preview content.
-  return target || isRemoteEngine() ? transfer(src, dest, '/workspace/file/copy', target) : bridge().fs.copy(src, dest)
+  const result = target || isRemoteEngine() ? transfer(src, dest, '/workspace/file/copy', target) : bridge().fs.copy(src, dest)
+  return result.then(() => { if (target) publishFileMutation({ source: target.source, sessionId: target.sessionId, workspacePath: target.root, path: dest, previousPath: src, operation: 'copy' }) })
 }
 
 function sanitizeAttachmentName(name: string): string {

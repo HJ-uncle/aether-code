@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type QueueAttachmentReceipt } from '../shared/next-turn-queue'
+import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type QueueAttachmentReceipt, type QueueContinuationTarget } from '../shared/next-turn-queue'
 import { assertQueueEnvelope, assertQueueJsonValue, queueResourcesAfterDraftEdit, queueDraftRemovesToolkit } from '../shared/next-turn-queue-state'
 import { parseSessionToolkits } from '../shared/toolkits'
 import type { SessionQueueDraft, SessionQueueTarget } from '../shared/session-next-turn-api'
@@ -16,7 +16,7 @@ import { assertAllowed } from './fs/file-service'
 import { ATTACHMENTS_DIRECTORY } from '../shared/attachments'
 import { buildAgentMentionMessage } from '../renderer/src/features/conversation/shared/agent-references'
 import { collaboratorIdentity } from '../shared/builtin-agents'
-import { canonicalAdmissionJson, parseAdmissionContext, parseExactAdmission, type AdmissionContext } from './next-turn-admission-protocol'
+import { canonicalAdmissionJson, parseAdmissionContext, parseExactAdmission, parseExactContinuation, isFrozenContinuation, type AdmissionContext } from './next-turn-admission-protocol'
 import { remapQueueAttachmentReferences } from '../shared/queue-attachment-references'
 
 interface LeaseFacts { target: SessionQueueTarget; signal: AbortSignal }
@@ -87,10 +87,12 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     return { facts, context }
   }
   async context(scope: NextTurnQueueScope): Promise<AdmissionContext> { return (await this.scoped(scope)).context }
-  async recoveryEnvelope(scope: NextTurnQueueScope, runId: string): Promise<NextTurnQueueEnvelope> {
+  async recoveryEnvelope(scope: NextTurnQueueScope, target: QueueContinuationTarget): Promise<NextTurnQueueEnvelope> {
+    const { runId } = target
     const { facts, context } = await this.scoped(scope)
-    if (scope.owner !== 'work' || !context.root || context.root.runId !== runId || !['failed', 'interrupted'].includes(context.root.status))
-      fail('只能继续当前失败或中断的任务，请先同步任务状态')
+    if (scope.owner !== 'work' || !context.root || context.root.runId !== runId || context.root.attemptId !== target.attemptId ||
+      context.root.version !== target.version || context.root.turnId !== target.turnId || !['cancelled', 'failed', 'interrupted', ...(target.childRunId ? ['succeeded'] : [])].includes(context.root.status))
+      fail('只能继续当前已停止、失败或中断的任务，请先同步任务状态')
     const value = await this.request<unknown>(facts, 'GET', '/chat/runs', undefined, { sessionId: scope.taskId })
     const runs = value && typeof value === 'object' && 'runs' in value ? value.runs : undefined
     if (!Array.isArray(runs)) fail('未取得原任务的运行配置，请同步后重试')
@@ -117,8 +119,8 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     if (memory !== undefined && !['off', 'session', 'global'].includes(String(memory))) fail('原任务的记忆配置无效')
     const root = context.root.workspacePaths[0]
     const envelope: NextTurnQueueEnvelope = {
-      recovery: { runId },
-      draft: { revision: 1, mentions: [], text: '继续本会话中尚未完成的任务，保留已经完成的工作。先检查现有文件、任务计划和已保存结果；中断前缺少结果回执的工具可能已经执行，请先核实实际状态，再决定是否重试。只补充未完成的操作，避免重复写入、启动命令、创建协作任务或执行外部操作。完成后交付本次任务的最终结果。' },
+      recovery: { ...target },
+      draft: { revision: 1, mentions: [], text: '' },
       model: context.root.modelId ? { kind: 'explicit', modelId: context.root.modelId } : { kind: 'engine-default' },
       workspace: { kind: scope.source.mode === 'remote' ? 'remote-session' : root ? 'local-workspace' : 'local-scratch', identity: root || 'session:' + scope.taskId },
       agent: { primaryAgentId: context.root.agentId ?? null, collaborators: [] },
@@ -248,8 +250,17 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     assertQueueEnvelope(envelope, scope)
     const { facts, context: current } = await this.scoped(scope)
     if (!current.root || canonicalAdmissionJson(current.predecessor) !== canonicalAdmissionJson(context.predecessor)) fail('上一轮状态已变化，稍后重试')
-    if (envelope.recovery && (current.root.runId !== envelope.recovery.runId || !['failed', 'interrupted'].includes(current.root.status)))
-      fail('待恢复的任务已变化，请同步当前任务后重试')
+    if (envelope.recovery) {
+      const target = envelope.recovery
+      if (!target.attemptId || !target.turnId || current.root.runId !== target.runId || current.root.attemptId !== target.attemptId ||
+        current.root.version !== target.version || current.root.turnId !== target.turnId || !['cancelled', 'failed', 'interrupted', ...(target.childRunId ? ['succeeded'] : [])].includes(current.root.status))
+        fail('待继续的执行已变化，请同步当前任务后重试')
+      // The engine restores its immutable request. No synthetic message, attachment
+      // replay or renderer-controlled settings are part of continuation authority.
+      return { sessionId: scope.taskId, continuation: { protocolVersion: 1, namespace: scope.namespace,
+        owner: scope.owner, predecessor: current.predecessor, turnId: target.turnId,
+        ...(target.childRunId ? { childRunId: target.childRunId } : {}) } }
+    }
     if (scope.owner === 'work' && ((current.root.agentId ?? null) !== envelope.agent.primaryAgentId || (current.root.workspacePaths[0] || 'session:' + scope.taskId) !== envelope.workspace.identity)) fail('任务的 Agent 或工作区绑定已变化，未投递队列消息')
     const paths = current.root.workspacePaths
     if (scope.source.mode === 'embedded') for (const path of paths) this.port.allowed(path)
@@ -288,9 +299,6 @@ export class EngineQueueGateway implements QueueDispatchGateway {
     }))
     const final = scope.source.mode === 'remote' ? await this.port.remoteBody(body, { baseUrl: facts.target.baseUrl,
       headers: await this.port.headers(facts.target.baseUrl, this.profile), signal: AbortSignal.any([facts.signal, this.controller.signal]), configuredRoot: '', target: facts.target }) : body
-    // The remote renderer sanitizer intentionally drops metadata. Install only
-    // this main-owned recovery evidence after it, before freezing the digest.
-    if (envelope.recovery) { final.inheritContext = true; final.metadata = { workRecovery: { runId: envelope.recovery.runId } } }
     if (canonicalAdmissionJson(final.workspacePaths ?? []) !== canonicalAdmissionJson(paths)) fail('远端工作区已变化，未发送排队消息')
     this.assertFacts(facts); return final
   }
@@ -307,7 +315,8 @@ export class EngineQueueGateway implements QueueDispatchGateway {
   }
   async receipt(scope: NextTurnQueueScope, entry: Exclude<import('../shared/next-turn-queue').NextTurnQueueEntry, { phase: 'pending' }>) {
     const { facts } = await this.scoped(scope)
-    return parseExactAdmission(await this.request(facts, 'POST', '/chat/admission/receipt', { sessionId: scope.taskId, namespace: scope.namespace,
+    const continuation = isFrozenContinuation(entry.frozen)
+    return (continuation ? parseExactContinuation : parseExactAdmission)(await this.request(facts, 'POST', continuation ? '/chat/continuation/receipt' : '/chat/admission/receipt', { sessionId: scope.taskId, namespace: scope.namespace,
       requestKey: entry.frozen.requestKey, bodyDigest: entry.frozen.bodyDigest }), scope, entry.frozen)
   }
 }

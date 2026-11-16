@@ -23,6 +23,8 @@ import { syncSessionFileOperation } from './resource-store'
 import { WorkspaceSearch } from './WorkspaceSearch'
 import { collapseSessionFilterRows, scanSessionFileDirectories, SESSION_FILTER_SKIP_DIRS, type SessionFileScan } from './file-filter'
 import type { TextPreviewReveal } from '@renderer/core/editor/TextPreview'
+import { useExtensionMenuItems } from '../extensions'
+import { extensionIcon } from '@renderer/app/navigation'
 import './workspace-panel.css'
 
 export interface SessionFileRevealRequest {
@@ -128,6 +130,8 @@ export function WorkspacePanel({ sessionId, workspaceRoot, active = true, reveal
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
   const [menu, setMenu] = useState<WorkspaceMenu | null>(null)
+  const pluginMenu = useExtensionMenuItems('file.context', { sessionId, workspacePath: target?.root ?? workspaceRoot, engineReady: ready,
+    filePath: menu?.owner === requestKey ? menu.entry?.path ?? target?.root : undefined })
   const menuRevision = useRef(0)
   const [nameAction, setNameAction] = useState<{ owner: string; revision: number; action: NameAction } | null>(null)
   const nameRevision = useRef(0)
@@ -764,6 +768,8 @@ export function WorkspacePanel({ sessionId, workspaceRoot, active = true, reveal
       hint: target.expectedEngine?.mode === 'remote' ? '远端文件' : undefined, onSelect: () => void revealFile(entry.path) })
     if (selected.length) items.push({ id: 'delete', label: selected.length > 1 ? `删除 ${selected.length} 项` : '删除', separatorBefore: true, hint: 'Delete', danger: true, disabled: busy, onSelect: () => void deletePaths(selected) })
     items.push({ id: 'refresh', label: '刷新', separatorBefore: true, disabled: busy, onSelect: () => void refresh() })
+    items.push(...pluginMenu.map((item, index) => ({ ...item, separatorBefore: index === 0, disabled: busy || item.disabled,
+      icon: item.icon ? <Icon name={extensionIcon(item.icon)} size={14} /> : undefined })))
     return items
   }
 

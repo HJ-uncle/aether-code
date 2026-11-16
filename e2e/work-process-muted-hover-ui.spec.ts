@@ -51,7 +51,7 @@ addTool('muted-read', 'read_file', { files: paths.map(path => ({ path })) }, { b
 addTool('muted-write', 'write_file', { path: change.path, content: change.newContent }, '文件已创建', { change })
 addTool('muted-child', 'subagent_start', { builtinRole: 'research', task: child.task }, { started: true, runId: child.runId }, { subagent: child })
 addTool('muted-child-2', 'subagent_start', { builtinRole: 'research', task: secondChild.task }, { started: true, runId: secondChild.runId }, { subagent: secondChild })
-// Identical adjacent directory receipts exercise the ordinary grouped target too.
+// Adjacent directory receipts retain individual targets inside the stage disclosure.
 addTool('muted-directory-1', 'list_directory', { path: directory }, { entries: ['review.ts'] })
 addTool('muted-directory-2', 'list_directory', { path: directory }, { entries: ['review.ts'] })
 history.push({ id: run.assistantMessageId, role: 'assistant', content: finalAnswer, createdAt: now + 20, conversationId: run.turnId, metadata })
@@ -123,6 +123,11 @@ async function prepare(width = 1440): Promise<void> {
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
   const toggle = page.locator('.work-conversation .work-message__process-toggle')
   if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+  await expect(page.locator('.work-process-section__toggle')).toHaveCount(1)
+  for (const section of await page.locator('.work-process-section__toggle').all()) {
+    if (await section.getAttribute('aria-expanded') !== 'true') await section.click()
+    await expect(section).toHaveAttribute('aria-expanded', 'true')
+  }
   await expect(page.locator('[data-work-tool-id="muted-read"] button.logline')).toBeVisible()
   const scroll = page.locator('.work-conversation__scroll')
   // The conversation follows layout changes until a real reading gesture pauses
@@ -135,6 +140,7 @@ async function prepare(width = 1440): Promise<void> {
   await scroll.evaluate(element => { element.scrollTop = 0 })
   await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBe(0)
   await page.locator('.work-message__process-viewport').evaluate(element => { element.scrollTop = 0 })
+  await page.locator('.work-process-section__viewport').evaluateAll(elements => { for (const element of elements) element.scrollTop = 0 })
   await expect.poll(() => batchHeader().evaluate(element => element.getBoundingClientRect().top)).toBeGreaterThan(174)
 }
 function batchHeader(): Locator { return page.locator('[data-work-tool-id="muted-read"] button.logline') }
@@ -241,11 +247,12 @@ test('明暗主题：文件、任务、新文件和普通目标使用 muted，�
     const files = page.locator('[data-work-tool-id="muted-read"] .logline__file-name')
     await expect(files).toHaveText(paths.map(path => path.split('/').at(-1)!))
     const newFile = page.locator('.work-file-change-row__name'), tasks = page.locator('.work-subagent-card--compact .work-subagent-card__name')
-    const target = page.locator('.work-activity-group__target')
+    const targets = page.locator('[data-work-tool-id^="muted-directory-"] .logline__summary')
     await expect(newFile).toHaveText('new-review.ts'); await expect(tasks).toHaveText(['交互调研', '结果核对'])
     await expect(page.locator('.work-file-change-row__action')).toHaveText('新建文件')
-    await expect(target).toContainText('ordinary-target')
-    for (const item of [...await files.all(), newFile, ...await tasks.all(), target]) await expect(item).toHaveCSS('color', colors.muted)
+    await expect(targets).toHaveCount(2)
+    for (const target of await targets.all()) await expect(target).toContainText('ordinary-target')
+    for (const item of [...await files.all(), newFile, ...await tasks.all(), ...await targets.all()]) await expect(item).toHaveCSS('color', colors.muted)
     const body = page.locator('.work-message__answer').getByText(answer, { exact: true })
     await expect(body).toBeVisible(); await expect(body).toHaveCSS('color', colors.foreground)
     await expect(page.locator('.work-file-change-row__stats')).toHaveAttribute('aria-label', '新增 1 行，删除 0 行')

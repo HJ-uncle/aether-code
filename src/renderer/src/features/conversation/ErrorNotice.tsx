@@ -29,7 +29,7 @@ type ErrorNoticeProps = {
 
 export function ErrorNotice({
   error, context, className = '', onRetry, retryLabel, compact = false, onEdit,
-  busy = false, busyLabel = '正在重启…', recoveryError = '', resolved = false
+  busy = false, busyLabel = '正在继续…', recoveryError = '', resolved = false
 }: ErrorNoticeProps): JSX.Element | null {
   const presentation = useMemo(() => presentSessionError(error, context), [error, context])
   const [open, setOpen] = useState(false)

@@ -370,8 +370,14 @@ export function assertQueueEnvelope(
     'envelope'
   )
   if (envelope.recovery !== undefined) {
-    const recovery = object(envelope.recovery, ['runId'], 'task recovery')
+    const recovery = object(envelope.recovery, ['runId', 'attemptId', 'version', 'turnId', 'childRunId'], 'task recovery')
     string(recovery.runId, 'recovery run')
+    if (recovery.attemptId !== undefined || recovery.version !== undefined || recovery.turnId !== undefined) {
+      string(recovery.attemptId, 'recovery attempt')
+      string(recovery.turnId, 'recovery turn')
+      integer(recovery.version, 'recovery version', 1)
+    }
+    if (recovery.childRunId !== undefined) string(recovery.childRunId, 'recovery child')
     if (scope.owner !== 'work') fail('Only Work owns task recovery')
   }
   if (envelope.submissionDigest !== undefined && (typeof envelope.submissionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(envelope.submissionDigest))) fail('Enqueue submission digest is invalid')
@@ -481,7 +487,7 @@ export function assertQueueEnvelope(
       fail('Attachment receipt/digest is invalid or duplicated')
     attachmentIds.add(attachment.receiptId)
   }
-  if (!draft.text.trim() && !envelope.attachments.length)
+  if (!draft.text.trim() && !envelope.attachments.length && !envelope.recovery)
     fail('Queue entry must contain text or an attachment')
   if (envelope.recovery !== undefined && (draft.mentions.length || agent.collaborators.length || envelope.attachments.length))
     fail('Task recovery cannot replay attachments or delegated tools')
@@ -592,11 +598,12 @@ export function assertQueueState(
     }
     const receipt = object(
       entry.receipt,
-      ['runId', 'turnId', 'userMessageId', 'assistantMessageId'],
+      ['runId', 'turnId', 'userMessageId', 'assistantMessageId', 'attemptId'],
       'accepted receipt'
     )
     for (const name of ['runId', 'turnId', 'userMessageId', 'assistantMessageId'])
       string(receipt[name], 'accepted ' + name)
+    if (receipt.attemptId !== undefined) string(receipt.attemptId, 'accepted attempt')
     if (entry.startedAt !== undefined) integer(entry.startedAt, 'confirmed execution start', 1)
     if (entry.phase === 'terminal')
       oneOf(entry.outcome, ['succeeded', 'failed', 'cancelled', 'interrupted'], 'terminal outcome')

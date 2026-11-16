@@ -1,7 +1,7 @@
 /** Real Electron + authenticated HTTP/SSE: a root turn's running process and
  * thinking choices must not pin its completed process open. Covers waiting,
  * repeated activity reveal, complete command argv, failed receipts, settled reading, later turns and
- * offscreen completion, contextual thinking controls and the compact answer
+ * offscreen completion, persistent conversation thinking visibility and the compact answer
  * footer. Build first; this owns a profile and ephemeral port and
  * must run with workers: 1 because Electron holds a single-instance lock. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -23,8 +23,8 @@ const admissions = new Map<string, { admission: Record<string, unknown>; run: Ro
 type FooterRect = { x: number; y: number; width: number; height: number; opacity: number }
 type FooterGeometry = Record<'row' | 'usage' | 'copy' | 'regenerate' | 'body' | 'composer', FooterRect>
 const footerGeometry: Array<{ label: string; frames: FooterGeometry[] }> = []
-type ThinkingMotionFrame = { state: string | null; opacity: number; x: number; y: number; inert: boolean; hidden: boolean }
-const thinkingMotion: Array<{ show: boolean; frames: Array<ThinkingMotionFrame | null> }> = []
+const thinkingPreferences: Array<{ visible: boolean; chatRequests: number }> = []
+let thinkingVisible = false
 let current: RootRun | undefined, activeStream: ServerResponse | undefined
 let nextRun = 0, mutationRevision = 0
 let app: ElectronApplication | undefined, page: Page, fixture = ''
@@ -205,11 +205,12 @@ const work = (): Locator => page.locator('.work-view')
 const conversation = (): Locator => work().getByRole('region', { name: '协作对话', exact: true })
 const turn = (ordinal: number): Locator => conversation().locator('.work-conversation-turn').filter({ hasText: prompts[ordinal - 1] })
 const toggle = (ordinal: number): Locator => turn(ordinal).locator('.work-message__process-toggle')
-const thinking = (ordinal: number): Locator => turn(ordinal).locator('.work-message__thinking-toggle')
+const thinking = (ordinal: number): Locator => turn(ordinal).locator('.work-message__thinking')
 const receipt = (ordinal: number): Locator => turn(ordinal).locator(`[data-work-tool-id="${toolId(ordinal)}"]`)
 async function expectProcess(ordinal: number, open: boolean): Promise<void> {
   await expect(toggle(ordinal)).toHaveCount(1)
   await expect(toggle(ordinal)).toHaveAttribute('aria-expanded', String(open))
+  await expect(turn(ordinal).locator('.work-message__thinking-toggle')).toHaveCount(0)
   const process = turn(ordinal).locator('.work-message__process')
   const notes = process.locator('.work-message__process-note')
   const initialNote = notes.filter({ hasText: `LIFECYCLE_PROCESS_${ordinal}：` })
@@ -232,98 +233,46 @@ async function expectProcess(ordinal: number, open: boolean): Promise<void> {
       return Boolean(note.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING)
     })).toBe(true)
     await expect(process).not.toContainText(finalText(ordinal))
-    await expect(thinking(ordinal)).toBeVisible()
-    await expect(thinking(ordinal)).toHaveAttribute('data-motion-state', 'open')
-    await expect(thinking(ordinal)).toHaveCSS('opacity', '1')
-    await expect(thinking(ordinal)).toHaveCSS('translate', 'none')
-    const positions = await turn(ordinal).locator('.work-message__process-bar').evaluate(bar => {
-      const process = bar.querySelector('.work-message__process-toggle')!.getBoundingClientRect()
-      const thinking = bar.querySelector('.work-message__thinking-toggle')!.getBoundingClientRect()
-      return { gap: thinking.left - process.right, centerDelta: Math.abs(thinking.top + thinking.height / 2 - process.top - process.height / 2) }
-    })
-    expect(positions.gap).toBeGreaterThanOrEqual(0)
-    expect(positions.gap).toBeLessThanOrEqual(16)
-    expect(positions.centerDelta).toBeLessThanOrEqual(2)
+    await expect(thinking(ordinal)).toHaveCount(thinkingVisible ? 1 : 0)
   } else {
     await expect(receipt(ordinal)).toBeHidden()
     await expect(notes).toHaveCount(0)
     await expect(turn(ordinal)).not.toContainText(`LIFECYCLE_PROCESS_${ordinal}：`)
     await expect(turn(ordinal)).not.toContainText('LIFECYCLE_RESUMED')
-    // Thinking is a control inside the open process, never a second entry
-    // beside a collapsed process or an extra keyboard stop outside it.
     await expect(thinking(ordinal)).toHaveCount(0)
   }
 }
-async function sampleThinkingMotion(ordinal: number, show: boolean): Promise<Array<ThinkingMotionFrame | null>> {
-  const frames = await turn(ordinal).locator('.work-message__process-bar').evaluate((bar, show) => new Promise<Array<ThinkingMotionFrame | null>>((resolve, reject) => {
-    const trigger = bar.querySelector<HTMLButtonElement>('.work-message__process-toggle')!
-    const samples: Array<ThinkingMotionFrame | null> = []
-    let settled = 0
-    const sample = (): void => {
-      const button = bar.querySelector<HTMLButtonElement>('.work-message__thinking-toggle')
-      let frame: ThinkingMotionFrame | null = null
-      if (button) {
-        const style = getComputedStyle(button), translate = style.translate === 'none' ? [0, 0] : style.translate.split(' ').map(parseFloat)
-        frame = { state: button.dataset.motionState ?? null, opacity: Number(style.opacity), x: translate[0], y: translate[1] ?? 0,
-          inert: button.inert, hidden: button.getAttribute('aria-hidden') === 'true' }
-      }
-      samples.push(frame)
-      const finished = show ? frame?.state === 'open' && !button!.getAnimations().some(animation => animation.playState === 'running' || animation.pending) : !button
-      settled = finished ? settled + 1 : 0
-      if (settled >= 3) resolve(samples)
-      else if (samples.length >= 120) reject(new Error('Thinking switch animation did not settle'))
-      else requestAnimationFrame(sample)
-    }
-    trigger.click()
-    requestAnimationFrame(sample)
-  }), show)
-  thinkingMotion.push({ show, frames })
-  return frames
-}
-async function expectThinkingMotion(ordinal: number): Promise<void> {
-  await page.emulateMedia({ reducedMotion: 'no-preference' })
-  for (const show of [false, true]) {
-    const frames = await sampleThinkingMotion(ordinal, show)
-    const visible = frames.filter((frame): frame is ThinkingMotionFrame => frame !== null)
-    expect(visible.some(frame => frame.opacity > 0 && frame.opacity < 1)).toBe(true)
-    expect(visible.some(frame => frame.x < -0.1)).toBe(true)
-    expect(visible.every(frame => Math.abs(frame.y) < 0.01)).toBe(true)
-    if (!show) {
-      const closing = visible.filter(frame => frame.state === 'closing')
-      expect(closing.length).toBeGreaterThan(0)
-      expect(closing.every(frame => frame.inert && frame.hidden)).toBe(true)
-      expect(frames.at(-1)).toBeNull()
-    } else expect(frames.at(-1)).toMatchObject({ state: 'open', opacity: 1, x: 0, y: 0, inert: false, hidden: false })
+async function setThinkingVisibility(visible: boolean, keyboard = false): Promise<void> {
+  await conversation().getByRole('button', { name: '对话偏好', exact: true }).click()
+  const preferences = page.getByRole('dialog', { name: '对话偏好', exact: true })
+  const control = preferences.getByRole('switch', { name: '显示思考', exact: true })
+  await expect(control).toHaveAttribute('aria-checked', String(thinkingVisible))
+  const requests = chats.length
+  if (visible !== thinkingVisible) {
+    if (keyboard) { await control.focus(); await page.keyboard.press('Space') }
+    else await control.click()
   }
-  // Reverse during the retained exit, then observe beyond the old exit's
-  // deadline so a stale dismissal cannot pass an immediate positive assertion.
-  const reversal = await turn(ordinal).locator('.work-message__process-bar').evaluate(bar => new Promise<{ closing: boolean; missingAfterReopen: boolean }>(resolve => {
-    const trigger = bar.querySelector<HTMLButtonElement>('.work-message__process-toggle')!
-    const exitMs = parseFloat(getComputedStyle(bar).getPropertyValue('--motion-exit'))
-    trigger.click()
-    requestAnimationFrame(() => {
-      const closing = bar.querySelector<HTMLElement>('.work-message__thinking-toggle')?.dataset.motionState === 'closing'
-      trigger.click()
-      const start = performance.now()
-      let missingAfterReopen = false
-      const sample = (): void => {
-        missingAfterReopen ||= !bar.querySelector('.work-message__thinking-toggle')
-        if (performance.now() - start > exitMs + 80) resolve({ closing, missingAfterReopen })
-        else requestAnimationFrame(sample)
-      }
-      requestAnimationFrame(sample)
-    })
-  }))
-  expect(reversal).toEqual({ closing: true, missingAfterReopen: false })
-  await expectProcess(ordinal, true)
+  await expect(control).toHaveAttribute('aria-checked', String(visible))
+  thinkingVisible = visible
+  await preferences.getByRole('button', { name: '关闭对话偏好', exact: true }).click()
+  await expect(preferences).toHaveCount(0)
+  expect(chats.length).toBe(requests)
+  thinkingPreferences.push({ visible, chatRequests: chats.length })
+}
+async function expectThinkingPreference(ordinal: number): Promise<void> {
+  await expect(thinking(ordinal)).toHaveCount(0)
+  await setThinkingVisibility(true, true)
+  await expect(thinking(ordinal)).toBeVisible()
+  await toggle(ordinal).click(); await expectProcess(ordinal, false)
+  await toggle(ordinal).click(); await expectProcess(ordinal, true)
+  await setThinkingVisibility(false, true)
+  await expect(thinking(ordinal)).toHaveCount(0)
   try {
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    await toggle(ordinal).click(); await expect(thinking(ordinal)).toHaveCount(0)
-    await toggle(ordinal).click()
-    await expect(thinking(ordinal)).toHaveAttribute('data-motion-state', 'open')
-    await expect(thinking(ordinal)).toHaveCSS('transition-duration', '0s')
-    await expect(thinking(ordinal)).toHaveCSS('translate', 'none')
-    await expect(thinking(ordinal)).toHaveCSS('opacity', '1')
+    await setThinkingVisibility(true)
+    await expect(thinking(ordinal)).toBeVisible()
+    await setThinkingVisibility(false)
+    await expect(thinking(ordinal)).toHaveCount(0)
   } finally { await page.emulateMedia({ reducedMotion: 'no-preference' }) }
 }
 async function sendNext(ordinal: number): Promise<void> {
@@ -454,7 +403,7 @@ test.afterEach(async ({}, info) => {
     await page.screenshot({ path }); await info.attach('过程状态失败窗口', { path, contentType: 'image/png' })
   }
   const path = info.outputPath('work-process-receipts.json')
-  writeFileSync(path, JSON.stringify({ chats, roots, events, truncateCalls, fileReverts, footerGeometry, thinkingMotion, errors }, null, 2))
+  writeFileSync(path, JSON.stringify({ chats, roots, events, truncateCalls, fileReverts, footerGeometry, thinkingPreferences, errors }, null, 2))
   await info.attach('轮次状态与真实传输记录', { path, contentType: 'application/json' })
   expect(errors).toEqual([])
 })
@@ -477,29 +426,29 @@ test.afterAll(async () => {
   }
 })
 
-test('Work process folds on completion and preserves only the current phase’s reading choices', async ({}, info) => {
+test('Work process folds on completion while conversation thinking visibility survives phases and remounts', async ({}, info) => {
   await test.step('running choices survive waiting and repeated explicit activity reveal', async () => {
     await work().getByRole('button', { name: '新任务', exact: true }).click()
     await work().getByRole('textbox', { name: '任务目标', exact: true }).fill(prompts[0])
     await work().getByRole('button', { name: '开始任务', exact: true }).click()
     await expect.poll(() => roots.length).toBe(1)
     await expectProcess(1, true)
-    await expectThinkingMotion(1)
+    await expectThinkingPreference(1)
     await toggle(1).click(); await expectProcess(1, false)
     await toggle(1).click(); await expectProcess(1, true)
-    await thinking(1).click(); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await setThinkingVisibility(true); await expect(thinking(1)).toBeVisible()
     await turn(1).locator('.work-message__thinking .logline').click()
     await expect(turn(1).locator('.logline__detail--thinking')).toContainText('LIFECYCLE_THINKING_1')
     await toggle(1).click(); await expectProcess(1, false)
     await expect(turn(1).locator('.logline__detail--thinking')).toBeHidden()
     await toggle(1).click(); await expectProcess(1, true)
-    await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await expect(thinking(1)).toBeVisible()
     await expect(turn(1).locator('.logline__detail--thinking')).toContainText('LIFECYCLE_THINKING_1')
 
     requestPermission()
     const pending = conversation().locator('.work-pending')
     await expect(pending).toContainText('LIFECYCLE_PERMISSION')
-    await expectProcess(1, true); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await expectProcess(1, true); await expect(thinking(1)).toBeVisible()
     await pending.getByRole('button', { name: '拒绝', exact: true }).click()
     await expect.poll(() => chats.length).toBe(2)
     expect(chats[1].toolResponse).toMatchObject({ requestId: 'lifecycle-permission', output: 'rejected' })
@@ -512,7 +461,7 @@ test('Work process folds on completion and preserves only the current phase’s 
       if (!tool) throw new Error('Missing tool before the resumed process note')
       return Boolean(tool.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING)
     })).toBe(true)
-    await expectProcess(1, true); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await expectProcess(1, true); await expect(thinking(1)).toBeVisible()
     for (let request = 0; request < 2; request++) {
       await toggle(1).click(); await expectProcess(1, false)
       await conversation().getByRole('button', { name: '查看正在执行的活动', exact: true }).click()
@@ -575,12 +524,12 @@ test('Work process folds on completion and preserves only the current phase’s 
     await page.screenshot({ path: narrowPath }); await info.attach('窄窗口回复底部无溢出', { path: narrowPath, contentType: 'image/png' })
     await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 1000))
     await toggle(1).click(); await expectProcess(1, true)
-    await expect(thinking(1)).toHaveAttribute('aria-pressed', 'false')
-    await thinking(1).click(); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await expect(thinking(1)).toBeVisible()
+    await setThinkingVisibility(true); await expect(thinking(1)).toBeVisible()
     await toggle(1).click(); await expectProcess(1, false)
     await toggle(1).click(); await expectProcess(1, true)
-    await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
-    await expectProcess(1, true); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await expect(thinking(1)).toBeVisible()
+    await expectProcess(1, true); await expect(thinking(1)).toBeVisible()
     await expect(turn(1).getByText(finalText(1), { exact: true })).toBeVisible()
   })
 
@@ -626,14 +575,14 @@ test('Work process folds on completion and preserves only the current phase’s 
     complete()
     await expectProcess(2, false); await expect(toggle(2)).toContainText('1 步未通过')
     await expect(turn(2).getByText(finalText(2), { exact: true })).toBeVisible()
-    await expectProcess(1, true); await expect(thinking(1)).toHaveAttribute('aria-pressed', 'true')
+    await expectProcess(1, true); await expect(thinking(1)).toBeVisible()
   })
 
   await test.step('completion while the task is unmounted also starts settled process closed', async () => {
     await sendNext(3)
     await toggle(3).click(); await expectProcess(3, false)
     await toggle(3).click(); await expectProcess(3, true)
-    await thinking(3).click(); await expect(thinking(3)).toHaveAttribute('aria-pressed', 'true')
+    await setThinkingVisibility(true); await expect(thinking(3)).toBeVisible()
     await work().getByRole('button', { name: '新任务', exact: true }).click()
     await expect(work().getByRole('textbox', { name: '任务目标', exact: true })).toBeVisible()
     await expect(turn(3)).toHaveCount(0)
@@ -642,7 +591,7 @@ test('Work process folds on completion and preserves only the current phase’s 
     await expect(turn(3).getByText(finalText(3), { exact: true })).toBeVisible()
     await expectProcess(3, false)
     await toggle(3).click(); await expectProcess(3, true)
-    await expect(thinking(3)).toHaveAttribute('aria-pressed', 'false')
+    await expect(thinking(3)).toBeVisible()
     await toggle(3).click(); await expectProcess(3, false)
     await expectProcess(1, true); await expectProcess(2, false)
   })

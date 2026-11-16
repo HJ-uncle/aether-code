@@ -35,7 +35,6 @@ import { useBrowserState, hideBrowserSurfaces, selectBrowserTab } from '../featu
 import './application.css'
 import '../features/conversation/shared/apple-chat-panels.css'
 import { useSessionResources, sessionResourceBrowserTabs, selectSessionResource } from '../features/workspace/resource-store'
-import { getRunningSessionTasks, RunList } from '../features/sessions/RunList'
 import { type HomeFilter, Home } from '../features/sessions/Home'
 import { TaskStatus as TaskStatus } from '../features/sessions/TaskStatus'
 import { partitionCommandJobs } from '@renderer/core/engine/command-job-state'
@@ -49,10 +48,14 @@ import { SessionRootStop } from '../features/conversation/SessionFeedback'
 import { Conversation } from '../features/conversation/ConversationView'
 import { SessionDivider } from '../ui/PaneDivider'
 import { Workspace } from '../features/workspace/WorkspaceView'
+import { ResourceTabs } from '../features/workspace/ResourceTabs'
+import { workspaceSurfaceTabs } from '../features/workspace/workspace-tabs'
+import { useWorkspaceTabs } from '../features/workspace/useWorkspaceTabs'
 import { useSyncExternalStore, Suspense } from 'react'
 import { AgentManager, PluginManager, AutomationsView, EngineMonitorView, Projects } from './pages'
-import { ExtensionPage, useExtensionContributions, getExtensionNavigationRequest, subscribeExtensionNavigation, getExtensionHostSnapshot, subscribeExtensionHost } from '@renderer/features/extensions'
+import { ExtensionPage, useExtensionContributions, getExtensionNavigationRequest, subscribeExtensionNavigation, getExtensionHostSnapshot, subscribeExtensionHost, publishExtensionEvent } from '@renderer/features/extensions'
 import { isExtensionDestination, extensionIcon } from './navigation'
+import { usePublishServiceTrayContext } from '@renderer/features/services/tray-context'
 import { ServiceTray } from '@renderer/features/services/ServiceTray'
 
 /** Application assembly owns navigation; domain views retain their own session state. */
@@ -66,7 +69,12 @@ export function ApplicationView(): JSX.Element {
     setBrowserSessionOverride(controller.securitySessionId, browserSource)
   }, [controller.securitySessionId, browserSource])
   useEffect(() => () => setBrowserSessionOverride(null), [])
-  const [view, setView] = useState(initialView)
+  const [storedView, setView] = useState(initialView)
+  const initialWorkspaceTab = useRef(storedView.tab)
+  const task = controller.activeTask
+  const workspaceTabs = useWorkspaceTabs(browserSource, task?.id, initialWorkspaceTab.current)
+  const view = useMemo(() => ({ ...storedView, tab: workspaceTabs.tab }), [storedView, workspaceTabs.tab])
+  const selectWorkspaceTab = workspaceTabs.setTab
   const workspaceMotion = useMotionPresence(view.workspace)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<HomeFilter>('all')
@@ -97,19 +105,56 @@ export function ApplicationView(): JSX.Element {
   const [compactNavigation, setCompactNavigation] = useState(window.innerWidth <= 1160)
   const [singlePane, setSinglePane] = useState(window.innerWidth <= 990)
   const [navigationOpen, setNavigationOpen] = useState(false)
-  const set = useCallback((patch: Partial<ViewState>): void =>
-    setView((previous) => ({ ...previous, ...patch })), [])
-  const task = controller.activeTask
+  const set = useCallback((patch: Partial<ViewState>): void => {
+    if (patch.tab) selectWorkspaceTab(patch.tab)
+    setView(previous => ({ ...previous, ...patch }))
+  }, [selectWorkspaceTab])
   const extensionContext = useMemo(() => ({ sessionId: task?.id, workspacePath: task?.workspacePath, engineReady: controller.ready }), [task?.id, task?.workspacePath, controller.ready])
   const extensions = useExtensionContributions(extensionContext)
+  const previousExtensionContext = useRef<typeof extensionContext | null>(null)
+  useEffect(() => {
+    if (!extensionContext.engineReady) return
+    const previous = previousExtensionContext.current
+    if (previous?.sessionId !== extensionContext.sessionId) {
+      if (previous?.sessionId) publishExtensionEvent('session.closed', previous)
+      if (extensionContext.sessionId) publishExtensionEvent('session.opened', extensionContext)
+      if (extensionContext.sessionId) publishExtensionEvent('session.changed', extensionContext, { previousSessionId: previous?.sessionId ?? null })
+    }
+    previousExtensionContext.current = extensionContext
+  }, [extensionContext])
   const extensionHost = useSyncExternalStore(subscribeExtensionHost, getExtensionHostSnapshot)
   const extensionRequest = useSyncExternalStore(subscribeExtensionNavigation, getExtensionNavigationRequest)
+  const [extensionTarget, setExtensionTarget] = useState<ReturnType<typeof getExtensionNavigationRequest>>(null)
+  const consumedExtensionRequest = useRef('')
+  const switchingExtensionRequest = useRef('')
   useEffect(() => {
-    if (!extensionRequest || (extensionRequest.sessionId && extensionRequest.sessionId !== task?.id)) return
+    if (!extensionRequest) return
+    const requestKey = `${extensionRequest.source}:${extensionRequest.revision}`
+    if (consumedExtensionRequest.current === requestKey) return
+    if (extensionRequest.source !== getEngineSource()) { consumedExtensionRequest.current = requestKey; switchingExtensionRequest.current = ''; return }
+    if (extensionRequest.sessionId && !controller.tasks.some(item => item.id === extensionRequest.sessionId)) {
+      consumedExtensionRequest.current = requestKey; switchingExtensionRequest.current = ''; setExtensionTarget(null)
+      toast.error('此会话已不存在，无法打开插件页面。'); return
+    }
+    if (extensionRequest.sessionId && extensionRequest.sessionId !== task?.id) {
+      if (switchingExtensionRequest.current !== requestKey) {
+        switchingExtensionRequest.current = requestKey; setExtensionTarget(null)
+        controller.selectTask(extensionRequest.sessionId); set({ page: 'home', pane: 'conversation' })
+      }
+      return
+    }
+    // Only consume after the requested session is active. Re-enabling a plugin
+    // cannot replay an old request and pull the user out of the manager.
+    consumedExtensionRequest.current = requestKey; switchingExtensionRequest.current = ''
+    if (extensionRequest.pageId === 'plugins') { setExtensionTarget(null); set({ page: 'plugins' }); return }
     if (!extensions.pages.some(page => page.id === extensionRequest.pageId) || !isExtensionDestination(extensionRequest.pageId)) return
+    setExtensionTarget(extensionRequest)
     set({ page: extensionRequest.pageId })
     setNavigationOpen(false)
-  }, [extensionRequest, task?.id, extensions.pages, set])
+  }, [extensionRequest, task?.id, controller.tasks, controller.selectTask, extensions.pages, set])
+  useEffect(() => {
+    if (extensionTarget && (extensionTarget.pageId !== view.page || extensionTarget.source !== browserSource || extensionTarget.sessionId !== task?.id)) setExtensionTarget(null)
+  }, [extensionTarget, view.page, browserSource, task?.id])
   useEffect(() => {
     if (isExtensionDestination(view.page) && !extensionHost.loading && !extensions.pages.some(page => page.id === view.page)) set({ page: 'home' })
   }, [view.page, extensionHost.loading, extensions.pages, set])
@@ -137,7 +182,7 @@ export function ApplicationView(): JSX.Element {
   const fileResourceScope = fileTreeScope
   const handledFileReveal = useRef({ scope: fileResourceScope, revision: fileResources.reveal, selected: fileResources.selected })
   const activeTasks = useMemo(() => controller.tasks.filter((item) => !item.archived), [controller.tasks])
-  const runningTasks = useMemo(() => getRunningSessionTasks(activeTasks), [activeTasks])
+  const runningCount = useMemo(() => activeTasks.filter(item => item.status === 'running').length, [activeTasks])
   const waiting = useMemo(() => activeTasks.filter((item) => item.status === 'waiting').length, [activeTasks])
   const revealRequestId = browser.revealRequest?.requestId ?? null
   const handledRevealRef = useRef<string | null>(null)
@@ -183,10 +228,8 @@ export function ApplicationView(): JSX.Element {
     // Renames update resource identities without requesting navigation. Keep
     // the user's tree/history surface while its selected preview follows them.
     if (!foregroundRequest) return
-    setView(previous => previous.page === 'home' && previous.workspace && previous.tab === 'browser' && previous.pane === 'workspace'
-      ? previous
-      : { ...previous, page: 'home', workspace: true, tab: 'browser', pane: 'workspace' })
-  }, [task?.id, browserSource, fileResourceScope, fileResources.reveal, fileResources.selected, fileResources.files, revealWorkspaceFile])
+    set({ page: 'home', workspace: true, tab: 'browser', pane: 'workspace' })
+  }, [task?.id, browserSource, fileResourceScope, fileResources.reveal, fileResources.selected, fileResources.files, revealWorkspaceFile, set])
   useEffect(() => {
     // Browser tool requests can arrive while Work's workspace is closed. Open
     // the owning surface before BrowserService waits for fresh native bounds.
@@ -199,14 +242,10 @@ export function ApplicationView(): JSX.Element {
     handledRevealRef.current = revealRequestId
     // Standalone browsing shares the task's tab identity, not its navigation.
     // Opening a local file must keep the surface the user is already using.
-    setView((previous) => previous.page === 'browser' ? previous : !task
-      ? { ...previous, page: 'browser' }
-      :
-      previous.page === 'home' && previous.workspace && previous.tab === 'browser' && previous.pane === 'workspace'
-        ? previous
-        : { ...previous, page: 'home', workspace: true, tab: 'browser', pane: 'workspace' }
-    )
-  }, [revealRequestId, task?.id])
+    if (view.page !== 'browser') set(task
+      ? { page: 'home', workspace: true, tab: 'browser', pane: 'workspace' }
+      : { page: 'browser' })
+  }, [revealRequestId, task?.id, view.page, set])
   useEffect(() => {
     const ownsBrowserSurface =
       (view.page === 'browser' || (Boolean(task) &&
@@ -243,11 +282,19 @@ export function ApplicationView(): JSX.Element {
     setSelectedArtifact(next)
   }, [controller.artifacts, selectedArtifact, setSelectedArtifact])
   const navigate = useCallback((page: Page): void => {
+    const requested = getExtensionNavigationRequest()
+    if (requested) consumedExtensionRequest.current = `${requested.source}:${requested.revision}`
+    switchingExtensionRequest.current = ''
+    setExtensionTarget(null)
     set(page === 'home' ? { page, workspace: false, pane: 'conversation' } : { page })
     setNavigationOpen(false)
     if (page === 'home') controller.showHome()
   }, [set, controller.showHome])
   const openTask = useCallback((id: string): void => {
+    const requested = getExtensionNavigationRequest()
+    if (requested) consumedExtensionRequest.current = `${requested.source}:${requested.revision}`
+    switchingExtensionRequest.current = ''
+    setExtensionTarget(null)
     controller.selectTask(id)
     setNavigationOpen(false)
     set({ page: 'home', pane: 'conversation' })
@@ -351,8 +398,11 @@ export function ApplicationView(): JSX.Element {
       jobId: jobId ?? services.running[0]?.jobId ?? services.history[0]?.jobId ?? null,
       revision: ++terminalRevision.current
     } })
-    openWorkspace('terminal')
-  }, [task?.id, browserSource, controller.commandJobs, openWorkspace])
+    set({ page: 'home', workspace: true, tab: 'terminal', pane: 'workspace' })
+    setNavigationOpen(false)
+  }, [task?.id, browserSource, controller.commandJobs, set])
+  usePublishServiceTrayContext({ source: browserSource, sessionId: task?.id ?? null,
+    jobs: controller.commandJobs, onOpenTerminal: task ? openRunningTerminal : undefined })
   useEffect(() => onSessionTerminalRequest(action => {
     if (!task) { toast.info('请先打开一个任务，再使用终端'); return }
     if (action === 'toggle' && view.page === 'home' && view.workspace && view.tab === 'terminal' && view.pane === 'workspace') {
@@ -403,7 +453,7 @@ export function ApplicationView(): JSX.Element {
   const setWorkspaceTab = useCallback((tab: WorkspaceTab): void => set({ tab }), [set])
   const closeWorkspace = useCallback((): void => {
     set({ workspace: false, pane: 'conversation' })
-    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.work-task-heading button[aria-label="打开工作区"]')?.focus())
+    requestAnimationFrame(() => rootRef.current?.querySelector<HTMLButtonElement>('.work-task-heading .work-workspace__more button')?.focus())
   }, [set])
   const setRatio = useCallback((ratio: number): void => set({ ratio }), [set])
   const openActivity = useCallback((toolId: string): void => {
@@ -487,10 +537,10 @@ export function ApplicationView(): JSX.Element {
             >
               <Icon name={item.icon} size={18} />
               <span>{item.label}</span>
-              {item.id === 'home' && (waiting > 0 || runningTasks.length > 0) && <b className="work-count"
-                title={waiting ? `${waiting} 个任务等待处理` : `${runningTasks.length} 个任务运行中`}
-                aria-label={waiting ? `${waiting} 个任务等待处理` : `${runningTasks.length} 个任务运行中`}
-                data-waiting={waiting > 0 || undefined}>{waiting || runningTasks.length}</b>}
+              {item.id === 'home' && (waiting > 0 || runningCount > 0) && <b className="work-count"
+                title={waiting ? `${waiting} 个任务等待处理` : `${runningCount} 个任务运行中`}
+                aria-label={waiting ? `${waiting} 个任务等待处理` : `${runningCount} 个任务运行中`}
+                data-waiting={waiting > 0 || undefined}>{waiting || runningCount}</b>}
             </button>
           ))}
         </nav>
@@ -498,7 +548,6 @@ export function ApplicationView(): JSX.Element {
           selectedTaskId={view.page === 'home' ? task?.id ?? null : null}
           visible={compactNavigation ? navigationOpen : !view.collapsed} onOpen={openTask} />
         <div className="work-sidebar__bottom">
-          {view.page !== 'home' || !task ? <ServiceTray sessionId={task?.id} jobs={task ? controller.commandJobs : []} onOpenTerminal={task ? openRunningTerminal : undefined} /> : null}
           <button
             type="button"
             className="work-navigation__item"
@@ -512,14 +561,6 @@ export function ApplicationView(): JSX.Element {
       </aside>
       <main className="work-main">
         <Suspense fallback={<div className="application-loading" role="status">正在打开…</div>}>
-        {view.page === 'home' && !task ? <RunList
-          key={browserSource}
-          tasks={activeTasks}
-          activeTaskId={null}
-          ready={controller.ready}
-          onSelect={openTask}
-          onStop={controller.stopTask}
-        /> : null}
         {view.page === 'home' && task ? (
           <>
             <div
@@ -552,6 +593,7 @@ export function ApplicationView(): JSX.Element {
                     ) : null}
                   </div>
                   <div className="work-task-heading__actions">
+                    <ServiceTray variant="services" placement="down" sessionId={task.id} jobs={controller.commandJobs} onOpenTerminal={openRunningTerminal} />
                     {controller.sessionUsage && (controller.sessionUsage.total > 0 || controller.sessionUsage.unknownSubagents > 0) ? <UsageMeter
                       total={controller.sessionUsage.total} rounds={controller.sessionUsage.rounds} summary={controller.sessionUsage.summary}
                       messages={controller.messages} /> : null}
@@ -567,16 +609,13 @@ export function ApplicationView(): JSX.Element {
                       conversationDisabled={controller.messages.length === 0}
                     />
                     <SessionRootStop key={task.id} controller={controller} />
-                    <IconButton
-                      icon="layout-panel"
-                      label={view.workspace ? '收起工作区' : '打开工作区'}
-                      aria-pressed={view.workspace}
-                      onClick={() =>
-                        set({
-                          workspace: !view.workspace,
-                          pane: view.workspace ? 'conversation' : 'workspace'
-                        })
-                      }
+                    <ResourceTabs
+                      key={`${browserSource}:${task.id}`}
+                      sessionId={task.id}
+                      onSelect={() => openWorkspace('browser')}
+                      items={workspaceSurfaceTabs(extensions.workspaceTabs).map(([id, label, icon]) => ({
+                        id, label, icon, onSelect: () => openWorkspace(id)
+                      }))}
                     />
                   </div>
                 </header>
@@ -609,7 +648,6 @@ export function ApplicationView(): JSX.Element {
                   onOpenFinalItem={openFinalItem}
                   selectionToggleRef={conversationSelectionToggle}
                   onSelectionModeChange={setConversationSelectMode}
-                  onOpenTerminal={openRunningTerminal}
                 />
               </div>
               {workspaceMotion.present && (
@@ -622,6 +660,8 @@ export function ApplicationView(): JSX.Element {
                     active={view.workspace && (!singlePane || view.pane === 'workspace')}
                     tab={view.tab}
                     setTab={setWorkspaceTab}
+                    openEntries={workspaceTabs.entries}
+                    setOpenEntries={workspaceTabs.setEntries}
                     onClose={closeWorkspace}
                     selectedArtifact={selectedArtifact}
                     fileRevealRequest={fileRevealRequest?.scope === fileTreeScope ? fileRevealRequest : null}
@@ -641,7 +681,7 @@ export function ApplicationView(): JSX.Element {
           <Home controller={controller} tasks={activeTasks} filter={filter} onFilter={setFilter}
             search={search} onSearch={setSearch} onOpenTask={openTask} />
         ) : isExtensionDestination(view.page) ? (
-          <ExtensionPage contributionId={view.page} context={extensionContext} onNavigate={page => { if (isExtensionDestination(page)) navigate(page); else if (page === 'plugins') navigate('plugins') }} />
+          <ExtensionPage contributionId={view.page} context={extensionTarget?.pageId === view.page && extensionTarget.source === getEngineSource() && extensionTarget.sessionId === task?.id ? { ...extensionContext, ...extensionTarget.context } : extensionContext} />
         ) : view.page === 'browser' ? (
           <section className="work-standalone-browser" aria-label="浏览器">
             <header className="work-task-heading">

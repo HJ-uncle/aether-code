@@ -31,6 +31,8 @@ import {
   selectBrowserTab,
   useBrowserState
 } from './browser-store'
+import { closeBrowserTab, getPluginBrowserDocument, openPluginBrowserPage, reloadBrowserTab } from './browser-store'
+import { PluginBrowserSurface } from './PluginBrowserSurface'
 import { addBrowserTabToChat } from './browser-chat'
 import { BrowserTabContextMenu, openBrowserTabContextMenu } from './BrowserTabContextMenu'
 import { BrowserLocalPreview } from './BrowserLocalPreview'
@@ -325,6 +327,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
   const state = useBrowserState(surfaceMode)
   const tab = tabId !== undefined ? state.tabs.find(item => item.tabId === tabId) : state.tabs.find((item) => item.tabId === state.activeTabId) ?? state.tabs[0]
   const localPreview = !!tab?.localFile && tab.localFile.kind !== 'html'
+  const pluginPreview = Boolean(tab?.pluginPage)
   const [address, setAddress] = useState('')
   const addressRef = useRef<HTMLInputElement>(null)
   const [inspector, setInspector] = useState<Inspector>(null)
@@ -350,8 +353,8 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
     setAddress(tab?.localFile?.path ?? (tab?.url === 'about:blank' ? '' : (tab?.url ?? '')))
   }
   useEffect(() => {
-    if (localPreview) setInspector(null)
-  }, [localPreview])
+    if (localPreview || pluginPreview) setInspector(null)
+  }, [localPreview, pluginPreview])
   useEffect(() => {
     if (!state.addressFocusRequest) return
     const frame = requestAnimationFrame(() => {
@@ -375,7 +378,9 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
     }
   }, [])
   const run = (action: 'back' | 'forward' | 'reload' | 'stop' | 'devtools'): void => {
-    if (tab) browserAction(() => window.aether.browser.action({ tabId: tab.tabId, action }))
+    if (!tab) return
+    if (action === 'reload') browserAction(() => reloadBrowserTab(tab.tabId))
+    else if (!tab.pluginPage) browserAction(() => window.aether.browser.action({ tabId: tab.tabId, action }))
   }
   const openTabMenu = (
     item: BrowserTabState,
@@ -408,7 +413,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
       for (const id of ids) {
         if (!getBrowserState().tabs.some((item) => item.tabId === id)) continue
         try {
-          await window.aether.browser.close(id)
+          await closeBrowserTab(id)
         } catch (error) {
           failures.push(error instanceof Error ? error.message : String(error))
         }
@@ -417,7 +422,8 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
     })
   }
   const duplicateTab = (item: BrowserTabState): void => {
-    browserAction(() => window.aether.browser.duplicate(item.tabId))
+    const document = getPluginBrowserDocument(item.tabId)
+    browserAction(() => document ? openPluginBrowserPage(document.page, document.context, document.development) : window.aether.browser.duplicate(item.tabId))
   }
   const viewport = (value: BrowserViewport | null): void => {
     if (tab)
@@ -430,14 +436,14 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
     const localPath = localBrowserInput(address)
     if (localPath !== null) {
       browserAction(() => openLocalBrowserFile(localPath))
-    } else if (tab && !tab.localFile)
+    } else if (tab && !tab.localFile && !tab.pluginPage)
       browserAction(() =>
         window.aether.browser.action({ tabId: tab.tabId, action: 'navigate', url: address.trim() })
       )
-    else browserAction(() => openBrowser(address.trim(), { reveal: false }))
+    else browserAction(() => openBrowser(address.trim(), { reveal: Boolean(tab?.pluginPage) }))
   }
   const aiReady =
-    !tab?.localFile &&
+    !tab?.localFile && !tab?.pluginPage &&
     state.settings.aiEnabled &&
     connection.status === 'connected' &&
     tab?.context?.sessionId === connection.sessionId &&
@@ -466,7 +472,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
         if (event.key.toLowerCase() === 'w' && tab) {
           event.preventDefault()
           event.stopPropagation()
-          browserAction(() => window.aether.browser.close(tab.tabId))
+          browserAction(() => closeBrowserTab(tab.tabId))
         }
       }}
     >
@@ -517,7 +523,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
                 target?.focus()
               }}
             >
-              {item.loading ? <Spinner size={12} /> : item.localFile
+              {item.loading ? <Spinner size={12} /> : item.pluginPage ? <Icon name="puzzle" size={14} /> : item.localFile
                 ? item.localFile.kind === 'directory' ? <Icon name="explorer" size={14} /> : <FileGlyph name={item.localFile.path} size={14} />
                 : <Icon name="globe" size={14} />}
               <span>{item.title || (item.url === 'about:blank' ? '新标签页' : item.url)}</span>
@@ -526,7 +532,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
               type="button"
               className="browser-tab__close"
               aria-label={`关闭网页 ${item.title || item.url}`}
-              onClick={() => browserAction(() => window.aether.browser.close(item.tabId))}
+              onClick={() => browserAction(() => closeBrowserTab(item.tabId))}
             >
               <Icon name="close" size={12} />
             </button>
@@ -554,7 +560,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
           onDuplicate={() => duplicateTab(menuTab)}
           onReload={() =>
             browserAction(() =>
-              window.aether.browser.action({ tabId: menuTab.tabId, action: 'reload' })
+              reloadBrowserTab(menuTab.tabId)
             )
           }
           onStop={() =>
@@ -575,7 +581,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
           }
           onAddToChat={() => addToChat(menuTab)}
           addToChatDisabled={
-            !!menuTab.localFile || addingToChat || !state.settings.aiEnabled || connection.status !== 'connected'
+            !!menuTab.localFile || !!menuTab.pluginPage || addingToChat || !state.settings.aiEnabled || connection.status !== 'connected'
           }
           addToChatHint={
             menuTab.localFile
@@ -646,7 +652,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
           <Icon name="play" size={15} />
         </button>
         <ToolButton label="打开本地文件" icon="explorer" onClick={() => browserAction(() => openLocalBrowserFile())} />
-        {tab && !localPreview ? <BrowserDisplayMenu key={tab.tabId} tab={tab} inspector={inspector}
+        {tab && !localPreview && !pluginPreview ? <BrowserDisplayMenu key={tab.tabId} tab={tab} inspector={inspector}
           onViewport={viewport} onInspector={setInspector}
           onZoom={zoomFactor => browserAction(() => window.aether.browser.action({ tabId: tab.tabId, action: 'zoom', zoomFactor }))} /> : null}
         <ActionMenu
@@ -668,7 +674,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
               id: 'devtools',
               label: '开发者工具',
               icon: 'terminal',
-              disabled: !tab || localPreview,
+              disabled: !tab || localPreview || pluginPreview,
               onSelect: () => run('devtools')
             }
           ]}
@@ -692,6 +698,8 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
           <Icon name="alert-circle" size={28} />
           <p>当前页面加载失败。</p>
         </div>
+      ) : tab && pluginPreview ? (
+        <PluginBrowserSurface key={`plugin:${tab.tabId}:${tab.navigationId}`} tabId={tab.tabId} />
       ) : tab && localPreview ? (
         <BrowserLocalPreview key={`local:${tab.tabId}`} tab={tab} />
       ) : tab ? (
@@ -721,13 +729,13 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
           <button type="button" className="btn" onClick={() => browserAction(() => openLocalBrowserDirectory())}>选择本地目录</button>
         </div>
       )}
-      {tab && !localPreview && inspector === 'network' ? (
+      {tab && !localPreview && !pluginPreview && inspector === 'network' ? (
         <NetworkInspector
           key={`network:${tab.tabId}`}
           tab={tab}
           onClose={() => setInspector(null)}
         />
-      ) : tab && !localPreview && inspector === 'console' ? (
+      ) : tab && !localPreview && !pluginPreview && inspector === 'console' ? (
         <InspectorDrawer
           key={`${tab.tabId}:${inspector}`}
           tab={tab}
@@ -738,7 +746,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
       <footer className="browser-status">
         <span className={`browser-status__dot${aiReady ? ' is-ready' : ''}`} />
         <span title={tab?.localFile ? '文件仅在本机预览' : connection.message}>
-          {tab?.localFile
+          {tab?.pluginPage ? '插件页面 · 使用已授权的平台能力' : tab?.localFile
             ? '本地文件预览'
             : !state.settings.aiEnabled
               ? 'AI 浏览器已关闭'
@@ -752,7 +760,7 @@ export function BrowserView({ surfaceMode = 'work', hideTabStrip = false, tabId 
                       ? '网页尚未交给当前对话'
                       : '打开对话并连接引擎后，AI 可操作网页'}
         </span>
-        {tab && !tab.localFile && state.settings.aiEnabled && connection.status === 'connected' ? (
+        {tab && !tab.localFile && !tab.pluginPage && state.settings.aiEnabled && connection.status === 'connected' ? (
           <button
             type="button"
             className="browser-text-tool"

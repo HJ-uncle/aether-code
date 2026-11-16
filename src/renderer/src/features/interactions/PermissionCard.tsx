@@ -17,6 +17,8 @@ interface Props {
   blocked: boolean
   submitting: 'reply' | 'full-access' | null
   onReply: (values: string[], fullAccess?: boolean) => void
+  allowFullAccess?: boolean
+  allowAutomaticWait?: boolean
 }
 
 interface DetailPage {
@@ -203,7 +205,7 @@ function DetailContent({ section }: { section: PermissionSection }): JSX.Element
 }
 
 /** One inspector panel at a time keeps both navigation and the decision within reach. */
-export function PermissionCard({ pending, blocked, submitting, onReply }: Props): JSX.Element {
+export function PermissionCard({ pending, blocked, submitting, onReply, allowFullAccess = true, allowAutomaticWait = true }: Props): JSX.Element {
   const presentation = useMemo(() => permissionPresentation(pending), [pending])
   const { models } = useModels()
   const titleId = useId(),
@@ -267,6 +269,8 @@ export function PermissionCard({ pending, blocked, submitting, onReply }: Props)
       : (pages[0]?.id ?? null)
   const currentPage = pages.find((page) => page.id === activePage)
   usePendingCardBodySpace(panel, activePage)
+  const sourceChangeWait = pending.sourceChange?.wait
+  const waitingForExternalWriter = allowAutomaticWait && Boolean(sourceChangeWait)
   const selectPage = (id: string): void => {
     if (id === activePage) return
     setSelectedPage(id)
@@ -276,6 +280,9 @@ export function PermissionCard({ pending, blocked, submitting, onReply }: Props)
   const options = [...pending.options].sort(
     (a, b) => Number(a.value === 'approved') - Number(b.value === 'approved')
   )
+  // Source-version conflicts have an explicit engine choice set and must not
+  // be converted into a session-wide full-access approval.
+  const canGrantFullAccess = allowFullAccess && !pending.sourceChange && options.some(option => option.value === 'approved')
   const rawButton = (
     <button
       type="button"
@@ -289,6 +296,23 @@ export function PermissionCard({ pending, blocked, submitting, onReply }: Props)
       <Icon name="dots-horizontal" size={18} />
     </button>
   )
+  if (waitingForExternalWriter) {
+    const blockerCount = sourceChangeWait?.blockers.length ?? 0
+    const blockerText = blockerCount > 1 ? `${blockerCount} 个会话` : '其他会话'
+    return (
+      <div className="work-permission work-permission--waiting" aria-labelledby={titleId}>
+        <header className="work-permission__header">
+          <Icon name="clock-outline" size={18} />
+          <h3 id={titleId}>源码保护</h3>
+          <span className="work-permission__state">自动继续</span>
+        </header>
+        <div className="work-permission__wait" role="status" aria-live="polite">
+          <Icon name="sync" size={15} />
+          <span>正在等待 {blockerText} 结束，完成后自动复核并继续。</span>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="work-permission" aria-labelledby={titleId}>
       <header
@@ -426,17 +450,19 @@ export function PermissionCard({ pending, blocked, submitting, onReply }: Props)
       ) : null}
 
       <footer className="work-permission__footer">
-        <button
-          type="button"
-          className="work-permission__access"
-          disabled={blocked}
-          aria-label="本会话改为完全访问并放行"
-          title="仅对本会话生效：后续命令不再询问，并放行当前操作；同时解除工作区路径限制"
-          onClick={() => onReply(['approved'], true)}
-        >
-          <Icon name="shield" size={14} />
-          {submitting === 'full-access' ? '切换并放行中…' : '完全访问并放行'}
-        </button>
+        {canGrantFullAccess ? (
+          <button
+            type="button"
+            className="work-permission__access"
+            disabled={blocked}
+            aria-label="本会话改为完全访问并放行"
+            title="仅对本会话生效：放行当前操作，后续操作确认自动通过；提问仍需回答，可读写工作区外文件"
+            onClick={() => onReply(['approved'], true)}
+          >
+            <Icon name="shield" size={14} />
+            {submitting === 'full-access' ? '切换并放行中…' : '完全访问并放行'}
+          </button>
+        ) : null}
         <div className="work-permission__decisions">
           {options.map((option) => (
             <button

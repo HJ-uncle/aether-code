@@ -97,6 +97,7 @@ function sessionFixture(overrides = {}, upload) {
     '@renderer/features/conversation/shared/root-followup': { rootFollowupRun: () => null, rootFollowupLimitation: () => '' },
     '@renderer/features/conversation/shared/RootFollowup': { useRootFollowup: () => ({ delivery: 'next', busy: false, pending: null }) },
     '../conversation/shared/useResourceMentions': { useResourceMentions: () => {} },
+    '../extensions': { useExtensionMenuItems: () => [] },
     '@renderer/core/toast': { toast: { info: message => notices.push(message) } },
     '../sessions/state': { useSessionDraft: () => ({ text: '补充要求', mentions: [] }) }
   })

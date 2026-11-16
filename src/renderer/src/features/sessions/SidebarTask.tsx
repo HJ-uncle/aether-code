@@ -2,6 +2,8 @@ import { memo, useRef, useState, type JSX } from 'react'
 import { ContextMenu } from '@renderer/ui/ContextMenu'
 import { Icon } from '@renderer/ui/icons'
 import { Spinner } from '@renderer/ui/ui-primitives'
+import { useExtensionMenuItems } from '../extensions'
+import { extensionIcon } from '@renderer/app/navigation'
 import type { SessionTask } from './state'
 import { SESSION_TASK_COLORS, sessionSidebarStatus } from './sidebar-task'
 import { useSessionTaskActions, type SessionTaskActionController } from './useSessionTaskActions'
@@ -17,6 +19,7 @@ export const SidebarTask = memo(function SidebarTask({ task, controller, selecte
   const menuSequence = useRef(0)
   const taskButtonRef = useRef<HTMLButtonElement>(null)
   const { items, dialogs, busy } = useSessionTaskActions(task, controller)
+  const pluginItems = useExtensionMenuItems('session.context', { sessionId: task.id, workspacePath: task.workspacePath, engineReady: controller.ready })
   const status = sessionSidebarStatus(task, controller.ready, busy === 'stop')
   const unread = task.status === 'done' && task.completionUnread === true
   const showStatus = status.kind !== 'draft' && (task.status !== 'done' || unread)
@@ -28,7 +31,8 @@ export const SidebarTask = memo(function SidebarTask({ task, controller, selecte
   const label = SESSION_TASK_COLORS.find(item => item.color === task.labelColor)?.label
   const description = [task.title, showStatus && statusLabel, task.pinned && '已置顶', label && `${label}标记`].filter(Boolean).join(' · ')
   return <div className={`work-sidebar__task-row${task.archived ? ' work-sidebar__archived-row' : ''}`} data-task-id={task.id}
-    data-selected={selected || undefined} data-unread={unread || undefined} data-menu-open={Boolean(menuPosition) || undefined}
+    data-selected={selected || undefined} data-unread={unread || undefined} data-pinned={task.pinned || undefined}
+    data-menu-open={Boolean(menuPosition) || undefined}
     onContextMenu={event => {
       // Portaled menu events still bubble through React; only the actual task
       // row owns the context-menu trigger, otherwise the menu can reopen itself.
@@ -51,7 +55,6 @@ export const SidebarTask = memo(function SidebarTask({ task, controller, selecte
       aria-current={selected ? 'true' : undefined} onClick={() => onOpen(task.id)}>
       {label ? <i className="work-task-label-dot" data-label-color={task.labelColor} aria-hidden="true" /> : null}
       <span className="work-sidebar__task-title">{task.title}</span>
-      {task.pinned ? <span className="work-sidebar__pin" aria-hidden="true"><Icon name="pin" size={15} className="work-sidebar__pin-icon" /></span> : null}
       {showStatus ? <span className="work-sidebar__task-status" data-task-status={status.kind}
         data-text-status={Boolean(statusText[status.kind]) || undefined} role="img" aria-label={statusLabel} title={statusLabel}>
         {unread ? <i className="work-sidebar__completion-dot" aria-hidden="true" />
@@ -59,13 +62,14 @@ export const SidebarTask = memo(function SidebarTask({ task, controller, selecte
       </span> : null}
     </button>
     <div className="work-sidebar__task-actions" aria-label={`${task.title}的操作`}>
-      <button type="button" title={task.pinned ? '取消置顶' : '置顶'} aria-label={task.pinned ? '取消置顶' : '置顶'}
+      <button type="button" className={task.pinned ? 'work-sidebar__pin' : undefined}
+        title={task.pinned ? '取消置顶' : '置顶'} aria-label={task.pinned ? '取消置顶' : '置顶'}
         aria-pressed={Boolean(task.pinned)} onClick={() => controller.setTaskPinned(task.id, !task.pinned)}>
         <Icon name={task.pinned ? 'pin' : 'pin-outline'} size={15} className="work-sidebar__pin-icon" />
       </button>
     </div>
     {menuPosition ? <ContextMenu key={menuPosition.id} x={menuPosition.x} y={menuPosition.y} anchor={taskButtonRef.current}
-      items={items} onClose={() => setMenuPosition(current => current?.id === menuPosition.id ? null : current)} /> : null}
+      items={[...items, ...pluginItems.map((item, index) => ({ ...item, separatorBefore: index === 0, icon: item.icon ? <Icon name={extensionIcon(item.icon)} size={14} /> : undefined }))]} onClose={() => setMenuPosition(current => current?.id === menuPosition.id ? null : current)} /> : null}
     {dialogs}
   </div>
 })

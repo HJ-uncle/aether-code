@@ -4,33 +4,40 @@
  * Build first, then run serially with the other Electron specs. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { PluginApplication, PluginManifest, PluginRecord } from '../src/renderer/src/core/engine/plugins'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'extension-host')
 const token = 'extension-host-fixture', pluginId = 'extension-timer', pluginName = '扩展计时器', model = 'extension-model'
 const first = 'work-extension-session-one', second = 'work-extension-session-two', now = Date.now() - 5000
 const taskTitles: Record<string, string> = { [first]: '插件会话一', [second]: '插件会话二' }, workspace = (id: string) => `/extension-fixture/${id}`
-const errors: string[] = [], invokes: Array<{ revision: number; tool: string; args: Record<string, unknown> }> = []
+const errors: string[] = [], invokes: Array<{ revision: number; tool: string; args: Record<string, unknown>; hostContext?: Record<string, string> }> = [], invokeSessions: string[] = []
+const notificationAuthorizations: string[] = []
 let app: ElectronApplication | undefined, page: Page, fixture = '', origin = '', enabled = true, revision = 1
 let releaseSlow: (() => void) | undefined, slowGate: Promise<void> | undefined
+let extended = false, eventGranted = true, eventSequence = 0, eventPolls = 0
+const events: Array<{ id: string; type: string; sessionId: string; payload: Record<string, unknown>; timestamp: number; sequence: number }> = []
 const hash = () => `sha256:${String(revision).repeat(64)}`
 const manifest = (): PluginManifest => ({ apiVersion: 1, id: pluginId, name: pluginName, version: `${revision}.0.0`,
   description: '外部插件贡献真实验收', runtime: 'node', tools: ['echo', 'start', 'stop', 'private_tool'].map(name => ({ name,
     description: name, entry: 'main.mjs', inputSchema: { type: 'object', properties: {}, additionalProperties: true } })),
   contributes: {
-    pages: [{ id: 'timer', title: '计时器页面', kind: 'webview', entry: 'ui/index.html', tools: ['echo'] }],
-    navigation: [{ id: 'timer', title: '外部计时器', page: 'timer', icon: 'clock', when: { engineReady: true } }],
+    pages: [{ id: 'timer', title: '计时器页面', kind: 'webview', entry: 'ui/index.html', tools: ['echo'] }, ...(extended ? [{ id: 'native', title: '原生设置', kind: 'native' as const, entry: 'ui/native.json', tools: ['echo'] }] : [])],
+    navigation: [{ id: 'timer', title: '外部计时器', page: 'timer', icon: 'clock', when: { engineReady: true } }, ...(extended ? [{ id: 'native', title: '原生设置入口', page: 'native' }] : [])],
     workspaceTabs: [{ id: 'timer-tab', title: '计时器标签', page: 'timer', scope: 'session', when: { workspace: true } }],
     services: [{ id: 'countdown', title: '会话倒计时', tool: 'start', stopTool: 'stop', page: 'timer', scope: 'session', when: { workspace: true, engineReady: true } }],
+    ...(extended ? { commands: [{ id: 'inspect', title: '扩展检查命令', tool: 'echo', args: { text: 'command-default' }, shortcut: 'ctrl+alt+shift+i' }, { id: 'open-native', title: '打开原生设置', page: 'native' }],
+      menus: [{ id: 'native-menu', title: '原生控制台', command: 'open-native', location: 'app.menu' as const }, { id: 'native-message', title: '检查本条消息原生页', command: 'open-native', location: 'message.actions' as const }, { id: 'native-session', title: '在此会话打开原生页', command: 'open-native', location: 'session.context' as const }], statusBar: [{ id: 'status', title: '扩展状态操作', command: 'inspect', icon: 'puzzle' }],
+      settings: [{ id: 'settings', title: '插件原生设置', page: 'native' }] } : {}),
   } })
 const record = (): PluginRecord => ({ id: pluginId, name: pluginName, description: '外部插件贡献真实验收', enabled, revision,
   publishedRevision: revision, manifest: manifest(), revisions: [{ revision, hash: hash(), createdAt: now }], createdAt: now, updatedAt: Date.now() })
 const customHTML = () => `<main><h1>自定义计时器 r${revision}</h1><pre id="context"></pre><pre id="output"></pre>
 <label>插件草稿<input id="draft" aria-label="插件草稿"></label>
 <button id="echo">调用已授权工具</button><button id="forbidden">调用未授权工具</button>
+<button id="download">导出报告</button><pre id="download-result"></pre>
 <button id="start">开始倒计时</button><button id="slow">启动延迟服务</button><button id="stop">停止倒计时</button>
 <form id="echo-form"><label>表单输入<input id="form-text" aria-label="表单输入" required></label><button type="submit">提交表单</button></form>
 <form action="aether-plugin-ui://document/blocked"><button type="submit">禁止表单导航</button></form><pre id="form-policy"></pre>
@@ -39,6 +46,7 @@ const output = document.getElementById('output'), show = value => { output.textC
 window.aetherPlugin.context().then(value => { document.getElementById('context').textContent = JSON.stringify(value); });
 document.getElementById('echo').onclick = () => window.aetherPlugin.invoke('echo', {text:'bridge-ok'}).then(show);
 document.getElementById('forbidden').onclick = () => window.aetherPlugin.invoke('private_tool', {}).then(show).catch(error => show({error:error.message}));
+document.getElementById('download').onclick = () => window.aetherPlugin.download({fileName:'报告.txt',content:'中文😀'.repeat(60000)}).then(value => { document.getElementById('download-result').textContent = JSON.stringify(value); }).catch(error => { document.getElementById('download-result').textContent = error.message; });
 document.getElementById('start').onclick = () => window.aetherPlugin.services.start('countdown', {delayMs:5000}).then(show);
 document.getElementById('slow').onclick = () => window.aetherPlugin.services.start('countdown', {slow:true}).then(show);
 document.getElementById('stop').onclick = () => window.aetherPlugin.services.stop('countdown').then(show);
@@ -48,7 +56,11 @@ const renderServices = value => { document.getElementById('services').textConten
 window.aetherPlugin.services.subscribe(renderServices); window.aetherPlugin.services.get().then(renderServices);
 </script>`
 const application = (): PluginApplication => ({ id: pluginId, name: pluginName, description: '外部插件贡献真实验收', revision,
-  hash: hash(), manifest: manifest(), examples: [], execution: { allowed: true }, uiDocuments: { timer: customHTML() } })
+  hash: hash(), manifest: manifest(), examples: [], execution: { allowed: true }, uiDocuments: { timer: customHTML(), ...(extended ? { native: JSON.stringify({ version: 1, root: { type: 'stack', children: [
+    { type: 'heading', text: '原生工作台' }, { type: 'markdown', text: '**受控说明**\n\n[禁止隐式打开](file:///C:/private.txt)\n\n```txt\n只读代码\n```' },
+    { type: 'input', bind: 'notes', label: '原生备注', value: '初始备注' }, { type: 'button', label: '执行原生动作', variant: 'primary', action: { tool: 'echo', args: { text: { $field: 'notes' } } } },
+    { type: 'button', label: '拒绝未声明工具', action: { tool: 'private_tool' } }
+  ] } }) } : {}) } })
 const history = (sessionId: string) => [{ id: `${sessionId}-user`, role: 'user', content: taskTitles[sessionId] ?? '插件验收', conversationId: `${sessionId}-turn`, createdAt: now },
   { id: `${sessionId}-assistant`, role: 'assistant', content: '会话已就绪。', conversationId: `${sessionId}-turn`, createdAt: now + 1 }]
 const envelope = (data: unknown) => JSON.stringify({ code: 200, message: 'ok', data })
@@ -59,14 +71,26 @@ const server = createServer((request, response) => { void (async () => {
   let raw = ''; for await (const chunk of request) raw += chunk.toString()
   const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
   const sessionId = url.searchParams.get('sessionId') ?? (typeof body.sessionId === 'string' ? body.sessionId : first)
+  if (path === `/api/v1/plugins/${pluginId}/capabilities/invoke`) {
+    if (body.capability === 'ui.notifications' && body.method === 'host.authorize' && body.expectedRevision === revision && enabled && [first, second].includes(sessionId)) {
+      notificationAuthorizations.push(sessionId); response.end(envelope({ result: { authorized: true } })); return
+    }
+    if (!extended || body.expectedRevision !== revision || !enabled) throw new Error('Invalid SDK identity')
+    if (!eventGranted || body.capability !== 'events.subscribe') { response.writeHead(403).end(JSON.stringify({ code: 40300, message: '事件权限已撤销' })); return }
+    if (body.method === 'host.authorize') { response.end(envelope({ result: { authorized: true } })); return }
+    if (body.method === 'poll') { eventPolls++; const cursor = Number((body.args as { cursor?: number }).cursor ?? 0); response.end(envelope({ result: { events: events.filter(event => event.sequence > cursor && event.sessionId === sessionId), nextCursor: eventSequence } })); return }
+    throw new Error('Unexpected SDK method')
+  }
+  if (path === '/api/v1/plugins/runtime/events') { response.end(envelope({ delivered: 0 })); return }
   if (path === `/api/v1/plugins/${pluginId}` && request.method === 'PATCH') {
     if (typeof body.enabled !== 'boolean') throw new Error('Plugin toggle requires boolean')
     enabled = body.enabled; response.end(envelope({ plugin: record() })); return
   }
   if (path === `/api/v1/plugins/runtime/apps/${pluginId}/invoke`) {
     if (request.method !== 'POST' || !enabled || body.revision !== revision || typeof body.tool !== 'string') throw new Error('Invalid pinned plugin invocation')
-    const call = { revision, tool: body.tool, args: body.args as Record<string, unknown> }, pinnedHash = hash()
+    const call = { revision, tool: body.tool, args: body.args as Record<string, unknown>, ...(body.hostContext ? { hostContext: body.hostContext as Record<string, string> } : {}) }, pinnedHash = hash()
     invokes.push(call)
+    invokeSessions.push(sessionId)
     if (call.args.slow && slowGate) await slowGate
     const result = call.tool === 'echo' ? { echo: call.args.text, revision: call.revision }
       : call.tool === 'stop' ? { status: 'stopped', detail: '用户已停止' }
@@ -109,19 +133,30 @@ const server = createServer((request, response) => { void (async () => {
 
 const frame = () => page.frameLocator('iframe[title="计时器页面"]')
 const navigation = () => page.locator('.work-navigation').getByRole('button', { name: '外部计时器', exact: true })
-const tray = () => page.locator('.service-tray__panel')
+const serviceTrigger = () => page.locator('.work-task-heading .service-tray--services .service-tray__button')
+const tray = () => page.getByRole('region', { name: /^(?:服务|服务历史)列表$/ })
 const serviceRow = () => tray().locator('.service-tray__row').filter({ hasText: '会话倒计时' })
 async function openTask(id = first): Promise<void> {
   await page.locator(`[data-task-id="${id}"]`).getByRole('button').first().click()
   await expect(page.locator('.work-task-heading h1')).toHaveText(taskTitles[id])
 }
-async function openTray(): Promise<void> {
-  if (!(await tray().isVisible())) await page.locator('.service-tray__button').click()
+async function openTray(history = false): Promise<void> {
+  // A service tray can retain its detail/history view while open; reopening resets to running services.
+  if (await serviceTrigger().getAttribute('aria-expanded') === 'true') {
+    await serviceTrigger().click(); await expect(serviceTrigger()).toHaveAttribute('aria-expanded', 'false')
+  }
+  await serviceTrigger().click()
   await expect(tray()).toBeVisible()
-  if (await tray().getByRole('button', { name: '返回活动列表', exact: true }).isVisible()) await tray().getByRole('button', { name: '返回活动列表', exact: true }).click()
-  await tray().getByRole('tab', { name: '服务', exact: true }).click()
+  if (history) {
+    await tray().getByRole('button', { name: '查看服务历史', exact: true }).click()
+    await expect(tray()).toHaveAccessibleName('服务历史列表')
+  }
 }
-async function closeTray(): Promise<void> { if (await tray().isVisible()) await page.keyboard.press('Escape') }
+async function closeTray(): Promise<void> {
+  if (await serviceTrigger().getAttribute('aria-expanded') === 'true') {
+    await page.keyboard.press('Escape'); await expect(serviceTrigger()).toHaveAttribute('aria-expanded', 'false')
+  }
+}
 async function togglePlugin(value: boolean): Promise<void> {
   await page.locator('.work-navigation').getByRole('button', { name: '插件', exact: true }).click()
   const control = page.getByRole('switch', { name: `启用插件 ${pluginName}`, exact: true })
@@ -215,16 +250,62 @@ test.describe.serial('外部插件宿主真实贡献与生命周期', () => {
     expect(app!.windows()).toHaveLength(windowCount)
   })
 
-  test('关闭插件页面后宿主倒计时继续完成并产生服务通知', async () => {
+  test('插件导出通过原生保存入口真实写盘，取消与失效页面不写盘', async () => {
+    const destination = join(fixture, 'exported.txt'), canceledPath = join(fixture, 'canceled.txt'), stalePath = join(fixture, 'stale.txt')
+    await app!.evaluate(({ dialog }, destination) => {
+      Object.assign(globalThis, { pluginSaveOriginal: dialog.showSaveDialog })
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination })
+    }, destination)
+    try {
+      await frame().getByRole('button', { name: '导出报告', exact: true }).click()
+      await expect(frame().locator('#download-result')).toHaveText(JSON.stringify({ saved: true, bytes: 600000 }))
+      expect(readFileSync(destination, 'utf8')).toBe('中文😀'.repeat(60000))
+      await app!.evaluate(({ dialog }, path) => { dialog.showSaveDialog = async () => ({ canceled: true, filePath: path }) }, canceledPath)
+      await frame().getByRole('button', { name: '导出报告', exact: true }).click()
+      await expect(frame().locator('#download-result')).toHaveText('{"saved":false}')
+      expect(existsSync(canceledPath)).toBe(false)
+      const url = (await page.locator('iframe[title="计时器页面"]').getAttribute('src'))!
+      const invalid = await page.evaluate(async url => {
+        try { await window.aether.pluginUi.download(url, { fileName: '../bad.txt', content: 'bad' }); return 'unexpected success' }
+        catch (error) { return String(error) }
+      }, url)
+      expect(invalid).toContain('有效文件名')
+      await app!.evaluate(({ dialog }) => {
+        dialog.showSaveDialog = () => new Promise(resolve => Object.assign(globalThis, { resolvePluginSave: resolve }))
+      })
+      await page.evaluate(url => {
+        Object.assign(window, { pendingPluginSave: window.aether.pluginUi.download(url, { fileName: 'stale.txt', content: 'stale' }).then(() => 'unexpected success', error => String(error)) })
+      }, url)
+      await expect.poll(() => app!.evaluate(() => typeof (globalThis as unknown as { resolvePluginSave?: unknown }).resolvePluginSave)).toBe('function')
+      const secondSave = await page.evaluate(async url => {
+        try { await window.aether.pluginUi.download(url, { fileName: 'second.txt', content: 'second' }); return 'unexpected success' }
+        catch (error) { return String(error) }
+      }, url)
+      expect(secondSave).toContain('正在保存')
+      await openTask()
+      await app!.evaluate((_, path) => {
+        (globalThis as unknown as { resolvePluginSave: (result: { canceled: boolean; filePath: string }) => void }).resolvePluginSave({ canceled: false, filePath: path })
+      }, stalePath)
+      expect(await page.evaluate(() => (window as unknown as { pendingPluginSave: Promise<string> }).pendingPluginSave)).toContain('页面已关闭')
+      expect(existsSync(stalePath)).toBe(false)
+    } finally {
+      await app!.evaluate(({ dialog }) => { dialog.showSaveDialog = (globalThis as unknown as { pluginSaveOriginal: typeof dialog.showSaveDialog }).pluginSaveOriginal })
+      await navigation().click()
+      await expect(frame().getByRole('heading')).toHaveText('自定义计时器 r1')
+    }
+  })
+
+  test('关闭插件页面后宿主倒计时继续完成并进入会话服务历史', async () => {
     await frame().locator('#start').click()
     await expect(frame().locator('#output')).toContainText('running')
     await openTask()
     await openTray()
     await expect(serviceRow()).toContainText('运行中')
-    await expect(serviceRow()).toContainText('已完成', { timeout: 10_000 })
-    await tray().getByRole('tab', { name: /^通知/ }).click()
+    await expect(serviceRow()).toHaveCount(0, { timeout: 10_000 })
+    await tray().getByRole('button', { name: '查看服务历史', exact: true }).click()
+    await expect(tray()).toHaveAccessibleName('服务历史列表')
     await expect(serviceRow()).toContainText('已完成')
-    await expect(serviceRow()).toHaveAttribute('data-unread', 'true')
+    await expect(serviceRow()).toHaveAttribute('data-service-status', 'completed')
     await closeTray()
   })
 
@@ -250,10 +331,27 @@ test.describe.serial('外部插件宿主真实贡献与生命周期', () => {
   })
 
   test('工作区标签使用相同bridge，切换会话后服务状态与上下文互不串用', async () => {
-    await page.getByRole('button', { name: '打开工作区', exact: true }).click()
-    await page.getByRole('button', { name: '更多工作区', exact: true }).click()
+    const workspaceMenu = page.locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true })
+    const pluginPanel = page.locator('[id="work-panel-plugin:extension-timer:timer-tab"]')
+    const workspacePanel = page.getByRole('region', { name: '任务工作区', exact: true })
+    const tabs = workspacePanel.getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab')
+    await workspaceMenu.click(); await page.getByRole('menuitem', { name: '资料', exact: true }).click()
+    await expect(tabs.filter({ hasText: /^资料$/ })).toHaveAttribute('aria-selected', 'true')
+    await workspaceMenu.click()
     await page.getByRole('menuitem', { name: '计时器标签', exact: true }).click()
-    await expect(page.locator('[id="work-panel-plugin:extension-timer:timer-tab"]')).toBeVisible()
+    await expect(pluginPanel).toBeVisible()
+    await expect(tabs.filter({ hasText: /^计时器标签$/ })).toHaveAttribute('aria-selected', 'true')
+    const tabOrder = await tabs.allTextContents()
+    expect(tabOrder.filter(label => label === '资料' || label === '计时器标签')).toEqual(['资料', '计时器标签'])
+    await expect(frame().locator('#context')).toContainText(`"sessionId":"${first}"`)
+    await expect(frame().locator('#services')).toContainText('completed')
+    await workspacePanel.getByRole('toolbar', { name: '工作区标签', exact: true }).getByRole('button', { name: '收起工作区', exact: true }).click()
+    await expect(page.locator('.work-workspace')).toHaveCount(0)
+    await expect(workspaceMenu).toBeVisible(); await expect(workspaceMenu).toBeFocused()
+    await workspaceMenu.click(); await page.getByRole('menuitem', { name: '计时器标签', exact: true }).click()
+    await expect(pluginPanel).toBeVisible()
+    await expect(tabs).toHaveText(tabOrder)
+    await expect(tabs.filter({ hasText: /^计时器标签$/ })).toHaveAttribute('aria-selected', 'true')
     await expect(frame().locator('#context')).toContainText(`"sessionId":"${first}"`)
     await expect(frame().locator('#services')).toContainText('completed')
     await openTask(second)
@@ -264,7 +362,7 @@ test.describe.serial('外部插件宿主真实贡献与生命周期', () => {
     await expect(frame().locator('#output')).toContainText('stopped')
     await expect(frame().locator('#output')).not.toContainText(first)
     await openTask(first)
-    await openTray()
+    await openTray(true)
     await expect(serviceRow()).toContainText('已完成')
     await closeTray()
   })
@@ -281,8 +379,7 @@ test.describe.serial('外部插件宿主真实贡献与生命周期', () => {
     await openTray()
     await expect(serviceRow()).toHaveCount(0)
     await closeTray()
-    if (await page.getByRole('button', { name: '打开工作区', exact: true }).isVisible()) await page.getByRole('button', { name: '打开工作区', exact: true }).click()
-    await page.getByRole('button', { name: '更多工作区', exact: true }).click()
+    await page.locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click()
     await expect(page.getByRole('menuitem', { name: '计时器标签', exact: true })).toHaveCount(0)
     await page.keyboard.press('Escape')
     revision = 2
@@ -297,5 +394,194 @@ test.describe.serial('外部插件宿主真实贡献与生命周期', () => {
     await expect(frame().locator('#output')).not.toContainText('r1')
     expect(invokes.filter(call => call.tool === 'start' && call.args.slow === true)).toEqual([{ revision: 1, tool: 'start', args: { slow: true } }])
     expect(invokes.at(-1)).toEqual({ revision: 2, tool: 'stop', args: {} })
+  })
+
+  test('命令、顶部菜单、状态栏与设置承载受控原生页面，并随停用撤销', async () => {
+    extended = true; revision = 3; await page.reload(); await expect(navigation()).toBeVisible()
+    await page.locator('.menu-bar__menus').getByRole('button', { name: '插件', exact: true }).click()
+    await page.getByRole('menuitem', { name: '原生控制台', exact: true }).click()
+    const native = page.locator('[data-extension-page="native"]')
+    await expect(native.getByRole('heading', { name: '原生工作台' })).toBeVisible()
+    await expect(native.locator('strong')).toHaveText('受控说明')
+    await expect(native.locator('a')).toHaveCount(0)
+    await expect(native.getByRole('button', { name: '复制代码', exact: true })).toHaveCount(0)
+    await native.getByRole('textbox', { name: '原生备注', exact: true }).fill('native-controlled-中文')
+    await native.getByRole('button', { name: '执行原生动作', exact: true }).click()
+    await expect(native.getByLabel('插件操作结果')).toContainText('native-controlled-中文')
+    expect(invokes.at(-1)).toEqual({ revision: 3, tool: 'echo', args: { text: 'native-controlled-中文' } })
+    const beforeDenied = invokes.length
+    await native.getByRole('button', { name: '拒绝未声明工具', exact: true }).click()
+    await expect(native.getByRole('alert')).toContainText('未声明该工具权限')
+    expect(invokes).toHaveLength(beforeDenied)
+    await page.locator('.status-bar').getByRole('button', { name: '扩展状态操作' }).click()
+    await expect.poll(() => invokes.at(-1)?.args.text).toBe('command-default')
+    await page.keyboard.press('Control+Alt+Shift+i')
+    await expect.poll(() => invokes.length).toBe(beforeDenied + 2)
+    await openTask(first)
+    const user = page.locator(`article[data-message-id="${first}-user"]`)
+    await user.hover(); await user.getByRole('button', { name: '消息插件操作', exact: true }).click()
+    await page.getByRole('menuitem', { name: '检查本条消息原生页', exact: true }).click()
+    await native.getByRole('textbox', { name: '原生备注', exact: true }).fill('message-targeted')
+    await native.getByRole('button', { name: '执行原生动作', exact: true }).click()
+    await expect.poll(() => invokes.at(-1)).toMatchObject({ args: { text: 'message-targeted' }, hostContext: { messageId: `${first}-user`, messageRole: 'user' } })
+    await openTask(first)
+    await page.locator('.work-navigation').getByRole('button', { name: '原生设置入口', exact: true }).click()
+    await native.getByRole('textbox', { name: '原生备注', exact: true }).fill('fresh-navigation')
+    await native.getByRole('button', { name: '执行原生动作', exact: true }).click()
+    await expect.poll(() => invokes.at(-1)?.args.text).toBe('fresh-navigation')
+    expect(invokes.at(-1)?.hostContext?.messageId).toBeUndefined()
+    await page.locator(`[data-task-id="${second}"] .work-sidebar__task`).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: '在此会话打开原生页', exact: true }).click()
+    await expect(native).toHaveAttribute('data-extension-session', second)
+    await native.getByRole('textbox', { name: '原生备注', exact: true }).fill('other-session-page')
+    await native.getByRole('button', { name: '执行原生动作', exact: true }).click()
+    await expect.poll(() => invokes.at(-1)?.args.text).toBe('other-session-page')
+    expect(invokeSessions.at(-1)).toBe(second)
+    expect(invokes.at(-1)?.hostContext?.messageId).toBeUndefined()
+    await openTask(first)
+    await expect(page.locator('[data-extension-page="native"]')).toHaveCount(0)
+    await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+    const settings = page.getByRole('dialog', { name: '设置', exact: true })
+    await settings.getByRole('textbox', { name: '搜索设置', exact: true }).fill('插件原生设置')
+    const result = settings.getByRole('option').filter({ hasText: '插件原生设置' })
+    await expect(result).toHaveCount(1)
+    await result.click()
+    await expect(settings.getByRole('tab', { name: '插件原生设置', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(settings.getByRole('textbox', { name: '原生备注', exact: true })).toHaveValue('初始备注')
+    await settings.getByRole('button', { name: '关闭', exact: true }).click()
+    await togglePlugin(false)
+    await expect(page.locator('.status-bar').getByRole('button', { name: '扩展状态操作' })).toHaveCount(0)
+    await expect(page.locator('.menu-bar__menus').getByRole('button', { name: '插件', exact: true })).toHaveCount(0)
+    const beforeShortcut = invokes.length; await page.keyboard.press('Control+Alt+Shift+i'); expect(invokes).toHaveLength(beforeShortcut)
+    await togglePlugin(true)
+  })
+
+  test('SDK命令执行与事件订阅绑定会话，取消和撤权后停止轮询', async () => {
+    await openTask(first); await navigation().click(); await expect(frame().locator('#context')).toContainText(first)
+    const output = await frame().locator('body').evaluate(async () => {
+      const sdk = (window as unknown as { $AE: { commands: { execute: (id: string, args: Record<string, unknown>) => Promise<unknown> } } }).$AE
+      return sdk.commands.execute('inspect', { text: 'sdk-command' })
+    })
+    expect(output).toMatchObject({ result: { echo: 'sdk-command' }, plugin: { revision: 3 } })
+    await frame().locator('body').evaluate(async () => {
+      const sdk = (window as unknown as { $AE: { events: { subscribe: (name: string, listener: (value: unknown) => void) => Promise<string> } } }).$AE
+      const id = await sdk.events.subscribe('agent.completed', value => { document.getElementById('output')!.textContent = JSON.stringify(value) })
+      document.body.dataset.subscription = id
+    })
+    events.push({ id: 'real-engine-event-shape', type: 'agent.completed', sessionId: first, payload: { task: 'finished' }, timestamp: Date.now(), sequence: ++eventSequence })
+    await expect(frame().locator('#output')).toContainText('real-engine-event-shape', { timeout: 10000 })
+    await frame().locator('body').evaluate(async () => {
+      const sdk = (window as unknown as { $AE: { events: { unsubscribe: (id: string) => Promise<void> } } }).$AE
+      await sdk.events.unsubscribe(document.body.dataset.subscription!)
+    })
+    const stopped = eventPolls
+    await page.waitForTimeout(1800); expect(eventPolls).toBe(stopped)
+    eventGranted = false
+    const denied = await frame().locator('body').evaluate(async () => {
+      const sdk = (window as unknown as { $AE: { events: { subscribe: (name: string, listener: () => void) => Promise<string> } } }).$AE
+      try { await sdk.events.subscribe('*', () => {}); return 'unexpected success' } catch (error) { return String(error) }
+    })
+    expect(denied).toContain('事件权限已撤销')
+    expect(eventPolls).toBe(stopped)
+  })
+
+  test('会话 ui.notify 在当前引擎全局显示，共享已读状态并保留历史', async () => {
+    // Keep the real page bridge and main-process authorization. An unsupported
+    // system notification must still leave a visible in-app notification.
+    await app!.evaluate(({ Notification }) => { Notification.isSupported = () => false })
+    const activity = () => page.locator('.status-bar .service-tray--activity .service-tray__button')
+    const activityPanel = () => page.getByRole('region', { name: '消息列表', exact: true })
+    const noticeTitle = (id: string) => `会话通知 · ${taskTitles[id]}`
+    const sendNotice = async (id: string): Promise<void> => {
+      await openTask(id); await navigation().click()
+      await expect(frame().locator('#context')).toContainText(`"sessionId":"${id}"`)
+      const result = await frame().locator('body').evaluate(async (_element, input) => {
+        const sdk = (window as unknown as { $AE: { ui: { notify: (value: { title: string; body: string }) => Promise<{ shown: boolean }> } } }).$AE
+        return sdk.ui.notify(input)
+      }, { title: noticeTitle(id), body: `来自 ${taskTitles[id]} 的完成回执` })
+      expect(result).toEqual({ shown: false })
+      await openTask(id)
+    }
+    const openActivity = async (): Promise<void> => {
+      await activity().click()
+      await expect(activityPanel()).toBeVisible()
+    }
+    const closeActivity = async (): Promise<void> => {
+      await activityPanel().getByRole('button', { name: '关闭消息', exact: true }).click()
+      await expect(activity()).toHaveAttribute('aria-expanded', 'false')
+    }
+
+    await sendNotice(first)
+    await expect(activity()).toHaveAccessibleName('消息，1 条未读')
+    await openActivity()
+    await expect(activityPanel().locator('.service-tray__row')).toHaveCount(1)
+    await expect(activityPanel().locator('.service-tray__row')).toContainText(noticeTitle(first))
+    await expect(activityPanel().locator('.service-tray__row')).toHaveAttribute('data-unread', 'true')
+    await closeActivity()
+
+    await openTask(second)
+    await expect(activity()).toHaveAccessibleName('消息，1 条未读')
+    await openActivity()
+    await expect(activityPanel().locator('.service-tray__row')).toHaveCount(1)
+    await expect(activityPanel()).toContainText(noticeTitle(first))
+    await closeActivity()
+    await sendNotice(second)
+    await expect(activity()).toHaveAccessibleName('消息，2 条未读')
+    await openActivity()
+    await expect(activityPanel().locator('.service-tray__row')).toHaveCount(2)
+    await expect(activityPanel()).toContainText(noticeTitle(second))
+    await expect(activityPanel()).toContainText(noticeTitle(first))
+    await closeActivity()
+
+    await openTask(first)
+    await expect(activity()).toHaveAccessibleName('消息，2 条未读')
+    await openActivity()
+    await expect(activityPanel()).toContainText(noticeTitle(first))
+    await expect(activityPanel()).toContainText(noticeTitle(second))
+    await activityPanel().locator('.service-tray__row').filter({ hasText: noticeTitle(first) }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: '标为已读', exact: true }).click()
+    await expect(activity()).toHaveAccessibleName('消息，1 条未读')
+    await expect(activityPanel().locator('.service-tray__row')).toHaveCount(1)
+    await expect(activityPanel()).not.toContainText(noticeTitle(first))
+    await expect(activityPanel()).toContainText(noticeTitle(second))
+    await closeActivity()
+    await page.locator('.status-bar').getByRole('button', { name: '消息历史', exact: true }).click()
+    const historyPanel = () => page.getByRole('region', { name: '消息历史列表', exact: true })
+    await expect(historyPanel()).toContainText(noticeTitle(first))
+    await expect(historyPanel()).not.toContainText(noticeTitle(second))
+    await historyPanel().getByRole('button', { name: '关闭消息历史', exact: true }).click()
+
+    await openTask(second)
+    await expect(activity()).toHaveAccessibleName('消息，1 条未读')
+    await openActivity()
+    await expect(activityPanel().locator('.service-tray__row')).toHaveAttribute('data-unread', 'true')
+    await expect(activityPanel()).toContainText(noticeTitle(second))
+    await expect(activityPanel()).not.toContainText(noticeTitle(first))
+    await activityPanel().getByRole('button', { name: '全部标为已读', exact: true }).click()
+    await expect(activity()).toHaveAccessibleName('消息')
+    await expect(activityPanel().locator('.service-tray__row')).toHaveCount(0)
+    await closeActivity()
+
+    const storageKey = sessionStorageKey('aether.activity-history.v1', engineStorageKey({ mode: 'remote', baseUrl: origin }))
+    const otherEngineKey = sessionStorageKey('aether.activity-history.v1', engineStorageKey({ mode: 'remote', baseUrl: 'https://other-engine.invalid' }))
+    await expect.poll(() => page.evaluate(key => {
+      const entries = JSON.parse(localStorage.getItem(key) ?? '[]') as Array<{ kind: string; label: string }>
+      return entries.filter(entry => entry.kind === 'notification').map(entry => entry.label).sort()
+    }, storageKey)).toEqual([noticeTitle(first), noticeTitle(second)].sort())
+    await page.evaluate(key => {
+      localStorage.setItem(key, JSON.stringify([{ id: 'foreign-engine-notice', kind: 'notification', sessionId: null,
+        label: '其他引擎的通知', detail: '不得载入当前引擎', status: 'completed', statusLabel: '已完成', tone: 'quiet', updatedAt: Date.now(), readAt: Date.now() }]))
+    }, otherEngineKey)
+    await page.reload()
+    await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
+    await openTask(second)
+    await expect(activity()).toHaveAccessibleName('消息')
+    await page.locator('.status-bar').getByRole('button', { name: '消息历史', exact: true }).click()
+    await expect(historyPanel()).toContainText(noticeTitle(first))
+    await expect(historyPanel()).toContainText(noticeTitle(second))
+    await expect(historyPanel()).not.toContainText('其他引擎的通知')
+    await expect(historyPanel().locator('.service-tray__row').filter({ hasText: '会话通知 ·' })).toHaveCount(2)
+    await historyPanel().getByRole('button', { name: '关闭消息历史', exact: true }).click()
+    expect(notificationAuthorizations).toEqual([first, first, second, second])
   })
 })

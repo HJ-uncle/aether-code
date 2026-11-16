@@ -3,11 +3,12 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { createPortal } from 'react-dom'
-import { executeCommand, isCommandEnabled, registerCommand } from '@renderer/core/platform/commands'
+import { executeCommand, getCommandsVersion, isCommandEnabled, onCommandsChanged, registerCommand } from '@renderer/core/platform/commands'
 import { recordCommandRun } from '@renderer/core/platform/commands-history'
 import { getKeybindingHint, registerKeybinding } from '@renderer/core/platform/keybindings'
 import { buildCommandItems } from './command-filter'
@@ -63,13 +64,14 @@ export function CommandPalette(): JSX.Element | null {
 }
 
 function PaletteOverlay({ open, onClose, motionProps }: { open: boolean; onClose: () => void; motionProps: ReturnType<typeof useMotionPresence>['motionProps'] }): JSX.Element {
+  const commandsVersion = useSyncExternalStore(onCommandsChanged, getCommandsVersion)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const overlay = useOverlay({ open, present: true, modal: true, panelRef, onClose })
 
-  const groups = useMemo(() => buildCommandItems(query), [query])
+  const groups = useMemo(() => buildCommandItems(query), [query, commandsVersion])
   const items = useMemo(() => groups.flatMap((group) => group.items), [groups])
 
   const run = (index: number): void => {

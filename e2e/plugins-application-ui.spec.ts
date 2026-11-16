@@ -6,6 +6,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
 import type { PluginRecord } from '../src/renderer/src/core/engine/plugins'
+import { selectOption, expectSelectedOption } from './fixtures/select'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp/plugin-app'), engineEntry = resolve(root, '../ai-agent-engine/dist/main.js')
 const origin = 'http://127.0.0.1:12591', token = 'plugin-app-disposable-token'
@@ -67,7 +68,7 @@ test('正式货币插件可直接输入、选择币种并换算，固定版本�
     const application = appRegion(page)
     await expect(application.getByRole('heading', { name: '货币换算器', exact: true })).toBeVisible()
     await expect(application).not.toContainText('未发布草稿')
-    await expect(application.getByLabel('插件功能').getByRole('option', { selected: true })).toHaveText('单笔换算')
+    await expectSelectedOption(application.getByLabel('插件功能'), 'convert', '单笔换算')
     await application.getByRole('button', { name: '运行', exact: true }).click()
     await expect(application.locator('.work-plugin-app__headline')).toHaveText('710.00 CNY')
     await expect(application.locator('.work-plugin-app__result-note')).toContainText('无可验证的数据来源和日期，非实时行情')
@@ -85,11 +86,11 @@ test('正式货币插件可直接输入、选择币种并换算，固定版本�
     const precisionReceipt = JSON.parse(await application.locator('.work-plugin-app__raw > pre').textContent() ?? '{}') as { result: Record<string, unknown> }
     expect(precisionReceipt.result).toMatchObject({ amount: 1.005, from: 'USD', to: 'CNY', rate: 3, result: 3.02, resultText: '3.02 CNY' })
     expect(precisionReceipt.result.expression).toBe('1.005 USD × 3 ≈ 3.02 CNY')
-    await application.getByLabel('目标币种', { exact: true }).selectOption('"USD"')
+    await selectOption(application.getByLabel('目标币种', { exact: true }), '"USD"', 'USD')
     await application.getByRole('button', { name: '运行', exact: true }).click()
     await expect(application.getByRole('alert')).toContainText('同币种')
     await expect(application.getByLabel('插件运行结果')).toHaveCount(0)
-    await application.getByLabel('目标币种', { exact: true }).selectOption('"CNY"')
+    await selectOption(application.getByLabel('目标币种', { exact: true }), '"CNY"', 'CNY')
     await application.getByLabel('金额', { exact: true }).fill('100000000')
     await application.getByLabel('指定汇率', { exact: true }).fill('7.12345678')
     await application.getByRole('button', { name: '运行', exact: true }).click()
@@ -97,8 +98,8 @@ test('正式货币插件可直接输入、选择币种并换算，固定版本�
     const preciseExpressionReceipt = JSON.parse(await application.locator('.work-plugin-app__raw > pre').textContent() ?? '{}') as { result: Record<string, unknown> }
     expect(preciseExpressionReceipt.result).toMatchObject({ amount: 100000000, rate: 7.12345678, rateText: '7.12345678', result: 712345678 })
     await application.getByLabel('金额', { exact: true }).fill('100')
-    await application.getByLabel('源币种', { exact: true }).selectOption('"USD"')
-    await application.getByLabel('目标币种', { exact: true }).selectOption('"CNY"')
+    await selectOption(application.getByLabel('源币种', { exact: true }), '"USD"', 'USD')
+    await selectOption(application.getByLabel('目标币种', { exact: true }), '"CNY"', 'CNY')
     await application.getByLabel('指定汇率', { exact: true }).fill('7.28')
     await application.getByLabel('指定汇率', { exact: true }).press('Enter')
     await expect(application.locator('.work-plugin-app__headline')).toHaveText('728.00 CNY')
@@ -114,9 +115,9 @@ test('正式货币插件可直接输入、选择币种并换算，固定版本�
     await screenshot(page, info.outputPath('currency-app-narrow.png'))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1320, 900))
     await page.evaluate(() => document.documentElement.dataset.appearance = 'light')
-    await application.getByLabel('插件功能').selectOption('cross_table')
-    await expect(application.getByLabel('插件功能').getByRole('option', { selected: true })).toHaveText('汇率表')
-    await application.getByLabel('基准币种', { exact: true }).selectOption('"JPY"')
+    await selectOption(application.getByLabel('插件功能'), 'cross_table', '汇率表')
+    await expectSelectedOption(application.getByLabel('插件功能'), 'cross_table', '汇率表')
+    await selectOption(application.getByLabel('基准币种', { exact: true }), '"JPY"', 'JPY')
     await application.getByLabel('金额', { exact: true }).fill('10000')
     await application.locator('.work-plugin-app__advanced > summary').click()
     await application.getByLabel('目标币种', { exact: true }).fill('["CNY","USD"]')

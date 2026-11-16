@@ -362,10 +362,11 @@ export function SubagentsPanel({ sessionId, rootRunId, tools, busy = false, acti
   const rememberFixedDetail = (run: SubagentRun, reference: PublishedChildReference): void => {
     setFixedDetails(previous => rememberPublishedDetail(previous, run, reference, { source: getEngineSource(), sessionId }))
   }
-  const continueRun = async (group: SessionSubagentGroup, draft: string): Promise<void> => {
+  const continueRun = async (group: SessionSubagentGroup, draft: string, resume = false): Promise<void> => {
     const run = fixedConversation ? continuationRun : group.latest.subagent
     if (group.latest.subagentRef && run && isSubagentActive(run.status)) return
-    if (!run?.continuation || !onContinue || !draft.trim() || group.active || fixedBusy || busy || sendingRef.current || !ready) return
+    if (!run?.continuation || !onContinue || (!resume && !draft.trim()) || group.active || fixedBusy || busy || sendingRef.current || !ready) return
+    if (resume && !['cancelled', 'failed', 'interrupted'].includes(run.status)) return
     sendingRef.current = true
     setSendingKey(group.key)
     memory.errors.delete(group.key)
@@ -377,8 +378,8 @@ export function SubagentsPanel({ sessionId, rootRunId, tools, busy = false, acti
     const current = (): boolean => mounted.current && currentGeneration === generation.current && source === getEngineSource()
       && currentSelection === selectionRef.current.generation && selectedKeyRef.current === group.key && selectedRunIdRef.current === run.runId
     try {
-      await onContinue(run, subagentFollowupMessage(draft, referencedFiles(group.key)))
-      if (current() && memory.drafts.get(group.key) === draft) {
+      await onContinue(run, resume ? '' : subagentFollowupMessage(draft, referencedFiles(group.key)))
+      if (!resume && current() && memory.drafts.get(group.key) === draft) {
         memory.drafts.delete(group.key)
         if (memory.attachments.get(group.key) === originalFiles) memory.attachments.delete(group.key)
       }
@@ -481,6 +482,9 @@ export function SubagentsPanel({ sessionId, rootRunId, tools, busy = false, acti
           {selectedTiming?.timestamp ? <time className="work-subagents__detail-time" dateTime={selectedTiming.timestamp.dateTime} title={selectedTiming.timestamp.full}>{selectedTiming.timestamp.text}</time> : null}
         </p></div>
         {activeRun ? <button type="button" className="work-subagents__stop" aria-label="停止本轮" title="停止本轮" disabled={!ready || cancellingKey !== null || activeRun.status === 'cancelling'} onClick={() => void cancelRun(selected)}>{cancellingKey === selected.key || activeRun.status === 'cancelling' ? <Spinner size={14} /> : <Icon name="stop" size={14} />}</button> : null}
+        {!activeRun && continuationRun?.continuation && ['cancelled', 'failed', 'interrupted'].includes(continuationRun.status) && onContinue ?
+          <button type="button" className="work-subagents__stop" aria-label="继续子代理任务" title="继续原任务" disabled={!ready || busy || fixedBusy || sendingKey !== null}
+            onClick={() => void continueRun(selected, '', true)}>{sendingKey === selected.key ? <Spinner size={14} /> : <Icon name="play" size={14} />}</button> : null}
         <Popover key={`${scope}:${selected.key}`} align="end" width={280} label="代理信息" className="work-subagents__info" panelClassName="work-subagents__info-panel"
           trigger={({ open }) => <button type="button" className="work-subagents__info-trigger" aria-label="代理信息" aria-expanded={open} title="代理信息"><Icon name="info" size={16} /></button>}>
           <dl className="work-subagents__facts">

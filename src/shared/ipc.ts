@@ -33,6 +33,7 @@ export const IPC = {
     engineCancelAttachmentUpload: 'engine:cancel-attachment-upload',
     engineStreamStart: 'engine:stream:start',
     engineStreamAbort: 'engine:stream:abort',
+    engineStreamAck: 'engine:stream:ack',
     settingsGet: 'settings:get',
     settingsUpdate: 'settings:update',
     graphicsGetSnapshot: 'graphics:get-snapshot',
@@ -656,6 +657,7 @@ export interface ChatSsePayload {
   userMessage?: unknown
   run?: import('./root-run').RootRun
   assistantMsgId?: string
+  assistantSegment?: { runId: string; turnId: string; attemptId: string; messageId: string; createdAt: number }
   subagentEvent?: import('./subagent').SubagentWireEvent
   content?: string
   thinking?: string
@@ -720,6 +722,8 @@ export interface EngineFileChange {
 export type { StreamEvent, StreamStartResult } from './stream-event'
 
 export interface StreamStartInput {
+  /** Pull the next payload only after this window acknowledges consumption. */
+  flowControl?: 'ack'
   /** Resume and initial streams must use the same negotiated event contract. */
   subagentProtocol?: 2
   /** Product capability profile for this stream. */

@@ -21,6 +21,8 @@ const importBuilt = new Function('specifier', 'return import(specifier)') as <T>
 const errors: string[] = [], files = new Map<string, Buffer>(), hashes = new Map<string, string>()
 let bridge: WorkbenchBridge, app: ElectronApplication | undefined, page: Page
 let fixture = '', workspace = '', connected = false, pdfPages = 0
+const originalEngineEnv = new Map<string, string | undefined>()
+let closeEngineDatabase: (() => Promise<void>) | undefined
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 type BridgeBody = { sessionId: string; actions: WorkbenchAction[]; clientToken: string; requestId: string; execution: BrowserExecutionIdentity; result: ToolResult }
 
@@ -83,6 +85,9 @@ const server = createServer((request, response) => { void (async () => {
 test.beforeAll(async () => {
   mkdirSync(tempRoot, { recursive: true }); fixture = mkdtempSync(join(tempRoot, 'office-audit-profile-'))
   workspace = join(fixture, 'workspace'); mkdirSync(workspace)
+  for (const [key, value] of Object.entries({ DATA_DIR: join(fixture, 'engine', 'fixture.db'), WORKSPACE_ROOT: workspace, HISTORY_BACKEND: 'jsonl' })) {
+    originalEngineEnv.set(key, process.env[key]); process.env[key] = value
+  }
   const engineDist = resolve(root, '../ai-agent-engine/dist')
   const { WorkbenchBridge } = await importBuilt<typeof import('../../ai-agent-engine/src/tools/workbench/bridge')>(pathToFileURL(join(engineDist, 'tools/workbench/bridge.js')).href)
   bridge = new WorkbenchBridge()
@@ -129,6 +134,10 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   try { await app?.close() } finally {
     bridge?.dispose(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
+    await closeEngineDatabase?.()
+    for (const [key, value] of originalEngineEnv) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value
+    }
     if (fixture) {
       const target = resolve(fixture)
       if (dirname(target) !== tempRoot || !basename(target).startsWith('office-audit-profile-')) throw new Error('Unsafe fixture cleanup')
@@ -142,6 +151,42 @@ async function open(name: string) {
   expect(result.success, result.output).toBe(true)
   return page.locator(`.document-preview[data-document-preview="${name.split('.').pop()}"]:visible`)
 }
+
+test('plugin execution opens the bound session workbench while retaining its independent root identity', async () => {
+  const engineDist = resolve(root, '../ai-agent-engine/dist')
+  const load = <T,>(relative: string) => importBuilt<T>(pathToFileURL(join(engineDist, relative)).href)
+  const { initDb, closeDb } = await load<typeof import('../../ai-agent-engine/src/storage/sqlite/db')>('storage/sqlite/db.js')
+  await initDb(); closeEngineDatabase = closeDb
+  const { RootRunStore } = await load<typeof import('../../ai-agent-engine/src/storage/root-runs')>('storage/root-runs/index.js')
+  const { getExecutionOwners } = await load<typeof import('../../ai-agent-engine/src/core/collaboration/execution-owner')>('core/collaboration/execution-owner.js')
+  const { createAgentContext } = await load<typeof import('../../ai-agent-engine/src/core/agent-context/factory')>('core/agent-context/factory.js')
+  const { createConversationHistory } = await load<typeof import('../../ai-agent-engine/src/storage/conversation/factory')>('storage/conversation/factory.js')
+  const { ToolRegistry } = await load<typeof import('../../ai-agent-engine/src/core/tool-registry')>('core/tool-registry/index.js')
+  const { logger } = await load<typeof import('../../ai-agent-engine/src/observability')>('observability/index.js')
+  const { bindPluginWorkbench } = await load<typeof import('../../ai-agent-engine/src/plugins/workbench-binding')>('plugins/workbench-binding.js')
+  const roots = new RootRunStore(), owners = getExecutionOwners(), controller = new AbortController()
+  const run = await roots.create('default', 'plugin-office-session', modelId, [workspace], { message: 'Open the bound session document' })
+  const owner = await owners.admitRoot({ tenantId: 'default', rootRunId: run.runId,
+    rootAttemptId: (await roots.get('default', run.runId))!.attemptId, controller })
+  const pluginContext = createAgentContext({ tenantId: 'default', sessionId: run.sessionId, rootSessionId: run.sessionId,
+    rootRunId: run.runId, executionOwner: owner, turnId: run.turnId, tools: new ToolRegistry(), history: createConversationHistory(), logger,
+    signal: controller.signal })
+  const unbind = bindPluginWorkbench(owner, { sessionId, pluginId: 'office-review' })
+  try {
+    const context = await bridge.execute('workspace.context', {}, pluginContext)
+    expect(context.success, context.output).toBe(true)
+    expect(JSON.parse(context.output)).toMatchObject({ foreground: true })
+    const result = await bridge.execute('artifact.open', { path: join(workspace, 'content.docx') }, pluginContext)
+    expect(result.success, result.output).toBe(true)
+    await expect(page.locator('.document-preview[data-document-preview="docx"]:visible')).toBeVisible()
+    expect(pluginContext.rootSessionId).toBe('plugin-office-session')
+    expect(pluginContext.rootRunId).toBe(run.runId)
+    expect(errors).toEqual([])
+  } finally {
+    unbind(); owners.registerCompletion(owner, Promise.resolve())
+    await roots.finishOwned(owner, { status: 'succeeded' }); owners.releaseRoot(owner); controller.abort()
+  }
+})
 
 test('Word preserves hard breaks and long content without claiming section counts are page counts', async ({}, info) => {
   const preview = await open('content.docx')

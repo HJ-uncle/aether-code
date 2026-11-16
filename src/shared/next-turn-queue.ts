@@ -39,9 +39,11 @@ export interface QueueAttachmentReceipt {
   receiptId: string
   sha256: string
 }
+export interface QueueContinuationTarget { runId: string; attemptId: string; version: number; turnId: string; childRunId?: string }
+export interface QueueAdmissionReceipt { runId: string; turnId: string; userMessageId: string; assistantMessageId: string; attemptId?: string }
 export interface NextTurnQueueEnvelope {
   /** Main-owned continuation identity; retained even after the linked run finishes. */
-  recovery?: { runId: string }
+  recovery?: { runId: string; attemptId?: string; version?: number; turnId?: string; childRunId?: string }
   /** Main-owned enqueue identity; no provider or credential fields are stored. */
   submissionDigest?: string
   draft: { text: string; revision: number; mentions: QueueMention[] }
@@ -90,7 +92,7 @@ export type NextTurnQueueEntry =
   | (QueueEntryBase & {
       phase: 'accepted' | 'terminal'
       frozen: FrozenQueueSubmission
-      receipt: { runId: string; turnId: string; userMessageId: string; assistantMessageId: string }
+      receipt: QueueAdmissionReceipt
       /** Exact engine receipt evidence, independent of admission and final outcome. */
       startedAt?: number
       outcome?: 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
@@ -126,7 +128,7 @@ export type NextTurnQueueOwnerMutation =
   | { kind: 'recover-interrupted-submissions'; at: number }
   | { kind: 'claim'; id: string; entryRevision: number; frozen: FrozenQueueSubmission; at: number }
   | { kind: 'admission-unknown'; id: string; reason: string; at: number }
-  | { kind: 'accepted'; id: string; receipt: { runId: string; turnId: string; userMessageId: string; assistantMessageId: string }; startedAt?: number; at: number }
+  | { kind: 'accepted'; id: string; receipt: QueueAdmissionReceipt; startedAt?: number; at: number }
   | { kind: 'confirmed-start'; id: string; startedAt: number; at: number }
   | { kind: 'terminal'; id: string; outcome: 'succeeded' | 'failed' | 'cancelled' | 'interrupted'; at: number }
 

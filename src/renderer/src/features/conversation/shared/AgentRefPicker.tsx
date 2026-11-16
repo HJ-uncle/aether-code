@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
-import { subscribeAgentCatalogueChanges } from '@renderer/core/engine/agent-catalogue'
+import { agentReferenceCache, startReferenceCatalogues } from '@renderer/core/engine/reference-catalogues'
+import { useCatalogue } from '@renderer/core/engine/use-catalogue'
 import { agentMentionSearch, type AgentReferenceIdentity } from './agent-references'
 import { isMotionInteractive } from '@renderer/ui/motion'
 import { isTopOverlay } from '@renderer/ui/overlay'
@@ -16,37 +17,22 @@ const builtinAgents: AgentReferenceIdentity[] = BUILTIN_AGENTS.map(item => ({
 /** Data only: grouped completion owns one keyboard controller for every kind. */
 export function useAgentReferences(query: string) {
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
-  const [agents, setAgents] = useState<AgentReferenceIdentity[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [reload, setReload] = useState(0)
-  useEffect(() => subscribeAgentCatalogueChanges(() => setReload(value => value + 1)), [])
-  useEffect(() => {
-    let alive = true
-    setLoading(true)
-    setAgents([])
-    setError(null)
-    void requestOrThrow<AgentReferenceIdentity[] | { list?: AgentReferenceIdentity[] }>({
+  useEffect(startReferenceCatalogues, [])
+  const catalogue = useCatalogue(agentReferenceCache, String(source), true, async () => {
+    const res = await requestOrThrow<AgentReferenceIdentity[] | { list?: AgentReferenceIdentity[] }>({
       method: 'GET', path: '/agents'
-    }).then(res => {
-      if (!alive || source !== getEngineSource()) return
-      const rows = Array.isArray(res) ? res : res.list ?? []
-      setAgents(rows.filter(item => typeof item.id === 'string' && Boolean(item.id.trim()) &&
-        typeof item.name === 'string' && Boolean(item.name.trim())))
-      setLoading(false)
-    }).catch(cause => {
-      if (alive && source === getEngineSource()) {
-        setLoading(false)
-        setError(cause instanceof Error ? cause.message : '无法读取 Agent 列表')
-      }
     })
-    return () => { alive = false }
-  }, [source, reload])
-  const filtered = useMemo(() => {
+    const rows = Array.isArray(res) ? res : res.list ?? []
+    return rows.filter(item => typeof item.id === 'string' && Boolean(item.id.trim()) &&
+      typeof item.name === 'string' && Boolean(item.name.trim()))
+      .map(({ id, name, description }) => ({ id, name, description }))
+  })
+  const agents = catalogue.value
+  const filtered = useMemo<AgentReferenceIdentity[]>(() => {
     const needle = (agentMentionSearch(query) ?? query).trim().toLowerCase()
-    return [...builtinAgents, ...agents].filter(item => !needle || `${item.name} ${item.id} ${item.description ?? ''}`.toLowerCase().includes(needle)).slice(0, 20)
+    return [...builtinAgents, ...(agents ?? [])].filter(item => !needle || `${item.name} ${item.id} ${item.description ?? ''}`.toLowerCase().includes(needle)).slice(0, 20)
   }, [agents, query])
-  return { filtered, loading, error, retry: () => setReload(value => value + 1) }
+  return { filtered, loading: catalogue.loading, error: catalogue.error, retry: catalogue.retry }
 }
 
 export function selectedAgentReference(agent: AgentReferenceIdentity): AgentReferenceIdentity {

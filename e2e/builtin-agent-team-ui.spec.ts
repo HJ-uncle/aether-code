@@ -247,10 +247,9 @@ test('builtin instances, resume and live followup keep their exact child identit
     await expect(parentReply).not.toContainText('<think>')
     await expect(work.locator('[data-producer-child-session="child-context-1"]')).toBeVisible()
     const workspace = work.getByRole('region', { name: '任务工作区', exact: true })
-    if (!await workspace.isVisible()) await work.getByRole('button', { name: '打开工作区', exact: true }).click()
     const tab = workspace.getByRole('tab', { name: '子代理', exact: true })
     if (await tab.isVisible()) await tab.click()
-    else { await workspace.getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
+    else { await work.locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
     const panel = workspace.getByRole('region', { name: '协作代理', exact: true })
     await expect(panel.locator('.work-subagents__row')).toHaveCount(2)
     await expect(panel.getByRole('button', { name: '查看 执行代理 2 子代理详情', exact: true })).toContainText('待回答')
@@ -437,10 +436,9 @@ test('builtin instances, resume and live followup keep their exact child identit
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
     await expect(work).toBeVisible()
     const restoredWorkspace = work.getByRole('region', { name: '任务工作区', exact: true })
-    if (!await restoredWorkspace.isVisible()) await work.getByRole('button', { name: '打开工作区', exact: true }).click()
     const restoredTab = restoredWorkspace.getByRole('tab', { name: '子代理', exact: true })
     if (await restoredTab.isVisible()) await restoredTab.click()
-    else { await restoredWorkspace.getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
+    else { await work.locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
     await panel.getByRole('button', { name: '查看 执行代理 2 子代理详情', exact: true }).click()
     await expect(panel.locator('.work-subagents__heading')).toContainText('会话历史')
     await expect(panel.getByRole('region', { name: '执行代理 2 的对话', exact: true })).toContainText('请适配 macOS')

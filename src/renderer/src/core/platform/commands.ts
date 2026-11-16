@@ -13,6 +13,8 @@ export interface CommandDefinition {
   category?: string
   /** 条件表达式，不满足时命令不可执行（见 context-keys） */
   when?: string
+  /** Runtime contributions can depend on a host session without string expressions. */
+  enabled?: () => boolean
   run: () => void | Promise<void>
 }
 
@@ -22,8 +24,11 @@ export interface CommandEntry extends CommandDefinition {
 
 const registry = new Map<string, CommandEntry>()
 const listeners = new Set<() => void>()
+let version = 0
+export const getCommandsVersion = (): number => version
 
 function notify(): void {
+  version++
   for (const listener of listeners) listener()
 }
 
@@ -58,7 +63,7 @@ export function getAllCommands(): CommandEntry[] {
 /** 命令当前是否可执行（when 条件满足） */
 export function isCommandEnabled(id: string): boolean {
   const entry = registry.get(id)
-  return !!entry && evaluateWhen(entry.when)
+  return !!entry && evaluateWhen(entry.when) && (entry.enabled?.() ?? true)
 }
 
 /**
@@ -73,7 +78,7 @@ export async function executeCommand(id: string): Promise<void> {
     console.warn(`[commands] 未注册的命令: ${id}`)
     return
   }
-  if (!evaluateWhen(entry.when)) return
+  if (!isCommandEnabled(id)) return
 
   try {
     await entry.run()

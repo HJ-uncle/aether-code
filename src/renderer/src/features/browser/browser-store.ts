@@ -9,6 +9,15 @@ import { toast } from '@renderer/core/toast'
 import { getBrowserPresentationScope, getBrowserSurfaceOwner, onBrowserPresentationChanged } from '@renderer/core/browser/presentation'
 import { BrowserScopeRegistry, browserScopeKey } from '@renderer/core/browser/scope'
 import type { ClientSurfaceScope } from '@renderer/core/platform/surface-scope'
+import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
+import { closePluginDevelopment, openPluginDevelopment, refreshPluginDevelopment, pluginDevelopmentPath, type PluginDevelopmentSession } from '@renderer/core/engine/plugins'
+import { requestOrThrow } from '@renderer/core/engine/client'
+import { extensionRegistry } from '../extensions/registry'
+import { extensionId, type ExtensionContext, type ExtensionPage } from '../extensions/types'
+
+export interface PluginBrowserDocument { page: ExtensionPage; context: ExtensionContext; development?: PluginDevelopmentSession; generation: number; presentation: NonNullable<BrowserTabState['presentation']> }
+const pluginDocuments = new Map<string, PluginBrowserDocument>()
+export const getPluginBrowserDocument = (tabId: string): PluginBrowserDocument | undefined => pluginDocuments.get(tabId)
 
 interface BrowserState {
   tabs: BrowserTabState[]
@@ -39,6 +48,74 @@ function publish(patch: Partial<BrowserState>): void {
   state = { ...state, ...patch }
   for (const listener of listeners) listener()
 }
+function pluginTab(document: PluginBrowserDocument, tabId: string): BrowserTabState {
+  const { page, development } = document
+  return { tabId, url: `aether-plugin:${page.identity.pluginId}/${page.localId}`, title: page.title,
+    loading: false, canGoBack: false, canGoForward: false, zoomFactor: 1, viewport: null, navigationId: document.generation,
+    presentation: document.presentation,
+    pluginPage: { pluginId: page.identity.pluginId, pageId: page.localId, revision: page.identity.revision, development: Boolean(development) } }
+}
+function updatePluginDocument(tabId: string, value: PluginBrowserDocument): void {
+  pluginDocuments.set(tabId, value); receive({ type: 'changed', tabId, tab: pluginTab(value, tabId) })
+}
+/** Only structured registered plugin identities can enter this renderer-owned surface. */
+export async function openPluginBrowserPage(page: ExtensionPage, context: ExtensionContext, development?: PluginDevelopmentSession): Promise<void> {
+  const source = getEngineSource(), scope = browserScopeKey(getBrowserSurfaceOwner())
+  if (page.identity.source !== source || !development && !extensionRegistry.has(page.identity)) throw new Error('插件版本已变化，请重新打开。')
+  if (page.declaration?.kind !== 'webview') throw new Error('此插件没有自定义页面。')
+  await initializeBrowser()
+  if (source !== getEngineSource() || scope !== browserScopeKey(getBrowserSurfaceOwner())) return
+  if (pluginDocuments.size >= 16) throw new Error('已打开 16 个插件页面，请先关闭不需要的标签。')
+  const owner = getBrowserSurfaceOwner()
+  let document: PluginBrowserDocument = { page, context: { ...context }, generation: 1, presentation: { ...owner, sessionId: owner.sessionId ?? null } }
+  if (development) {
+    const opened = await openPluginDevelopment(development.path)
+    try {
+      if (source !== getEngineSource() || scope !== browserScopeKey(getBrowserSurfaceOwner())) throw new Error('会话或引擎已变化。')
+      if (opened.session.hash !== development.hash || !opened.application) throw new Error('源码已变化，请刷新开发预览后重试。')
+      let session = opened.session
+      if (development.permissionGrants?.length) {
+        const value = await requestOrThrow<{ session: PluginDevelopmentSession }>({ method: 'PUT', path: `${pluginDevelopmentPath(session.devSessionId)}/permissions`, body: { grants: development.permissionGrants, revision: session.revision, hash: session.hash } })
+        if (value.session.devSessionId !== session.devSessionId || value.session.hash !== session.hash) throw new Error('开发权限回执已失效。')
+        session = value.session
+      }
+      if (source !== getEngineSource() || scope !== browserScopeKey(getBrowserSurfaceOwner())) throw new Error('会话或引擎已变化。')
+      document = { ...document, development: session, page: { ...page, application: opened.application, identity: { ...page.identity, revision: session.revision, hash: session.hash, instanceId: `${session.devSessionId}:${session.hash}` } } }
+    } catch (error) { if (source === getEngineSource()) await closePluginDevelopment(opened.session).catch(() => {}); throw error }
+  }
+  const tabId = `plugin:${crypto.randomUUID()}`
+  pluginDocuments.set(tabId, document); receive({ type: 'created', tabId, tab: pluginTab(document, tabId) }); revealBrowserTab(tabId)
+}
+export async function closeBrowserTab(tabId: string): Promise<void> {
+  const document = pluginDocuments.get(tabId)
+  if (!document) { await window.aether.browser.close(tabId); return }
+  if (document.development && document.page.identity.source === getEngineSource()) await closePluginDevelopment(document.development)
+  pluginDocuments.delete(tabId); receive({ type: 'closed', tabId })
+}
+export async function reloadBrowserTab(tabId: string): Promise<void> {
+  const document = pluginDocuments.get(tabId)
+  if (!document) { await window.aether.browser.action({ tabId, action: 'reload' }); return }
+  if (document.development) {
+    const value = await refreshPluginDevelopment(document.development)
+    if (pluginDocuments.get(tabId) !== document || document.page.identity.source !== getEngineSource()) return
+    const page = value.application?.manifest.contributes?.pages?.find(item => item.id === document.page.localId)
+    if (!value.application || page?.kind !== 'webview') throw new Error('源码中已移除此页面。')
+    updatePluginDocument(tabId, { ...document, development: value.session, generation: document.generation + 1,
+      page: { ...document.page, id: extensionId(value.session.manifest.id, page.id), title: page.title, scope: page.scope ?? 'global', declaration: page, application: value.application, identity: { ...document.page.identity, pluginId: value.session.manifest.id, revision: value.session.revision, hash: value.session.hash, instanceId: `${value.session.devSessionId}:${value.session.hash}` } } })
+  } else {
+    if (!extensionRegistry.has(document.page.identity)) throw new Error('插件已停用或版本已变化。')
+    updatePluginDocument(tabId, { ...document, generation: document.generation + 1 })
+  }
+}
+export function navigatePluginBrowserPage(tabId: string, target: string): void {
+  const document = pluginDocuments.get(tabId)
+  if (!document) return
+  const declaration = document.page.application?.manifest.contributes?.pages?.find(page => extensionId(document.page.identity.pluginId, page.id) === target)
+  if (!declaration || declaration.kind !== 'webview') throw new Error('此浏览器标签只能打开同一插件的自定义页面。')
+  updatePluginDocument(tabId, { ...document, generation: document.generation + 1, page: { ...document.page, id: target, localId: declaration.id, title: declaration.title, declaration } })
+}
+subscribeEngineSource(() => { for (const tabId of pluginDocuments.keys()) { pluginDocuments.delete(tabId); receive({ type: 'closed', tabId }) } })
+extensionRegistry.subscribe(() => { for (const [tabId, document] of pluginDocuments) if (!document.development && !extensionRegistry.has(document.page.identity)) { pluginDocuments.delete(tabId); receive({ type: 'closed', tabId }) } })
 export function getBrowserState(mode?: ClientSurfaceScope): BrowserState {
   const scope = mode ? getBrowserPresentationScope(mode) : getBrowserSurfaceOwner()
   const key = browserScopeKey(scope), cached = snapshots.get(key)
@@ -165,7 +242,7 @@ export async function hideBrowserSurfaces(stillHidden: () => boolean = () => tru
   await initializeBrowser()
   if (!stillHidden() || surface !== getBrowserSurfaceOwner()) return
   await Promise.all(
-    getBrowserState().tabs.map((tab) =>
+    getBrowserState().tabs.filter(tab => !tab.pluginPage).map((tab) =>
       window.aether.browser
         .setBounds({
           tabId: tab.tabId,
@@ -185,6 +262,7 @@ export function browserAction(operation: () => Promise<unknown>): void {
 }
 
 export function disposeBrowser(): void {
+  for (const tabId of pluginDocuments.keys()) void closeBrowserTab(tabId).catch(() => {})
   unsubscribe?.()
   unsubscribe = undefined
   starting = undefined

@@ -132,7 +132,7 @@ export function createSessionNextTurnOwner(ports: SessionQueueOwnerPorts) {
     if (!action || typeof action !== 'object') throw new NextTurnQueueError('INVALID', 'Queue action is missing')
     switch (action.kind) {
       case 'restart':
-        return dispatcher.restart(input.taskId, action.runId)
+        return dispatcher.restart(input.taskId, action.target)
       case 'read': {
         const value = await dispatcher.read(input.taskId)
         const candidate = epoch

@@ -161,6 +161,7 @@ test('安全模式点击与键盘切换写入当前会话，另一会话保持�
   expect(writes().at(-1)).toEqual({ method: 'PUT', path: '/api/v1/security/mode', query: {}, body: { sessionId: resourceTasks[0].id, mode: 'standard' } })
   await mode('标准模式').focus(); await page.keyboard.press('End'); await expect(mode('完全访问')).toBeChecked()
   await expect(mode('完全访问')).toBeFocused()
+  await expect(mode('完全访问')).toContainText('本会话操作确认自动通过；提问仍需回答')
   expect(fixture.modes).toEqual({ [resourceTasks[0].id]: 'full-access', [resourceTasks[1].id]: 'standard' })
   await mode('完全访问').focus(); await page.keyboard.press('Home'); await expect(mode('安全模式')).toBeChecked()
   await expect(mode('安全模式')).toBeFocused()

@@ -249,12 +249,10 @@ const tree = (): Locator => work().getByRole('region', { name: '工作区文件'
 const exactRow = (relative: string, owner = taskA): Locator => tree().locator(`[role="treeitem"][data-path="${roots.get(owner)}${relative ? '/' + relative : ''}"]`)
 const codePreview = (): Locator => work().getByRole('region', { name: 'demo.ts 代码预览', exact: true })
 async function openWorkspace(): Promise<void> {
-  const trigger = work().getByRole('button', { name: '打开工作区', exact: true })
-  if (await trigger.isVisible()) await trigger.click()
   const tab = work().getByRole('tab', { name: '工作区', exact: true })
   if (await tab.isVisible()) await tab.click()
   else {
-    await work().getByRole('button', { name: '更多工作区', exact: true }).click()
+    await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click()
     await page.getByRole('menuitem', { name: '工作区', exact: true }).click()
   }
   await expect(tree()).toBeVisible()

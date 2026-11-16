@@ -1,6 +1,7 @@
 import { normalizeRootRunActivity, normalizeRootRunCompaction, normalizeRootRunRequestConfig, type RootRun, type RootRunStatus } from '@shared/root-run'
 import type { ChatMessage } from './useChat'
 import { normalizeRunPending } from './pending'
+import { mergeContinuationAssistantSegments } from './chat-timeline'
 
 const statuses: RootRunStatus[] = ['running', 'waiting', 'succeeded', 'failed', 'cancelled', 'interrupted']
 export function normalizeRootRun(raw: unknown): RootRun | undefined {
@@ -39,6 +40,34 @@ export function applyRootRun(
   messages: ChatMessage[], run: RootRun,
   optimistic?: { userId?: string; assistantId?: string }
 ): ChatMessage[] {
+  if (messages.some(message => message.run?.runId === run.runId && message.run.version > run.version)) return messages
+  const receipt = run.continuationReceipt
+  const continued = receipt?.protocolVersion === 1 && receipt.rootRunId === run.runId && receipt.turnId === run.turnId &&
+    receipt.sessionId === run.sessionId && receipt.attemptId === run.attemptId && receipt.previousAttemptId !== receipt.attemptId &&
+    receipt.assistantIdentityKind === 'continuation-segment'
+  const resumedDecision = run.attemptId && messages.some(message => message.run?.runId === run.runId && message.run.turnId === run.turnId &&
+    message.run.attemptId && message.run.attemptId !== run.attemptId && message.run.version < run.version && message.run.assistantMessageId !== run.assistantMessageId)
+  if ((continued || resumedDecision) && run.assistantMessageId &&
+    !messages.some(message => message.role === 'assistant' && (message.id === run.assistantMessageId ||
+      message.runId === run.runId && message.attemptId === run.attemptId))) {
+    const previous = messages.findLastIndex(message => message.runId === run.runId || message.conversationId === run.turnId || message.id === run.userMessageId)
+    if (previous >= 0) {
+      messages = [...messages]
+      messages.splice(previous + 1, 0, { id: run.assistantMessageId, runId: run.runId, attemptId: run.attemptId,
+        conversationId: run.turnId, role: 'assistant', content: '', thinking: '', tools: [], items: [],
+        status: rootStatus(run.status), createdAt: continued ? receipt!.acceptedAt : run.updatedAt, startedAt: run.startedAt })
+    }
+  }
+  // A continuation gets a new durable segment, but the conversation surface
+  // must read as one answer. Merge only the exact server-declared predecessor;
+  // steering/follow-up turns without a continuation receipt remain separate.
+  if (continued) {
+    messages = mergeContinuationAssistantSegments(messages, {
+      runId: run.runId, turnId: run.turnId, previousAttemptId: receipt!.previousAttemptId,
+      previousMessageId: receipt!.assistantAnchorId,
+      attemptId: run.attemptId!, messageId: run.assistantMessageId!,
+    })
+  }
   let assistantFound = false
   // Steering splits one root into several transcript segments. Only its last
   // assistant owns the live status, final identity and unanswered interaction.
@@ -93,6 +122,7 @@ export function applyRootRun(
       : undefined
     return {
       ...base,
+      attemptId: message.attemptId ?? (current ? run.attemptId : undefined),
       id: current ? run.assistantMessageId || message.id : message.id === run.assistantMessageId
         ? `segment:${run.runId}:before:${boundary?.id ?? message.createdAt}` : message.id,
       status: current ? rootStatus(run.status) : 'done',

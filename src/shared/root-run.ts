@@ -34,6 +34,7 @@ export interface RootPending {
   options?: unknown[]
   status: 'pending' | 'answered'
   output?: string
+  sourceChangeWait?: Record<string, unknown>
 }
 /** Only safe scalar composer settings are returned by the engine. */
 export interface RootRunRequestConfig {
@@ -103,6 +104,15 @@ export interface RootRun {
   turnId: string
   userMessageId: string
   assistantMessageId: string
+  /** Execution generation changes on continuation; transcript/run identity remains stable. */
+  attemptId?: string
+  continuationReceipt?: {
+    protocolVersion: 1; rootRunId: string; turnId: string; sessionId: string
+    requestKey: string; attemptId: string; previousAttemptId: string
+    rootVersion: number; rootSequence: number; acceptedAt: number
+    assistantIdentityKind: 'continuation-segment'; assistantAnchorId: string
+    userMessageId: string; assistantMessageId: string
+  }
   version: number
   seq: number
   status: RootRunStatus

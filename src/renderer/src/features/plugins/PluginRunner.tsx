@@ -3,13 +3,14 @@ import { getPluginApplication, invokePluginApplication, type PluginApplication, 
 import { getEngineSource } from '@renderer/core/engine/source'
 import { subscribeResourceCatalogueChanges } from '@renderer/core/engine/resource-catalogue'
 import { Icon } from '@renderer/ui/icons'
+import { Select } from '@renderer/ui/Select'
 import { parsePluginForm, pluginFormDefaults, pluginFormFields, pluginObject, pluginResultHeadlineKey, pluginResultTable, pluginToolTitle, pluginValueText, type PluginFormField, type PluginFormValues } from './plugin-form'
 import './plugin-runner.css'
 
 function ResultValue({ value, depth = 0 }: { value: unknown; depth?: number }): JSX.Element {
   const table = pluginResultTable(value)
   if (table) return <div className="work-plugin-app__table-wrap"><table><thead><tr>{table.columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{table.rows.map((row, index) => <tr key={index}>{table.columns.map(column => <td key={column}>{pluginValueText(row[column])}</td>)}</tr>)}</tbody></table>{table.total > table.rows.length ? <p>已显示前 {table.rows.length} 项，共 {table.total} 项。完整内容见原始结果。</p> : null}</div>
-  if (pluginObject(value) && depth < 2) return <dl className="work-plugin-app__values">{Object.entries(value).slice(0, 64).map(([key, child]) => <div key={key}><dt>{key}</dt><dd>{pluginObject(child) || Array.isArray(child) ? <ResultValue value={child} depth={depth + 1} /> : pluginValueText(child)}</dd></div>)}</dl>
+  if (pluginObject(value) && depth < 2) return <dl className="work-plugin-app__values">{Object.entries(value).map(([key, child]) => <div key={key}><dt>{key}</dt><dd>{pluginObject(child) || Array.isArray(child) ? <ResultValue value={child} depth={depth + 1} /> : pluginValueText(child)}</dd></div>)}</dl>
   if (Array.isArray(value) && value.length <= 100) return <ul>{value.map((item, index) => <li key={index}>{pluginValueText(item)}</li>)}</ul>
   return <span>{pluginValueText(value)}</span>
 }
@@ -30,7 +31,7 @@ function InvocationResult({ output }: { output: PluginInvocation }): JSX.Element
     {tables.map(([key, value]) => <div key={key}><h3>{key}</h3><ResultValue value={value} /></div>)}
     {headline ? pluginObject(details) && Object.keys(details).length ? <details><summary>计算详情</summary><ResultValue value={details} /></details> : null : <ResultValue value={details} />}
     {output.artifacts.length ? <div className="work-plugin-app__artifacts"><h3>文件预览</h3><p>以下内容尚未写入工作区。</p>{output.artifacts.map((artifact, index) => <details key={index}><summary>{artifact.path}</summary>{artifact.encoding === 'base64' ? <p>二进制文件内容见原始结果。</p> : <pre>{artifact.content}</pre>}</details>)}</div> : null}
-    <details className="work-plugin-app__raw"><summary>原始结果</summary><pre>{JSON.stringify(output, null, 2)}</pre></details>
+    <details className="work-plugin-app__raw"><summary>原始结果</summary>{output.stderrTruncated ? <p>运行日志仅显示末尾预览。</p> : null}<pre>{JSON.stringify(output, null, 2)}</pre></details>
   </section>
 }
 
@@ -38,20 +39,20 @@ function Field({ field, value, error, disabled, prefix, onChange }: { field: Plu
   const id = `${prefix}-${encodeURIComponent(field.key)}`, help = `${id}-help`, alert = `${id}-error`
   const common = { id, 'aria-label': field.label, 'aria-invalid': Boolean(error), 'aria-describedby': [field.description ? help : '', error ? alert : ''].filter(Boolean).join(' ') || undefined, disabled }
   const control = field.kind === 'boolean'
-    ? field.required ? <input {...common} type="checkbox" checked={value === true} onChange={event => onChange(event.target.checked)} /> : <select {...common} className="ui-input" value={String(value)} onChange={event => onChange(event.target.value)}><option value="">使用默认值</option><option value="true">是</option><option value="false">否</option></select>
+    ? field.required ? <input {...common} type="checkbox" checked={value === true} onChange={event => onChange(event.target.checked)} /> : <Select id={id} ariaLabel={field.label} ariaDescribedBy={common['aria-describedby']} ariaInvalid={Boolean(error)} disabled={disabled} value={String(value)} options={[{ value: '', label: '使用默认值' }, { value: 'true', label: '是' }, { value: 'false', label: '否' }]} onChange={next => onChange(next)} />
     : field.kind === 'enum'
-      ? <select {...common} className="ui-input" value={String(value)} onChange={event => onChange(event.target.value)}>{!field.required ? <option value="">使用默认值</option> : null}{field.choices?.map((choice, index) => <option key={index} value={JSON.stringify(choice)}>{pluginValueText(choice)}</option>)}</select>
+      ? <Select id={id} ariaLabel={field.label} ariaDescribedBy={common['aria-describedby']} ariaInvalid={Boolean(error)} disabled={disabled} value={String(value)} options={[...(!field.required ? [{ value: '', label: '使用默认值' }] : []), ...(field.choices ?? []).map(choice => ({ value: JSON.stringify(choice), label: pluginValueText(choice) }))]} onChange={next => onChange(next)} />
       : field.kind === 'json'
         ? <textarea {...common} className="ui-input work-plugin-app__json" spellCheck={false} rows={4} value={String(value)} onChange={event => onChange(event.target.value)} placeholder={field.schema.type === 'array' ? '[]' : '{}'} />
         : <input {...common} className="ui-input" type={field.kind === 'string' ? 'text' : 'number'} step={field.kind === 'integer' ? 1 : 'any'} value={String(value)} onChange={event => onChange(event.target.value)} />
-  return <div className={`work-plugin-app__field${field.kind === 'boolean' ? ' work-plugin-app__field--boolean' : ''}`}>
+  return <div className={`work-plugin-app__field${field.kind === 'boolean' && field.required ? ' work-plugin-app__field--boolean' : ''}`}>
     <label htmlFor={id}>{field.label}{field.required ? <span className="work-plugin-app__required">必填</span> : null}</label>{control}
     {field.description ? <p id={help}>{field.description}</p> : null}{error ? <p id={alert} className="work-plugin-app__field-error" role="alert">{error}</p> : null}
   </div>
 }
 
 /** A published tool application uses host-native controls, never author-supplied scripts. */
-export function PluginRunner({ id, name, revision, onBack, onEdit, initialTool }: { id: string; name: string; revision: number; onBack: () => void; onEdit: () => void; initialTool?: string }): JSX.Element {
+export function PluginRunner({ id, name, revision, onBack, onEdit, initialTool, sessionId }: { id: string; name: string; revision: number; onBack: () => void; onEdit: () => void; initialTool?: string; sessionId?: string | null }): JSX.Element {
   const source = getEngineSource(), active = useRef(true), epoch = useRef(0), prefix = useId()
   const [application, setApplication] = useState<PluginApplication | null>(null), [loading, setLoading] = useState(true), [running, setRunning] = useState(false)
   const [error, setError] = useState(''), [blocked, setBlocked] = useState(''), [toolName, setToolName] = useState(''), [values, setValues] = useState<PluginFormValues>({})
@@ -76,7 +77,7 @@ export function PluginRunner({ id, name, revision, onBack, onEdit, initialTool }
     }).catch(cause => { if (current(captured)) setError(cause instanceof Error ? cause.message : String(cause)) })
       .finally(() => { if (current(captured)) setLoading(false) })
     return () => { active.current = false; epoch.current++ }
-  }, [id, revision, source, initialTool])
+  }, [id, revision, source, initialTool, sessionId])
   useEffect(() => subscribeResourceCatalogueChanges(['plugin'], change => {
     if (change.id !== id) return
     epoch.current++; setLoading(false); setRunning(false); setOutput(null)
@@ -99,7 +100,7 @@ export function PluginRunner({ id, name, revision, onBack, onEdit, initialTool }
     }
     const captured = ++epoch.current
     setRunning(true); setError(''); setOutput(null)
-    try { const result = await invokePluginApplication(application, tool.name, args); if (current(captured)) setOutput(result) }
+    try { const result = await invokePluginApplication(application, tool.name, args, sessionId); if (current(captured)) setOutput(result) }
     catch (cause) { if (current(captured)) setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { if (current(captured)) setRunning(false) }
   }
@@ -108,7 +109,7 @@ export function PluginRunner({ id, name, revision, onBack, onEdit, initialTool }
     <header className="work-plugins__heading work-plugins__heading--detail"><div className="work-plugins__title"><button className="btn btn--icon btn--ghost" type="button" aria-label="返回插件列表" title="返回插件列表" onClick={onBack}><Icon name="chevron-left" size={19} /></button><div><h1>{application?.name ?? name}</h1><p>{application?.description ?? `发布版本 r${revision}`}</p></div></div><button type="button" className="btn btn--icon btn--ghost" aria-label="编辑插件" title="编辑插件" disabled={running} onClick={onEdit}><Icon name="file-edit-outline" size={17} /></button></header>
     {loading ? <p className="work-plugin-app__loading" role="status">正在打开插件…</p> : application ? <>
       <div className="work-plugin-app__canvas"><form noValidate onSubmit={event => { event.preventDefault(); void submit() }}>
-        <div className="work-plugin-app__tool"><label htmlFor={`${prefix}-tool`}>功能</label><select id={`${prefix}-tool`} aria-label="插件功能" className="ui-input" value={toolName} disabled={running || Boolean(blocked)} onChange={event => chooseTool(application, event.target.value)}>{application.manifest.tools.map(item => <option key={item.name} value={item.name}>{pluginToolTitle(item)}</option>)}</select><span>r{application.revision}</span></div>
+        <div className="work-plugin-app__tool"><label htmlFor={`${prefix}-tool`}>功能</label><Select id={`${prefix}-tool`} ariaLabel="插件功能" value={toolName} disabled={running || Boolean(blocked)} options={application.manifest.tools.map(item => ({ value: item.name, label: pluginToolTitle(item), description: item.description }))} onChange={value => chooseTool(application, value)} /><span>r{application.revision}</span></div>
         <p className="work-plugin-app__description">{tool?.description}</p>
         {rawMode ? <div className="work-plugin-app__field"><label htmlFor={`${prefix}-args`}>参数 JSON</label><textarea id={`${prefix}-args`} aria-label="运行参数 JSON" className="ui-input work-plugin-app__json" spellCheck={false} rows={10} disabled={running} value={rawArgs} onChange={event => { setRawArgs(event.target.value); setError(''); setOutput(null) }} /></div> : <><div className="work-plugin-app__fields">{primitives.map(field => <Field key={field.key} field={field} value={values[field.key] ?? ''} prefix={prefix} disabled={running} error={fieldErrors[field.key]} onChange={value => changeValue(field.key, value)} />)}</div>{advanced.length ? <details className="work-plugin-app__advanced" open={advanced.some(field => field.required || fieldErrors[field.key]) || undefined}><summary>高级参数</summary>{advanced.map(field => <Field key={field.key} field={field} value={values[field.key] ?? ''} prefix={prefix} disabled={running} error={fieldErrors[field.key]} onChange={value => changeValue(field.key, value)} />)}</details> : null}</>}
         {error ? <p className="work-plugin-app__error" role="alert">{error}</p> : null}

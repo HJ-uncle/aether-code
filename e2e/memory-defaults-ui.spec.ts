@@ -252,7 +252,7 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
     ])
   })
 
-  test('Work 偏好仅保留三项设置，菜单逐层关闭，模型选择保留在输入框外侧', async () => {
+  test('Work 偏好保留三项请求设置与思考显示，菜单逐层关闭，模型选择保留在输入框外侧', async () => {
     const previousWrites = structuredClone(writes), previousDisk = disk()
     for (const mode of ['work'] as const) {
       await openPreference(mode)
@@ -262,7 +262,8 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
       await expect(panel.getByText('当前模型', { exact: true })).toHaveCount(0)
       await expect(panel.locator('.composer-options__model-summary, .model-picker')).toHaveCount(0)
       await expect(panel.locator('.composer-options__settings > .composer-options__row .composer-options__title'))
-        .toHaveText(['本会话记忆', '思考档位', '安全模式'])
+        .toHaveText(['本会话记忆', '思考档位', '显示思考', '安全模式'])
+      await expect(panel.getByRole('switch', { name: '显示思考', exact: true })).toHaveAttribute('aria-checked', 'false')
       await expect(model).toBeVisible(); await expect(model).toBeEnabled()
       if (mode === 'work') {
         await expect(panel.locator('.composer-options__workspace .composer-options__index')).toHaveCount(1)
@@ -324,14 +325,14 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
               overflow: element.scrollWidth - element.clientWidth,
               rows: [...element.querySelectorAll('.composer-options__settings > .composer-options__row')].map(row => {
                 const summary = row.querySelector<HTMLElement>('.composer-options__summary')!
-                const trigger = row.querySelector('.composer-options__dd-btn')!, title = row.querySelector('.composer-options__title')!
+                const trigger = row.querySelector('.composer-options__dd-btn, .toggle')!, title = row.querySelector('.composer-options__title')!
                 const style = getComputedStyle(summary)
-                return { row: rect(row), summary: rect(summary), trigger: rect(trigger), title: rect(title),
+                return { row: rect(row), summary: rect(summary), trigger: rect(trigger), title: rect(title), switchControl: trigger.matches('.toggle'),
                   summaryOverflowX: summary.scrollWidth - summary.clientWidth, summaryOverflowY: summary.scrollHeight - summary.clientHeight,
                   whiteSpace: style.whiteSpace, ellipsis: style.textOverflow, lineClamp: style.webkitLineClamp }
               }) }
           })
-          expect(geometry.rows).toHaveLength(3)
+          expect(geometry.rows).toHaveLength(4)
           expect(geometry.panel.left).toBeGreaterThanOrEqual(0)
           expect(geometry.panel.right).toBeLessThanOrEqual(geometry.width)
           expect(geometry.panel.top).toBeGreaterThanOrEqual(0)
@@ -344,8 +345,11 @@ test.describe.serial('记忆默认关闭与明确开启', () => {
             expect(row.summary.left).toBeGreaterThanOrEqual(row.row.left)
             expect(row.summary.right).toBeLessThanOrEqual(row.row.right + 1)
             expect(row.summary.top).toBeGreaterThanOrEqual(row.title.bottom - 1)
+            expect(row.summary.top - row.title.bottom).toBeLessThanOrEqual(10)
             expect(row.trigger.left).toBeGreaterThanOrEqual(row.title.right)
-            expect(Math.abs(row.trigger.right - geometry.rows[0].trigger.right)).toBeLessThanOrEqual(1)
+            expect(row.trigger.right).toBeLessThanOrEqual(row.row.right + 1)
+            if (row.switchControl) expect(row.row.right - row.trigger.right).toBeLessThanOrEqual(8)
+            else expect(Math.abs(row.trigger.right - geometry.rows[0].trigger.right)).toBeLessThanOrEqual(1)
           }
           const screenshot = info.outputPath(`composer-options-${mode}-${appearance}-${width}.png`)
           await page.screenshot({ path: screenshot, animations: 'disabled' })

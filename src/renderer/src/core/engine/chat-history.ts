@@ -78,7 +78,7 @@ export interface EngineHistoryRow {
   toolCall?: { id?: string; name?: string; args?: unknown } | null
   success?: boolean
   error?: unknown
-  metadata?: { finalResult?: unknown; contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; subagentNotification?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; subagentRunId?: string; turnId?: string; collaborationDelivery?: unknown; attachments?: Array<{ name: string; type?: string; size?: number; displayName?: string; attachmentId?: string; referenceLabel?: string }>; change?: import('@shared/ipc').EngineFileChange; changes?: import('@shared/ipc').EngineFileChange[]; isCompactSummary?: boolean; toolName?: string }
+  metadata?: { assistantSegmentId?: string; attemptId?: string; rootAttemptId?: string; executionContinuation?: { kind?: string; previousAttemptId?: string; attemptId?: string }; finalResult?: unknown; contextUsageEstimated?: boolean; contextUsageProvisional?: boolean; requestInputTokenEstimate?: number; outputContinuation?: boolean; commandJob?: unknown; commandJobs?: unknown[]; subagent?: unknown; subagentNotification?: unknown; success?: boolean; error?: unknown; status?: string; outputPreview?: string; durationMs?: number; startedAt?: number; finishedAt?: number; runId?: string; rootRunId?: string; subagentRunId?: string; turnId?: string; collaborationDelivery?: unknown; attachments?: Array<{ name: string; type?: string; size?: number; displayName?: string; attachmentId?: string; referenceLabel?: string }>; change?: import('@shared/ipc').EngineFileChange; changes?: import('@shared/ipc').EngineFileChange[]; isCompactSummary?: boolean; toolName?: string }
   isSidechain?: boolean
 }
 
@@ -212,11 +212,12 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       // identity, while older fixtures used `runId`. Preserve either identity
       // so a restart can bind a row even when conversationId was compacted.
       const rowRunId = row.metadata?.runId ?? row.metadata?.rootRunId
+    const attemptId = row.metadata?.attemptId ?? row.metadata?.rootAttemptId
       result.push({
         id: row.id || newId(),
         role: 'user',
         conversationId: row.conversationId ?? row.metadata?.turnId,
-        runId: rowRunId,
+        runId: rowRunId, attemptId,
         rootFollowup: normalizeRootFollowupMessage(row),
         content: extractText(row.content),
         attachments: row.metadata?.attachments?.map(file => ({ path: file.name,
@@ -252,26 +253,44 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
     const prev = result[result.length - 1]
     const turnId = row.conversationId ?? row.metadata?.turnId
     const rowRunId = row.metadata?.runId ?? row.metadata?.rootRunId
+    const attemptId = row.metadata?.attemptId ?? row.metadata?.rootAttemptId
     // Identity is an ownership boundary.  If either side carries a turn/run
     // identity, an unmarked row cannot be silently merged into it: legacy
     // rows without metadata are still merged with one another, but they must
     // never inherit a newer or older retry's error/status card by adjacency.
-    const sameTurn =
+    const continuation = row.metadata?.executionContinuation
+    const sameAttempt =
       prev && prev.role === 'assistant' &&
       turnId === prev.conversationId &&
-      rowRunId === prev.runId
-    const continueOutput = Boolean(sameTurn && outputContinuations.has(prev))
+      rowRunId === prev.runId && attemptId === prev.attemptId
+    // Explicit execution continuation has a fresh physical attempt by design,
+    // but it is still the same visible answer.  Require the exact predecessor
+    // receipt; adjacency alone must never merge an unrelated retry/follow-up.
+    const continuationAttemptId = continuation?.attemptId
+    const continuationPreviousAttemptId = continuation?.previousAttemptId
+    const sameContinuation = Boolean(prev && prev.role === 'assistant' &&
+      turnId === prev.conversationId && rowRunId === prev.runId &&
+      continuationAttemptId === attemptId && continuationPreviousAttemptId === prev.attemptId &&
+      typeof continuationPreviousAttemptId === 'string' && continuationPreviousAttemptId.length > 0)
+    const sameTurn = Boolean(sameAttempt || sameContinuation)
+    const continueOutput = Boolean(sameTurn && prev && outputContinuations.has(prev))
     let message: ChatMessage
-    if (sameTurn) {
+    if (sameTurn && prev) {
       message = prev
+      if (sameContinuation) {
+        // Keep one renderer card while moving its identity to the current
+        // durable segment. The previous attempt remains in the server audit.
+        message.id = row.metadata?.assistantSegmentId || row.id || message.id
+        message.attemptId = attemptId
+      }
       // 轮内后续行时间更晚：更新为「本轮已知的最后时刻」，
       // 供历史回放后「任务耗时」用 startedAt~endedAt 跨度计算
       if (createdAt > (message.endedAt ?? 0)) message.endedAt = createdAt
     } else {
       message = {
-        id: row.id || newId(),
+        id: row.metadata?.assistantSegmentId || row.id || newId(),
         role: 'assistant',
-        runId: rowRunId,
+        runId: rowRunId, attemptId,
         content: '',
         thinking: '',
         tools: [],

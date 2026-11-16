@@ -1,10 +1,9 @@
-import { memo, type JSX, useRef, useState, useCallback, useEffect, type KeyboardEvent, useLayoutEffect, type DragEvent, type CSSProperties, useMemo } from 'react'
+import { memo, type JSX, useRef, useState, useCallback, useEffect, type KeyboardEvent, useLayoutEffect, type DragEvent, type CSSProperties, useMemo, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { toast } from '@renderer/core/toast'
 import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { type IconName, Icon } from '@renderer/ui/icons'
-import type { ActionMenuItem } from '@renderer/ui/ActionMenu'
 import { IconButton } from '@renderer/ui/ui-primitives'
 import { FileGlyph } from '../explorer/FileGlyph'
 import { openFileFromChat } from '../conversation/shared/open-file'
@@ -24,8 +23,9 @@ import { ArtifactsWorkspace } from '../artifacts/ArtifactsWorkspace'
 import type { SessionArtifactSelection } from '../artifacts/session-artifacts'
 import { useMotionPresence } from '@renderer/ui/MotionPresence'
 import { getSessionState, type SessionArtifact } from '../sessions/state'
-import { useBrowserState, selectBrowserTab, browserAction } from '../browser/browser-store'
-import { ResourceTabs } from './ResourceTabs'
+import { useBrowserState, selectBrowserTab, browserAction, closeBrowserTab } from '../browser/browser-store'
+import { workspaceSurfaceTabs } from './workspace-tabs'
+import './resource-tabs.css'
 import { useSessionResources, sessionResourceBrowserTabs, resolvedSessionResourceId, selectSessionResource, closeSessionResource, openExternalSessionFileResource } from './resource-store'
 import { type SessionFileChange, sessionChangePathKey } from '../artifacts/file-changes'
 import { type TerminalPanelProps, TerminalPanel } from '../terminal/TerminalPanel'
@@ -33,8 +33,8 @@ import { type SessionSubagentReveal } from '../collaboration/subagent-navigation
 import { type SessionController, type FinalSelection, type ArtifactNavigation, reportError, useSessionTools, EmptyState, filename, fileSize } from '../sessions/session-presentation'
 import { type WorkspaceTab, type WorkspaceEntry } from '../../app/navigation'
 import { SessionPanelDivider } from '../../ui/PaneDivider'
-import { ExtensionPage, useExtensionContributions } from '@renderer/features/extensions'
-import { isExtensionDestination, extensionIcon } from '../../app/navigation'
+import { ExtensionPage, ExtensionSlot, getExtensionHostSnapshot, subscribeExtensionHost, useExtensionContributions } from '@renderer/features/extensions'
+import { isExtensionDestination } from '../../app/navigation'
 
 const StableSessionSubagentsPanel = memo(SubagentsPanel)
 
@@ -46,6 +46,8 @@ export function Workspace({
   active,
   tab,
   setTab,
+  openEntries,
+  setOpenEntries,
   onClose,
   selectedArtifact,
   fileRevealRequest,
@@ -62,6 +64,8 @@ export function Workspace({
   active: boolean
   tab: WorkspaceTab
   setTab: (tab: WorkspaceTab) => void
+  openEntries: WorkspaceEntry[]
+  setOpenEntries: Dispatch<SetStateAction<WorkspaceEntry[]>>
   onClose: () => void
   selectedArtifact: string | null
   fileRevealRequest: SessionFileRevealRequest | null
@@ -76,6 +80,7 @@ export function Workspace({
   const sessionId = controller.activeTask!.id
   const extensionContext = useMemo(() => ({ sessionId, workspacePath: controller.activeTask?.workspacePath, engineReady: controller.ready }), [sessionId, controller.activeTask?.workspacePath, controller.ready])
   const extensions = useExtensionContributions(extensionContext)
+  const extensionHost = useSyncExternalStore(subscribeExtensionHost, getExtensionHostSnapshot)
   const extensionTabs = extensions.workspaceTabs
   const resources = useSessionResources(sessionId)
   const browser = useBrowserState('work')
@@ -85,33 +90,26 @@ export function Workspace({
     ...webTabs.map(item => ({ id: `web:${item.tabId}`, name: item.title || (item.url === 'about:blank' ? '新网页' : item.url),
       title: item.localFile?.path ?? item.url, file: false, fileName: item.localFile?.name, directory: item.localFile?.kind === 'directory' }))
   ]
-  const resourceOrder = useRef<string[]>([])
-  resourceOrder.current = [
-    ...resourceOrder.current.filter(id => resourceCandidates.some(item => item.id === id)),
-    ...resourceCandidates.map(item => item.id).filter(id => !resourceOrder.current.includes(id))
-  ]
-  const orderedResources = resourceOrder.current.flatMap(id => {
-    const item = resourceCandidates.find(candidate => candidate.id === id)
-    return item ? [item] : []
-  })
+  const orderedResources = resourceCandidates
   const resourceIds = orderedResources.map(item => item.id)
   const resourceSignature = resourceIds.join('\u0000')
   const selectedResource = resolvedSessionResourceId(resources, webTabs.map(item => item.tabId), browser.activeTabId)
   // A single ordered entry list is the Work equivalent of Codex's unified tab
   // controller. Resource files/pages and built-in Work surfaces share the
   // same activation, close, keyboard and layout path.
-  const [openEntries, setOpenEntries] = useState<WorkspaceEntry[]>(() => [{ kind: 'surface', id: tab }])
   useEffect(() => {
+    // A temporary empty registry during refresh must not erase remembered plugin tabs.
+    if (extensionHost.loading) return
     const exists = (id: string): boolean => !isExtensionDestination(id) || extensionTabs.some(item => item.id === id)
     setOpenEntries(previous => previous.some(entry => entry.kind === 'surface' && !exists(entry.id)) ? previous.filter(entry => entry.kind !== 'surface' || exists(entry.id)) : previous)
     if (!exists(tab)) setTab('files')
-  }, [extensionTabs, tab, setTab])
+  }, [extensionHost.loading, extensionTabs, tab, setTab, setOpenEntries])
   const activateTab = useCallback((next: WorkspaceTab): void => {
     setOpenEntries(previous => previous.some(entry => entry.kind === 'surface' && entry.id === next)
       ? previous
       : [...previous, { kind: 'surface', id: next }])
     setTab(next)
-  }, [setTab])
+  }, [setTab, setOpenEntries])
   useEffect(() => {
     // Closing the last tab can leave this pane mounted during its exit.
     // Reopening it must restore the remembered surface even if tab is unchanged.
@@ -119,7 +117,7 @@ export function Workspace({
     setOpenEntries(previous => previous.some(entry => entry.kind === 'surface' && entry.id === tab)
       ? previous
       : [...previous, { kind: 'surface', id: tab }])
-  }, [tab, active])
+  }, [tab, active, setOpenEntries])
   useEffect(() => {
     const live = new Set(resourceIds)
     setOpenEntries(previous => {
@@ -134,16 +132,8 @@ export function Workspace({
       })
       return unchanged ? previous : next
     })
-  }, [resourceSignature])
-  const tabs: Array<[WorkspaceTab, string, IconName]> = [
-    ['files', '成果', 'file-check'],
-    ['workspace', '工作区', 'folder-outline'],
-    ['sources', '资料', 'library'],
-    ['subagents', '子代理', 'users'],
-    ['terminal', '终端', 'terminal'],
-    ['git', 'Git', 'git'],
-    ...extensionTabs.flatMap(item => isExtensionDestination(item.id) ? [[item.id, item.title, extensionIcon(item.icon)] as [WorkspaceTab, string, IconName]] : [])
-  ]
+  }, [resourceSignature, setOpenEntries])
+  const tabs = workspaceSurfaceTabs(extensionTabs)
   const labelFor = (id: WorkspaceTab): string => tabs.find(([candidate]) => candidate === id)?.[1] ?? '成果'
   const iconFor = (id: WorkspaceTab): IconName => tabs.find(([candidate]) => candidate === id)?.[2] ?? 'file-check'
   const resourceById = new Map(orderedResources.map(item => [item.id, item]))
@@ -192,7 +182,7 @@ export function Workspace({
     }
     browserAction(async () => {
       const source = getEngineSource()
-      await window.aether.browser.close(id.slice(4))
+      await closeBrowserTab(id.slice(4))
       if (source !== getEngineSource() || getSessionState(getEngineStorageKey()).activeTaskId !== sessionId) return
       if (resources.selected === id) closeSessionResource(sessionId, id)
     })
@@ -227,25 +217,6 @@ export function Workspace({
     buttons[next]?.click()
     buttons[next]?.focus()
   }, [closeResource, closeTab, visibleEntries])
-  const moreItems: ActionMenuItem[] = [
-    {
-      id: 'artifacts',
-      label: '成果',
-      icon: 'file-check',
-      onSelect: () => activateTab('files')
-    },
-    {
-      id: 'workspace',
-      label: '工作区',
-      icon: 'folder-outline',
-      onSelect: () => activateTab('workspace')
-    },
-    { id: 'sources', label: '资料', icon: 'library', onSelect: () => activateTab('sources') },
-    { id: 'subagents', label: '子代理', icon: 'users', onSelect: () => activateTab('subagents') },
-    { id: 'terminal', label: '终端', icon: 'terminal', onSelect: () => activateTab('terminal') },
-    { id: 'git', label: 'Git', icon: 'git', onSelect: () => activateTab('git') },
-    ...extensionTabs.map(item => ({ id: item.id, label: item.title, icon: extensionIcon(item.icon), onSelect: () => { if (isExtensionDestination(item.id)) activateTab(item.id) } }))
-  ]
   const tabsRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const strip = tabsRef.current
@@ -283,7 +254,9 @@ export function Workspace({
         }
       }}>
       <div className="work-workspace__tab-strip" role="toolbar" aria-label="工作区标签">
-        <ResourceTabs sessionId={sessionId} onSelect={() => activateTab('browser')} items={moreItems} />
+        <div className="work-workspace__collapse">
+          <IconButton icon="layout-panel" label="收起工作区" onClick={onClose} />
+        </div>
         <div ref={tabsRef} className="work-workspace__tabs" data-scroll-axis="x" role="tablist" aria-label="已打开的工作区">
           {visibleEntries.map((entry) => {
             if (entry.kind === 'surface') {
@@ -336,6 +309,7 @@ export function Workspace({
           />
         ))}
       </div>
+      {active ? <ExtensionSlot location="workspace.panel" context={extensionContext} /> : null}
     </section>
   )
 }

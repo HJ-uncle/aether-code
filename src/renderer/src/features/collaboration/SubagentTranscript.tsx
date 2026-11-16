@@ -41,7 +41,7 @@ const TranscriptMessage = memo(function TranscriptMessage({ message, isRunning, 
   return <div className="work-subagent-transcript__reply">
     {time ? <div className="work-subagent-transcript__message-meta"><span>代理</span><time dateTime={time.dateTime} title={time.title}>{time.label}</time></div> : null}
     <MessageContent message={display} sessionId={fileContext.sessionId} fileContext={fileContext}
-    active={active} readOnly defaultProcessOpen={false} defaultThinkingOpen={false} showAllContent turnSegments={segments}>
+    active={active} readOnly defaultProcessOpen={false} showAllContent turnSegments={segments}>
     {errorText ? <ErrorNotice compact className="work-subagent-transcript__failure" error={errorText}
       context={{ status: message.status === 'interrupted' ? 'interrupted' : message.status === 'aborted' ? 'cancelled' : 'failed',
         runId: message.runId ?? '', error: message.error }} /> : null}
@@ -188,7 +188,7 @@ export function SubagentTranscript({ source, parentSessionId, childSessionId, ru
           isRunning={running && message === lastAssistant && message.runId === runId} />)}
       {liveMessage ? <div className="work-subagent-transcript__live" data-live-run-id={liveMessage.runId}>
         <p className="work-subagent-transcript__notice">实时进度</p>
-        <MessageContent message={liveMessage} sessionId={childSessionId} fileContext={fileContext} active={active} readOnly defaultProcessOpen={false} defaultThinkingOpen={false} showAllContent />
+        <MessageContent message={liveMessage} sessionId={childSessionId} fileContext={fileContext} active={active} readOnly defaultProcessOpen={false} showAllContent />
       </div> : null}
       {statusNote && !messages.some(message => message.runId === runId &&
         (message.error?.trim() === statusNote.trim() || message.content.includes(statusNote))) ?

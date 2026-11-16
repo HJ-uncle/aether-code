@@ -1,6 +1,7 @@
 import type { PendingInteraction } from '../../core/engine/pending'
 import type { PermissionField, PermissionPresentation } from '../interactions/permission-presentation'
 import { permissionValueNode } from '../interactions/permission-value-tree'
+import { compactPluginPermission } from './plugin-compact-permission'
 
 const pluginActions = {
   plugin_create: '创建插件',
@@ -205,6 +206,8 @@ export function pluginPermissionPresentation(
   base: PermissionPresentation
 ): PermissionPresentation | undefined {
   if (!Object.hasOwn(pluginActions, pending.toolName)) return undefined
+  const compact = compactPluginPermission(pending, base)
+  if (compact) return compact
   const action = pending.toolName as PluginAction
   const operation = preparedOperation(pending.question, action)
   const args = record(pending.args)

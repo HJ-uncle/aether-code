@@ -15,6 +15,9 @@ export function managementRequestTimeout(
   input: Pick<EngineRequestInput, 'method' | 'path' | 'query' | 'timeoutMs'>
 ): number | null {
   const path = normalizeEnginePath(input.path).split('?')[0]
+  // Plugin jobs may include complete Agent runs. Their lifetime is owned by
+  // the task/caller and engine connection, not a management request deadline.
+  if (input.method === 'POST' && path.startsWith('/api/v1/plugins/')) return null
   // A hung status probe must not block every task's next reconciliation cycle.
   if (input.method === 'GET' && path === '/api/v1/chat/status') return SESSION_STATUS_TIMEOUT_MS
   if (input.method === 'GET' && path === '/api/v1/performance/runtime') return SESSION_STATUS_TIMEOUT_MS

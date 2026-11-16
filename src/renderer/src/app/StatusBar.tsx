@@ -1,9 +1,14 @@
-import type { JSX } from 'react'
+import { useSyncExternalStore, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { useEditor } from '@renderer/core/editor/editor-store'
 import { useProblems } from '@renderer/core/lsp/problems-store'
 import { openAppSettings } from '@renderer/features/settings/app-settings-navigation'
 import type { EnginePhase } from '@shared/ipc'
+import { extensionRegistry, extensionVisible, useExtensionContext } from '@renderer/features/extensions'
+import { executeExtensionCommand, runExtensionAction } from '@renderer/features/extensions/interactions'
+import { ServiceTray } from '@renderer/features/services/ServiceTray'
+import { extensionIcon } from './navigation'
+import { Icon } from '@renderer/ui/icons'
 import '../ui/status-bar.css'
 
 const PHASE_LABEL: Record<EnginePhase, string> = {
@@ -26,6 +31,8 @@ export function StatusBar(): JSX.Element {
   const { snapshot } = engine
   const editor = useEditor()
   const { byFile: problemFiles } = useProblems()
+  const extensions = useSyncExternalStore(extensionRegistry.subscribe, extensionRegistry.getSnapshot)
+  const context = useExtensionContext()
 
   // A remote retry shares the starting phase but needs a distinct status label.
   const remoteReconnecting = snapshot.mode === 'remote' && snapshot.phase === 'starting' && snapshot.error?.includes('正在重新连接') === true
@@ -56,6 +63,10 @@ export function StatusBar(): JSX.Element {
       </div>
 
       <div className="status-bar__spacer" />
+      {extensions.statusBar.filter(item => extensionVisible(item.scope ?? 'global', item.when, context)).map(item => <button key={item.id} type="button" className="status-bar__item" title={item.title} aria-label={item.title} onClick={() => {
+        const registration = extensionRegistry.getRegistration(item.identity.pluginId)
+        if (registration) runExtensionAction(() => executeExtensionCommand(registration, item.command, { ...context }))
+      }}>{item.icon ? <Icon name={extensionIcon(item.icon)} size={13} /> : null}{item.title}</button>)}
 
       {problemErrors + problemWarnings > 0 ? (
         <span className="status-bar__item" title={`错误 ${problemErrors} · 警告 ${problemWarnings}`}>
@@ -82,6 +93,9 @@ export function StatusBar(): JSX.Element {
           Ln {editor.cursor.line}, Col {editor.cursor.column}
         </span>
       ) : null}
+
+      <ServiceTray variant="activity" sessionId={null} jobs={[]} />
+      <ServiceTray variant="history" sessionId={null} jobs={[]} />
 
     </footer>
   )

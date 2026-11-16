@@ -644,3 +644,5 @@
     transition: none;
   }
 }
+.browser-plugin-surface { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: auto; background: var(--bg-surface); }
+.browser-plugin-surface > .extension-page__webview { min-height: 300px; }

@@ -23,7 +23,7 @@ export function isExplicitRequestRejection(status?: number, code?: number): bool
 }
 
 /** One envelope for HTTP admission failures, SSE data, terminal frames and replay recovery. */
-export type StreamEvent = { streamId: string; eventId?: string } & StreamEventBody
+export type StreamEvent = { streamId: string; eventId?: string; ackId?: string } & StreamEventBody
 
 /** Match StreamBus.lastEventId without coercing malformed/unsafe sequence numbers. */
 export function parseEngineStreamCursor(value: unknown): EngineStreamCursor | null {

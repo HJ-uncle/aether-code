@@ -51,6 +51,8 @@ import { draftToolkitIds } from './toolkit-mentions'
 import { draftResourceBindings, hasNonResourceContent, resourceMention, sameResourceBindings } from '../conversation/shared/resource-mentions'
 import { useResourceMentions } from '../conversation/shared/useResourceMentions'
 import { sessionResourceFollowupChanges, sessionResourceSelection } from '../workspace/resource-selection'
+import { ExtensionSlot, publishExtensionEvent, registerExtensionTarget, useExtensionMenuItems } from '../extensions'
+import { extensionIcon } from '@renderer/app/navigation'
 
 type SessionController = ReturnType<typeof useSessionController>
 
@@ -91,6 +93,20 @@ export function Composer({
   const preview = previewState?.scope === previewScope ? previewState : null
   const polishEpoch = useRef(0)
   const draft = draftState.text
+  const extensionContext = useMemo(() => ({ sessionId: controller.activeTask?.id ?? null, workspacePath: controller.workspacePath,
+    engineReady: controller.ready, targetId: `composer:${controller.draftSource}:${controller.activeTask?.id ?? 'home'}` }),
+  [controller.activeTask?.id, controller.workspacePath, controller.ready, controller.draftSource])
+  const pluginActions = useExtensionMenuItems('composer.toolbar', extensionContext)
+  const extensionHandler = useRef<(action: string, args: Record<string, unknown>) => unknown>(() => undefined)
+  useEffect(() => registerExtensionTarget('composer', extensionContext, (action, args) => extensionHandler.current(action, args)), [extensionContext])
+  const observedDraft = useRef({ target: extensionContext.targetId, text: draft })
+  useEffect(() => {
+    const previous = observedDraft.current
+    observedDraft.current = { target: extensionContext.targetId, text: draft }
+    if (!extensionContext.sessionId || previous.target !== extensionContext.targetId || previous.text === draft) return
+    const timer = setTimeout(() => publishExtensionEvent('composer.changed', extensionContext, { text: draft.slice(0, 4000), truncated: draft.length > 4000 }), 250)
+    return () => clearTimeout(timer)
+  }, [draft, extensionContext])
   const hasPrompt = hasNonResourceContent(draftState)
   const referencedAttachments = controller.attachmentsForMentions(draftState.mentions)
   const currentAttachmentReferences = attachmentReferences(mergeSessionAttachments(controller.attachments, referencedAttachments))
@@ -191,6 +207,22 @@ export function Composer({
         ? controller.createTask(draft, mentionsRef.current)
         : controller.send(draft, mentionsRef.current)
     ).catch(reportError).finally(() => setSendingDraft(false))
+  }
+  extensionHandler.current = (action, args) => {
+    if (action === 'get' || action === 'composer.get') return { text: draftLiveRef.current, mentions: mentionsRef.current, sessionId: extensionContext.sessionId }
+    if (action === 'submit' || action === 'composer.submit') {
+      const button = composerRef.current?.querySelector<HTMLButtonElement>('.work-send')
+      if (!button || button.disabled || mentionQuery !== null || resourceQuery !== null || sendingDraft) throw new Error('当前草稿尚不可发送，请先处理待确认事项或等待任务就绪。')
+      submit(); return { dispatched: true }
+    }
+    if (!['set', 'insert', 'composer.set', 'composer.insert'].includes(action)) throw new Error('输入框不支持此操作。')
+    if (typeof args.text !== 'string') throw new Error('请提供 text 字符串。')
+    if (controller.workspaceSelectionBusy || sendingDraft) throw new Error('正在提交草稿，请稍后重试。')
+    const next = preserveMentions(action.endsWith('insert') ? draftLiveRef.current + args.text : args.text, mentionsRef.current)
+    if (!controller.editDraft(next.text, next.mentions)) throw new Error('草稿无法更新，原内容已保留。')
+    inputRef.current?.setDraft(next.text, next.mentions)
+    draftRevisionRef.current++; draftLiveRef.current = next.text; mentionsRef.current = next.mentions; userDraftRef.current = next
+    return { text: next.text, mentions: next.mentions }
   }
   useEffect(() => {
     mentionsRef.current = controller.mentions
@@ -322,6 +354,7 @@ export function Composer({
           <IconButton icon="close" label="关闭错误提示" onClick={controller.clearError} />
         </div>
       ) : null}
+      <ExtensionSlot location="composer.panel" context={extensionContext} />
       <InputComposer
         ref={composerRef}
         className="work-composer"
@@ -454,14 +487,14 @@ export function Composer({
                   />
                   <button
                     type="button"
-                    className="work-quiet-button work-attach-button"
+                    className="chat__icon-btn work-attach-button"
                     aria-label="添加资料"
                     title="添加资料"
                     onClick={() => filesRef.current?.click()}
                     disabled={!canAddFiles}
                     aria-busy={controller.uploading}
                   >
-                    {controller.uploading ? <Spinner /> : <Icon name="plus" size={16} />}
+                    {controller.uploading ? <Spinner /> : <Icon name="plus" size={18} />}
                   </button>
               {!controller.agentLocked ? (
                 <button
@@ -493,6 +526,7 @@ export function Composer({
           }
           trailing={
             <>
+              {pluginActions.map(item => <button key={item.id} type="button" className="chat__toolbar-btn" aria-label={item.label} title={item.label} disabled={item.disabled} onClick={item.onSelect}><Icon name={extensionIcon(item.icon ?? 'puzzle')} size={16} /></button>)}
               <ComposerPolish busy={polishing} disabled={!hasPrompt || busy || !controller.ready}
                 title="AI 润色" onClick={() => void polish()} />
               {contextUsage !== null || controller.contextCompaction ? (

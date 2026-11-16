@@ -1,5 +1,5 @@
 /** Real Electron Work terminal: one-click running logs, cursor/owner isolation,
- * hidden polling, stop/restart, workspace/keyboard navigation and native PTYs.
+ * hidden polling, stop/restart, retained mixed workspace tabs and native PTYs.
  * The embedded HTTP proxy supplies deterministic engine records; PTY creation,
  * IPC, shell input and xterm attachment still use the production implementation.
  * Run with npm run test:e2e -- e2e/work-terminal-ui.spec.ts.
@@ -152,7 +152,9 @@ const server = createServer((request, response) => { void (async () => {
 })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) }) })
 
 const work = (): Locator => page.locator('.work-view')
+const workspaceMenu = (): Locator => work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true })
 const workspace = (): Locator => work().getByRole('region', { name: '任务工作区', exact: true })
+const workspaceToolbar = (): Locator => workspace().getByRole('toolbar', { name: '工作区标签', exact: true })
 const panel = (): Locator => workspace().getByRole('region', { name: '任务终端', exact: true })
 const detail = (): Locator => panel().locator('.work-terminal-panel__detail')
 const output = (): Locator => panel().locator('.work-terminal-panel__output')
@@ -165,22 +167,49 @@ async function settleMotion(target: Locator): Promise<void> {
   })
 }
 async function openRunning(): Promise<void> {
-  await work().locator('.service-tray--rail .service-tray__button').click()
+  await work().locator('.work-task-heading .service-tray--services .service-tray__button').click()
   const activity = page.locator('.service-tray__panel')
   await expect(activity).toBeVisible()
-  const back = activity.getByRole('button', { name: '返回活动列表', exact: true })
+  const back = activity.getByRole('button', { name: '返回详情列表', exact: true })
   if (await back.isVisible()) await back.click()
-  await activity.getByRole('tab', { name: '服务', exact: true }).click()
   await activity.locator('.service-tray__row-main').first().click()
   await activity.getByRole('button', { name: '在终端中查看', exact: true }).click()
   await expect(panel()).toBeVisible()
   await expect(panel().getByRole('tab', { name: /^后台运行/ })).toHaveAttribute('aria-selected', 'true')
 }
 async function openTerminalFromMenu(): Promise<void> {
-  if (!(await workspace().isVisible())) await work().getByRole('button', { name: '打开工作区', exact: true }).click()
-  await workspace().getByRole('button', { name: '更多工作区', exact: true }).click()
+  await workspaceMenu().click()
   await page.getByRole('menuitem', { name: '终端', exact: true }).click()
   await expect(panel()).toBeVisible()
+}
+async function closeWorkspace(): Promise<void> {
+  const body = work().locator('.work-task-body')
+  await expect(body).toHaveAttribute('data-workspace', /^(?:true|false)$/)
+  if (await body.getAttribute('data-workspace') === 'true') {
+    // A narrow conversation pane keeps its workspace mounted but hides the tab strip.
+    if (!(await workspace().isVisible())) await work().locator('.work-mobile-tabs').getByRole('button', { name: '工作区', exact: true }).click()
+    await workspaceToolbar().getByRole('button', { name: '收起工作区', exact: true }).click()
+  }
+  await expect(work().locator('.work-workspace')).toHaveCount(0)
+  await expect(body).toHaveAttribute('data-pane', 'conversation')
+}
+async function assertWorkspaceChrome(): Promise<void> {
+  const heading = work().locator('.work-task-heading'), toolbar = workspaceToolbar()
+  await expect(workspaceMenu()).toBeVisible()
+  await expect(heading.getByRole('button').last()).toHaveAccessibleName('更多工作区')
+  await expect(heading.getByRole('button', { name: '收起工作区', exact: true })).toHaveCount(0)
+  await expect(work().getByRole('button', { name: '打开工作区', exact: true })).toHaveCount(0)
+  await expect(workspace().getByRole('button', { name: '更多工作区', exact: true })).toHaveCount(0)
+  await expect(toolbar.getByRole('button').first()).toHaveAccessibleName('收起工作区')
+  await expect(toolbar.getByRole('tab').first()).toBeVisible()
+  await settleMotion(work())
+  expect(await toolbar.evaluate(element => {
+    const collapse = element.querySelector<HTMLButtonElement>('button[aria-label="收起工作区"]')!
+    const tab = element.querySelector<HTMLElement>('[role="tab"]')!
+    const closeBounds = collapse.getBoundingClientRect(), tabBounds = tab.getBoundingClientRect()
+    return element.firstElementChild?.contains(collapse) === true && closeBounds.right <= tabBounds.left + 1 &&
+      Math.abs(closeBounds.top + closeBounds.height / 2 - tabBounds.top - tabBounds.height / 2) <= 6
+  })).toBe(true)
 }
 async function selectTask(id: string): Promise<void> {
   await work().locator('.work-sidebar__task').filter({ hasText: titles.get(id)! }).click()
@@ -212,19 +241,21 @@ async function assertNavigationSpace(state: string, turns: number): Promise<void
   const measured = await body.evaluate(element => {
     const origin = element.getBoundingClientRect().left
     const content = element.querySelector<HTMLElement>('.work-conversation__content')!
-    const running = element.querySelector<HTMLElement>('.service-tray__button')!
+    const running = document.querySelector<HTMLElement>('.status-bar .service-tray--activity .service-tray__button')!
     const badge = running.querySelector('.service-tray__count')
     return {
       scrollOffset: element.querySelector('.work-conversation__scroll')!.getBoundingClientRect().left - origin,
       slotWidth: element.querySelector('.work-message-nav-slot')!.getBoundingClientRect().width,
       contentLeft: content.getBoundingClientRect().left + parseFloat(getComputedStyle(content).paddingLeft) - origin,
-      runningRight: Math.max(running.getBoundingClientRect().right, badge?.getBoundingClientRect().right ?? 0) - origin
+      runningRight: Math.max(running.getBoundingClientRect().right, badge?.getBoundingClientRect().right ?? 0) - origin,
+      runningTop: running.getBoundingClientRect().top,
+      conversationBottom: element.getBoundingClientRect().bottom
     }
   })
   navGeometry.push({ state, ...measured })
   expect(Math.abs(measured.slotWidth - 36)).toBeLessThanOrEqual(1)
   expect(Math.abs(measured.scrollOffset - navGeometry[0].scrollOffset), 'navigation visibility must not move the message column').toBeLessThanOrEqual(1)
-  expect(measured.runningRight, 'running button and badge must stay outside the text inset').toBeLessThanOrEqual(measured.contentLeft)
+  expect(measured.runningTop, 'activity now belongs to the fixed footer below the conversation').toBeGreaterThanOrEqual(measured.conversationBottom)
 }
 async function terminalReceipts(): Promise<TerminalReceipt[]> {
   return app ? app.evaluate(() => (globalThis as typeof globalThis & { __sessionTerminalCreates?: TerminalReceipt[] }).__sessionTerminalCreates ?? []) : []
@@ -403,14 +434,13 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await selectTask(taskA); await openRunning(); await assertOutput(jobA)
   })
 
-  test('服务菜单真实停止并生成未读通知，终端读取最后日志，重启选择新job并保留旧历史', async () => {
+  test('服务菜单真实停止并保留服务历史，终端读取最后日志，重启选择新job并保留旧历史', async () => {
     await assertOutput(jobA)
     const actionStart = actions.length
-    await work().locator('.service-tray__button').click()
+    await work().locator('.work-task-heading .service-tray--services .service-tray__button').click()
     const activity = page.locator('.service-tray__panel')
-    const back = activity.getByRole('button', { name: '返回活动列表', exact: true })
+    const back = activity.getByRole('button', { name: '返回详情列表', exact: true })
     if (await back.isVisible()) await back.click()
-    await activity.getByRole('tab', { name: '服务', exact: true }).click()
     const service = activity.locator(`.service-tray__row[data-service-id="command:${jobA}"]`)
     await service.click({ button: 'right' })
     await page.getByRole('menuitem', { name: '停止', exact: true }).click()
@@ -418,11 +448,12 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await assertOutput(jobA)
     expect(actions.slice(actionStart)).toEqual([{ action: 'cancel', sessionId: taskA, jobId: jobA }])
     await expect(output()).toContainText(`STOP_TAIL_${jobA}`)
-    await activity.getByRole('tab', { name: /^通知/ }).click()
-    await expect(service).toHaveAttribute('data-unread', 'true')
+    await expect(service).toHaveCount(0)
+    await activity.getByRole('button', { name: '查看服务历史', exact: true }).click()
+    await expect(service).toContainText('已停止')
     await service.locator('.service-tray__row-main').click()
-    await expect(work().locator('.service-tray__button')).not.toHaveAccessibleName(/未读/)
-    await activity.getByRole('button', { name: '关闭服务与通知', exact: true }).click()
+    await expect(page.locator('.status-bar .service-tray--activity .service-tray__button')).not.toHaveAccessibleName(/未读/)
+    await activity.getByRole('button', { name: '关闭详情', exact: true }).click()
     await expect(activity).toBeHidden()
     await detail().getByRole('button', { name: '重启服务', exact: true }).click()
     await expect.poll(() => actions.at(-1)?.action).toBe('restart')
@@ -480,8 +511,9 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     const path = info.outputPath('work-native-terminal.png'); await page.screenshot({ path }); await info.attach('真实任务终端', { path, contentType: 'image/png' })
   })
 
-  test('收起整个工作区后菜单恢复所选记录和旧日志位置，深浅主题宽窄布局可读', async ({}, info) => {
+  test('标题栏菜单与标签栏收起按钮顺序正确，折叠回焦并恢复终端记录和旧日志位置', async ({}, info) => {
     await setWindow(1440, 900)
+    await assertWorkspaceChrome()
     await panel().getByRole('tab', { name: /^后台运行/ }).click()
     // Independent entries require multiple cursor pages on a remount, exposing
     // restoration that accidentally follows a partially loaded tail.
@@ -501,12 +533,23 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     expect(Number(remembered.seq)).toBeGreaterThan(1)
     expect(Number(remembered.seq)).toBeLessThan(logs.get(idleJobA)!.length - 5)
 
-    await work().getByRole('button', { name: '收起工作区', exact: true }).click()
+    await closeWorkspace()
     // A hidden-but-mounted panel would not exercise the saved reading state.
+    await expect(work().locator('.work-workspace')).toHaveCount(0)
+    await expect(workspaceMenu()).toBeVisible(); await expect(workspaceMenu()).toBeFocused()
+    await expect(work().getByRole('button', { name: '收起工作区', exact: true })).toHaveCount(0)
+    await expect(work().getByRole('button', { name: '打开工作区', exact: true })).toHaveCount(0)
+    await workspaceMenu().press('Enter')
+    await expect(page.getByRole('menuitem', { name: '终端', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menuitem', { name: '终端', exact: true })).toHaveCount(0)
+    await expect(workspaceMenu()).toBeFocused()
     await expect(work().locator('.work-workspace')).toHaveCount(0)
     append(idleJobA, 'stdout', 'SAVED_RECORD_WHILE_WORKSPACE_CLOSED\n')
     await assertOutputQuiet(taskA)
     await openTerminalFromMenu()
+    await assertWorkspaceChrome()
+    await expect(workspaceMenu()).toBeFocused()
     await expect(panel().getByRole('tab', { name: /^后台运行/ })).toHaveAttribute('aria-selected', 'true')
     await assertOutput(idleJobA)
     await expect(selectedRow).toHaveAttribute('aria-current', 'true')
@@ -518,6 +561,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     for (const appearance of ['light', 'dark'] as const) for (const width of [1440, 980]) {
       await setWindow(width, 900)
       await setAppearance(appearance)
+      await assertWorkspaceChrome()
       await expect(detail()).toHaveAttribute('data-job-id', idleJobA)
       await expect(output()).toBeVisible()
       await expect(selectedRow).toHaveAttribute('aria-current', 'true')
@@ -540,6 +584,94 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       await page.screenshot({ path })
       await info.attach(`任务终端 ${appearance} ${width}px`, { path, contentType: 'image/png' })
     }
+  })
+
+  test('多标签折叠保留内置与外部文件顺序，主动关闭不复活且会话选择互相隔离', async ({}, info) => {
+    await setWindow(1440, 900)
+    const tabs = (): Locator => workspace().getByRole('tablist', { name: '已打开的工作区', exact: true })
+    const selectedTab = (): Locator => tabs().locator('[role="tab"][aria-selected="true"]')
+    const fileA = '任务A外部阅读资料.md', fileB = '任务B外部阅读资料.md'
+    const markerA = 'EXTERNAL_WORKSPACE_TAB_SESSION_A', markerB = 'EXTERNAL_WORKSPACE_TAB_SESSION_B'
+    const pathA = join(fixture, fileA), pathB = join(fixture, fileB)
+    writeFileSync(pathA, `# 任务 A 外部资料\n\n${markerA}\n`)
+    writeFileSync(pathB, `# 任务 B 外部资料\n\n${markerB}\n`)
+    const showWorkspacePane = async (): Promise<void> => {
+      await expect(work().locator('.work-task-body')).toHaveAttribute('data-workspace', 'true')
+      if (!(await workspace().isVisible())) await work().locator('.work-mobile-tabs').getByRole('button', { name: '工作区', exact: true }).click()
+      await expect(workspace()).toBeVisible()
+    }
+    const openSurface = async (name: string): Promise<void> => {
+      await workspaceMenu().click(); await page.getByRole('menuitem', { name, exact: true }).click()
+      await expect(workspace()).toBeVisible(); await expect(selectedTab()).toHaveText(name)
+    }
+    const assertTabs = async (names: string[], selected: string): Promise<void> => {
+      await expect(tabs().getByRole('tab')).toHaveText(names)
+      await expect(selectedTab()).toHaveCount(1); await expect(selectedTab()).toHaveText(selected)
+    }
+    const assertExternalFile = async (sessionId: string, name: string, marker: string): Promise<void> => {
+      const preview = workspace().locator('.work-resource-file:visible .work-artifact-panel-v2')
+      await expect(preview).toHaveAttribute('data-document-session', sessionId)
+      await expect(preview).toHaveAttribute('data-document-path', name)
+      await expect(preview).toHaveAttribute('data-file-read-status', 'current')
+      await expect(preview).toContainText(marker)
+    }
+    const openExternalFile = async (sessionId: string, path: string, marker: string): Promise<void> => {
+      await work().locator('.work-task-heading input.work-resource-tabs__file-input').setInputFiles(path)
+      await expect(selectedTab()).toHaveText(basename(path))
+      await assertExternalFile(sessionId, basename(path), marker)
+    }
+
+    // Earlier cases share this window. Explicitly close their retained surfaces
+    // before establishing distinct tab lists for this regression.
+    for (const id of [taskB, taskA]) {
+      await selectTask(id); await openTerminalFromMenu()
+      for (const label of await tabs().getByRole('tab').allTextContents()) {
+        if (label !== '终端') await tabs().getByRole('tab', { name: label, exact: true }).locator('..').getByRole('button').click()
+      }
+      await assertTabs(['终端'], '终端')
+    }
+    await openSurface('资料')
+    await openExternalFile(taskA, pathA, markerA)
+    await openSurface('工作区')
+    const allA = ['终端', '资料', fileA, '工作区']
+    await assertTabs(allA, '工作区')
+    await closeWorkspace(); await expect(work().locator('.work-workspace')).toHaveCount(0)
+    await openSurface('资料'); await assertTabs(allA, '资料')
+    await tabs().getByRole('tab', { name: fileA, exact: true }).click()
+    await assertExternalFile(taskA, fileA, markerA)
+    await assertTabs(allA, fileA)
+    await tabs().getByRole('button', { name: '关闭资料', exact: true }).click()
+    const retainedA = ['终端', fileA, '工作区']
+    await assertTabs(retainedA, fileA)
+    await closeWorkspace(); await openSurface('工作区')
+    await assertTabs(retainedA, '工作区')
+    await expect(tabs().getByRole('tab', { name: '资料', exact: true })).toHaveCount(0)
+
+    await selectTask(taskB); await showWorkspacePane()
+    await assertTabs(['终端'], '终端')
+    await openSurface('成果'); await openExternalFile(taskB, pathB, markerB)
+    const retainedB = ['终端', '成果', fileB]
+    await assertTabs(retainedB, fileB)
+    await selectTask(taskA); await showWorkspacePane()
+    await assertTabs(retainedA, '工作区')
+    await expect(tabs().getByRole('tab', { name: fileB, exact: true })).toHaveCount(0)
+    await tabs().getByRole('tab', { name: fileA, exact: true }).click()
+    await assertExternalFile(taskA, fileA, markerA)
+    await selectTask(taskB); await showWorkspacePane()
+    await assertTabs(retainedB, fileB); await assertExternalFile(taskB, fileB, markerB)
+    await expect(tabs().getByRole('tab', { name: fileA, exact: true })).toHaveCount(0)
+    await selectTask(taskA); await showWorkspacePane()
+    await assertTabs(retainedA, fileA); await assertExternalFile(taskA, fileA, markerA)
+    const screenshot = info.outputPath('workspace-mixed-tabs-restored.png')
+    await page.screenshot({ path: screenshot }); await info.attach('混合工作区标签与会话选择恢复', { path: screenshot, contentType: 'image/png' })
+
+    // Resource closure must update the retained order too, not only the file store.
+    await tabs().getByRole('button', { name: `关闭文档 ${fileA}`, exact: true }).click()
+    await assertTabs(['终端', '工作区'], '终端')
+    await closeWorkspace(); await openSurface('工作区')
+    await assertTabs(['终端', '工作区'], '工作区')
+    await expect(tabs().getByRole('tab', { name: fileA, exact: true })).toHaveCount(0)
+    await openTerminalFromMenu()
   })
 
   test('单轮与多轮正文和输入框左右对齐，主栏及工作区在宽窄窗口和深浅主题下保持一致', async ({}, info) => {
@@ -570,21 +702,12 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
         await setAppearance(appearance)
         for (const width of [1440, 2000, 980]) {
           await setWindow(width, 900)
-          // Wait for the task surface after resize before reading the toggle's
-          // intent. A one-shot visibility probe can skip closing the workspace
-          // when the control is temporarily absent.
+          // The mounted-state signal distinguishes a hidden narrow pane from a closed workspace.
           await expect(work().getByRole('heading', { name: titles.get(id), exact: true })).toBeVisible()
-          const workspaceToggle = work().getByRole('button', { name: /^(?:打开|收起)工作区$/ })
-          await expect(workspaceToggle).toBeVisible()
-          await expect(workspaceToggle).toHaveAttribute('aria-pressed', /^(?:true|false)$/)
-          if (await workspaceToggle.getAttribute('aria-pressed') === 'true') await workspaceToggle.click()
-          await expect(workspaceToggle).toHaveAttribute('aria-pressed', 'false')
-          await expect(work().locator('.work-workspace')).toHaveCount(0)
-          await expect(work().locator('.work-task-body')).toHaveAttribute('data-pane', 'conversation')
+          await closeWorkspace()
           for (const workspaceOpen of [false, true]) {
             if (workspaceOpen) {
-              await workspaceToggle.click()
-              await expect(workspaceToggle).toHaveAttribute('aria-pressed', 'true')
+              await openTerminalFromMenu()
               await expect(work().locator('.work-workspace')).toHaveCount(1)
               await expect(work().locator('.work-task-body')).toHaveAttribute('data-workspace', 'true')
               // At 980px Work intentionally shows one pane at a time. Keep the

@@ -129,8 +129,8 @@ async function startProbe(): Promise<void> {
         for (const entry of entries) { if (entry.isIntersecting) onscreen.add(entry.target); else onscreen.delete(entry.target) }
       }, { root: viewport, threshold: 0 })
       const refresh = (): void => {
-        watched = [...wrapper.querySelectorAll('button.logline, .work-file-change-row, .work-activity-group__toggle, .work-message__process-note p, .logline__detail')]
-        rows = watched.filter(element => element.matches('button.logline, .work-file-change-row, .work-activity-group__toggle'))
+        watched = [...wrapper.querySelectorAll('button.logline, .work-file-change-row, .work-process-section__toggle, .work-message__process-note p, .logline__detail')]
+        rows = watched.filter(element => element.matches('button.logline, .work-file-change-row, .work-process-section__toggle'))
         intersection?.disconnect(); onscreen.clear()
         for (const element of watched) intersection?.observe(element)
       }
@@ -269,14 +269,22 @@ async function finishProbe(name: string, info: TestInfo, requireClosing = false,
   if (requireClosing) expect(frames.some(frame => frame.phase === 'closing')).toBe(true)
   expect(frames.flatMap((frame, index) => frame.violations.map(problem => `frame ${index} at ${frame.time.toFixed(1)}ms: ${problem}`))).toEqual([])
 }
-async function stableOpen(): Promise<void> {
+async function stableOpen(receiptCount = 67): Promise<void> {
   await expect(toggle()).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.locator('.work-conversation [data-work-tool-id]')).toHaveCount(67)
+  await expect(page.locator('.work-conversation [data-work-tool-id]')).toHaveCount(receiptCount)
   await expect.poll(() => processPanel().evaluate(element => {
     const wrapper = element.closest('.work-message__process')!
     return element.clientHeight > 250 && wrapper.getAttribute('data-motion-state') === 'open'
       && wrapper.getAnimations({ subtree: true }).every(animation => animation.playState !== 'running')
   })).toBe(true)
+}
+async function expandSections(): Promise<void> {
+  const sections = page.locator('.work-conversation .work-process-section__toggle')
+  await expect(sections).toHaveCount(8)
+  for (const section of await sections.all()) {
+    if (await section.getAttribute('aria-expanded') !== 'true') await section.click()
+    await expect(section).toHaveAttribute('aria-expanded', 'true')
+  }
 }
 async function screenshot(name: string, info: TestInfo): Promise<void> {
   const path = info.outputPath(`${name}.png`)
@@ -339,7 +347,14 @@ test.afterAll(async () => {
 
 test('首次展开 67 步过程：每个动画帧的可见回执和过程文本均不覆盖正文', async ({}, info) => {
   await expect(toggle()).toHaveAttribute('aria-expanded', 'false'); await expect(toggle()).toContainText('67 步')
-  await pauseOuterFollowing(); await startProbe(); await toggle().click(); await stableOpen()
+  await pauseOuterFollowing(); await startProbe(); await toggle().click(); await stableOpen(0)
+  const sections = page.locator('.work-conversation .work-process-section')
+  await expect(sections).toHaveCount(8)
+  expect(await sections.evaluateAll(elements => elements.map(element => Number(element.getAttribute('data-tool-count')))))
+    .toEqual([9, 9, 9, 9, 9, 9, 9, 4])
+  await expect(page.locator('.work-process-section__toggle[aria-expanded="false"]')).toHaveCount(8)
+  await finishProbe('first-open-collapsed-stages', info)
+  await startProbe(); await expandSections(); await stableOpen()
   await expect(page.locator('.work-message__answer').getByRole('heading', { name: answerTitle, exact: true })).toBeVisible()
   await expect(page.locator('.work-message__answer table')).toBeVisible()
   for (const stage of [1, 10, 19, 28, 37, 46, 55, 64]) {
@@ -350,7 +365,7 @@ test('首次展开 67 步过程：每个动画帧的可见回执和过程文本�
 
 test('长结果展开并滚到底部后关闭重开：保留滚动位置且首帧不重叠', async ({}, info) => {
   if (await toggle().getAttribute('aria-expanded') !== 'true') await toggle().click()
-  await stableOpen(); await pauseOuterFollowing()
+  await expandSections(); await stableOpen(); await pauseOuterFollowing()
   const first = page.locator('[data-work-tool-id="opening-tool-0"] button.logline')
   if (await first.getAttribute('aria-expanded') !== 'true') await first.click()
   await expect(page.locator('[data-work-tool-id="opening-tool-0"] .logline__detail')).toContainText('item_0_89')
@@ -360,17 +375,29 @@ test('长结果展开并滚到底部后关闭重开：保留滚动位置且首�
   await last.scrollIntoViewIfNeeded(); if (await last.getAttribute('aria-expanded') !== 'true') await last.click()
   await expect(page.locator('[data-work-tool-id="opening-tool-66"] .logline__detail')).toContainText('item_66_89')
   await stableOpen(); await processPanel().evaluate(element => { element.scrollTop = element.scrollHeight })
+  const lastStage = page.locator('.work-process-section').filter({ has: last }).locator('.work-process-section__viewport')
+  await lastStage.focus(); await page.keyboard.press('End')
+  await expect.poll(() => lastStage.evaluate(element => element.scrollTop)).toBeGreaterThan(1000)
+  // End can animate through intermediate offsets. Capture the completed
+  // reading position rather than a transient frame on the way to the bottom.
+  await expect.poll(() => lastStage.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(1)
+  const savedStage = await lastStage.evaluate(element => element.scrollTop)
   const saved = await processPanel().evaluate(element => element.scrollTop)
   expect(saved).toBeGreaterThan(1000)
   await startProbe(); await toggle().click(); await expect(processPanel()).toHaveCount(0)
   await toggle().click(); await stableOpen()
   await expect.poll(() => processPanel().evaluate(element => element.scrollTop)).toBeGreaterThan(saved - 2)
   expect(await processPanel().evaluate(element => element.scrollTop)).toBeLessThan(saved + 2)
+  await expect.poll(() => lastStage.evaluate((element, saved) => Math.abs(element.scrollTop - saved), savedStage)).toBeLessThanOrEqual(2)
   await finishProbe('saved-bottom-reopen', info, true); await screenshot('saved-bottom-reopen-stable', info)
 })
 
 test('真实动画期间快速反复开关：不出现首帧穿透、回执叠压或过期关闭', async ({}, info) => {
-  if (await toggle().getAttribute('aria-expanded') === 'true') { await toggle().click(); await expect(processPanel()).toHaveCount(0) }
+  // Each test must prepare its own section choices, including after Playwright
+  // restarts the worker following an earlier failure.
+  if (await toggle().getAttribute('aria-expanded') !== 'true') await toggle().click()
+  await expandSections(); await stableOpen()
+  await toggle().click(); await expect(processPanel()).toHaveCount(0)
   await pauseOuterFollowing(); await toggle().focus(); await startProbe()
   for (let index = 0; index < 7; index++) {
     await page.keyboard.press('Enter')
@@ -388,13 +415,13 @@ test('13 个成果文件：底部跟随时展开仍贴底，末尾入口可见�
   await expect.poll(() => page.evaluate(() => innerHeight)).toBe(720)
   const panel = page.locator('.work-conversation .work-progress-panel[data-result-turn-id]')
   const button = panel.locator('.work-progress-panel__changes-toggle'), body = panel.locator('.work-progress-panel__changes-body')
-  await expect(button).toContainText('13 个文件')
+  await expect(button).toHaveAccessibleName(/成果文件列表，共 13 个文件/)
   if (await button.getAttribute('aria-expanded') === 'true') await button.click()
   const scroll = page.locator('.work-conversation__scroll')
   const latest = page.locator('.work-follow-latest')
-  if (await latest.isVisible()) await latest.click()
   // A real downward gesture at the end resumes following even when a short
-  // collapsed conversation currently has no scroll range. scrollTop alone does not.
+  // collapsed conversation currently has no scroll range. It also avoids
+  // clicking a retained, inert "latest" control during its exit animation.
   await scroll.hover({ position: { x: 8, y: 16 } }); await page.mouse.wheel(0, 10_000)
   await expect.poll(() => scroll.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(2)
   await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
@@ -442,7 +469,8 @@ test('历史成果展开：真实向上阅读后保持标题和视口位置，�
   const button = panel.locator('.work-progress-panel__changes-toggle'), heading = panel.locator('.work-progress-panel__heading')
   const scroll = page.locator('.work-conversation__scroll'), latest = page.locator('.work-follow-latest')
   await expect(button).toHaveAttribute('aria-expanded', 'false')
-  if (await latest.isVisible()) await latest.click()
+  // The downward gesture is the readiness signal; a closing "latest" button
+  // can still be visibly painted while already inert.
   await scroll.hover({ position: { x: 8, y: 16 } }); await page.mouse.wheel(0, 10_000)
   await expect.poll(() => scroll.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(2)
   const upwardDistance = await heading.evaluate(element => element.getBoundingClientRect().top

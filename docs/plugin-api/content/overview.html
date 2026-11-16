@@ -1,0 +1,193 @@
+<p>用插件扩展 Aether 的会话、工作区和界面，并调用平台已有的 AI、Agent、Skills、MCP 与知识库能力。本文对应 <code>apiVersion: 1</code>。</p>
+<h2 id="get-started">开始使用</h2>
+<p>在「插件 → 开发模式」打开自己的插件目录，按需绑定会话和授权，修改后刷新即可调试。也可以在会话中添加 <code>@插件管理</code>，让 AI 从模板创建工程。</p>
+<ul>
+<li><a href="manifest.html">插件文件与清单</a>：三个文件的完整示例、工具输入输出、调试与导入。</li>
+<li><a href="permissions.html">权限</a>：声明权限、用户授权和适用范围。</li>
+<li><a href="platform.html#agents-example">Agent 示例</a>：启动任务、读取状态、取消与接续，以及可用的基础工具范围。</li>
+</ul>
+<p>验证页面插件时，除了工具的输入输出，还要实际走通点击、AI 返回、结果渲染和导出。默认脚手架的 Node 测试不覆盖页面；使用固定模型回复的测试也不能替代真实模型验证。</p>
+<h2 id="platform-api">平台 API</h2>
+<p>以下接口可用于插件页面和平台启动的 Node 工具。<code>$AE</code> 自动提供，无需导入，也无需让用户重复填写模型密钥。</p>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>API</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>上下文</td>
+<td><a href="platform.html#context">context()</a></td>
+<td>当前会话、工作区、消息或文件目标</td>
+</tr>
+<tr>
+<td>模型</td>
+<td><a href="platform.html#models-list">models.list()</a></td>
+<td>平台可用模型</td>
+</tr>
+<tr>
+<td>AI</td>
+<td><a href="platform.html#ai-run">ai.run()（非流式）</a> · <a href="platform.html#ai-stream">ai.stream()（流式输出）</a></td>
+<td>等待完整结果，或逐段接收正文</td>
+</tr>
+<tr>
+<td>会话</td>
+<td><a href="platform.html#session-messages">session.messages()</a></td>
+<td>分页或按 ID 读取消息</td>
+</tr>
+<tr>
+<td>Skills</td>
+<td><a href="platform.html#skills-list">list()</a> · <a href="platform.html#skills-get">get()</a></td>
+<td>技能目录与说明</td>
+</tr>
+<tr>
+<td>Agent</td>
+<td><a href="platform.html#agents-tools">tools()</a> · <a href="platform.html#agents-list">list()</a> · <a href="platform.html#agents-run">run()（后台任务）</a> · <a href="platform.html#agents-stream">stream()（流式输出）</a> · <a href="platform.html#agents-status">status()</a> · <a href="platform.html#agents-cancel">cancel()</a></td>
+<td>六类内置工具、后台任务、流式进度与续跑</td>
+</tr>
+<tr>
+<td>工作区</td>
+<td><a href="platform.html#workspace-list">list()</a> · <a href="platform.html#workspace-read">read()</a> · <a href="platform.html#workspace-write">write()</a></td>
+<td>目录与文本文件</td>
+</tr>
+<tr>
+<td>知识库</td>
+<td><a href="platform.html#knowledge-list">list()</a> · <a href="platform.html#knowledge-search">search()</a> · <a href="platform.html#knowledge-get">get()</a> · <a href="platform.html#knowledge-create">create()</a> · <a href="platform.html#knowledge-update">update()</a></td>
+<td>知识检索与写入</td>
+</tr>
+<tr>
+<td>MCP</td>
+<td><a href="platform.html#mcp-list">list()</a> · <a href="platform.html#mcp-tools">tools()</a> · <a href="platform.html#mcp-call">call()</a></td>
+<td>已启用服务、工具参数与调用</td>
+</tr>
+<tr>
+<td>插件设置</td>
+<td><a href="platform.html#settings-get">get()</a> · <a href="platform.html#settings-set">set()</a></td>
+<td>本插件的配置</td>
+</tr>
+<tr>
+<td>通用调用</td>
+<td><a href="platform.html#call">call()</a></td>
+<td>按能力名调用公开方法</td>
+</tr>
+</tbody></table>
+<pre><code class="language-js">const { skills } = await $AE.skills.list()
+</code></pre>
+<p>上述示例需要在清单申请 <code>skills.read</code>，并由用户授权。</p>
+<h2 id="page-api">页面 API</h2>
+<p>以下接口用于 Aether 承载的 Webview 插件页面，包括开发预览和内置浏览器中的插件标签。</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="page.html#invoke">invoke()</a></td>
+<td>调用本页面声明的插件工具</td>
+</tr>
+<tr>
+<td><a href="page.html#navigate">navigate()</a></td>
+<td>打开本插件页面</td>
+</tr>
+<tr>
+<td><a href="page.html#commands-execute">commands.execute()</a></td>
+<td>执行本插件命令</td>
+</tr>
+<tr>
+<td><a href="page.html#download">download()</a></td>
+<td>让用户选择位置保存文件</td>
+</tr>
+<tr>
+<td><a href="page.html#services">services</a></td>
+<td>查询、启动、停止、刷新和订阅服务</td>
+</tr>
+<tr>
+<td><a href="page.html#dialog">ui.dialog()</a></td>
+<td>消息与确认弹窗</td>
+</tr>
+<tr>
+<td><a href="page.html#notify">ui.notify()</a></td>
+<td>应用内及系统通知</td>
+</tr>
+<tr>
+<td><a href="page.html#clipboard">ui.clipboard</a></td>
+<td>文本剪贴板</td>
+</tr>
+<tr>
+<td><a href="page.html#editor">ui.editor</a></td>
+<td>已接入代码预览的选择与定位</td>
+</tr>
+<tr>
+<td><a href="page.html#composer">ui.composer</a></td>
+<td>读取、修改和提交草稿</td>
+</tr>
+<tr>
+<td><a href="events.html#subscribe">events.subscribe()</a> · <a href="events.html#unsubscribe">unsubscribe()</a></td>
+<td>生命周期事件</td>
+</tr>
+</tbody></table>
+<h2 id="extension-points">界面挂载</h2>
+<p>在清单 <code>contributes</code> 中声明，字段与示例见 <a href="contributions.html">挂载区域</a>。</p>
+<table>
+<thead>
+<tr>
+<th>声明</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="contributions.html#pages">pages</a></td>
+<td>工具表单、Webview、原生组件页面</td>
+</tr>
+<tr>
+<td><a href="contributions.html#navigation">navigation</a></td>
+<td>左侧导航入口</td>
+</tr>
+<tr>
+<td><a href="contributions.html#workspace-tabs">workspaceTabs</a></td>
+<td>右侧工作区页签</td>
+</tr>
+<tr>
+<td><a href="contributions.html#commands">commands</a></td>
+<td>命令面板与快捷键</td>
+</tr>
+<tr>
+<td><a href="contributions.html#menus">menus</a></td>
+<td>消息、会话、文件、编辑器、服务、输入框和顶部菜单</td>
+</tr>
+<tr>
+<td><a href="contributions.html#views">views</a></td>
+<td>消息、输入框和工作区内嵌页面</td>
+</tr>
+<tr>
+<td><a href="contributions.html#status-bar">statusBar</a></td>
+<td>底部状态栏入口</td>
+</tr>
+<tr>
+<td><a href="contributions.html#settings">settings</a></td>
+<td>插件设置页</td>
+</tr>
+<tr>
+<td><a href="contributions.html#editor-decorations">editorDecorations</a></td>
+<td>代码预览标记与提示</td>
+</tr>
+<tr>
+<td><a href="contributions.html#services">services</a></td>
+<td>插件服务与会话标题栏的服务条目</td>
+</tr>
+<tr>
+<td><a href="events.html#hooks">hooks</a></td>
+<td>事件触发工具</td>
+</tr>
+<tr>
+<td><a href="events.html#background">background</a></td>
+<td>可恢复的周期任务</td>
+</tr>
+</tbody></table>
+<h2 id="native-components">原生组件</h2>
+<p><a href="native.html">原生组件参考</a>：<code>text</code>、<code>heading</code>、<code>markdown</code>、<code>image</code>、<code>divider</code>、<code>stack</code>、<code>row</code>、<code>card</code>、<code>input</code>、<code>textarea</code>、<code>select</code>、<code>checkbox</code>、<code>button</code>。</p>
+<p>使用 JSON 声明即可继承平台的主题和交互；复杂自定义界面使用 Webview。</p>

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState, type QueueCommitResult } from '../shared/next-turn-queue'
+import { NextTurnQueueError, type NextTurnQueueEnvelope, type NextTurnQueueScope, type NextTurnQueueState, type QueueCommitResult, type QueueContinuationTarget } from '../shared/next-turn-queue'
 import { queueScopeIdentity, sameQueueScope } from '../shared/next-turn-queue-state'
 import type { SessionQueueDraft, SessionQueueRead } from '../shared/session-next-turn-api'
 import { NextTurnQueueMutationService, type QueueOwnerCapability, type TrustedQueueAuthority } from './next-turn-queue-service'
@@ -12,7 +12,7 @@ export interface QueueDispatchGateway extends TrustedQueueAuthority {
   context(scope: NextTurnQueueScope): Promise<AdmissionContext>
   prepare(scope: NextTurnQueueScope, envelope: NextTurnQueueEnvelope, context: AdmissionContext): Promise<Record<string, unknown>>
   envelope(scope: NextTurnQueueScope, draft: SessionQueueDraft): Promise<NextTurnQueueEnvelope>
-  recoveryEnvelope?(scope: NextTurnQueueScope, runId: string): Promise<NextTurnQueueEnvelope>
+  recoveryEnvelope?(scope: NextTurnQueueScope, target: QueueContinuationTarget): Promise<NextTurnQueueEnvelope>
   editDraft(envelope: NextTurnQueueEnvelope, draft: SessionQueueDraft['draft'], scope?: NextTurnQueueScope): NextTurnQueueEnvelope | Promise<NextTurnQueueEnvelope>
   submit(scope: NextTurnQueueScope, wireBody: string, signal: AbortSignal): Promise<void>
   receipt(scope: NextTurnQueueScope, entry: Exclude<NextTurnQueueState['entries'][number], { phase: 'pending' }>): Promise<ExactAdmission>
@@ -147,32 +147,36 @@ export class NextTurnDispatcher {
     }
   }
   read(taskId: string): Promise<SessionQueueRead> { return this.owned(() => this.readOnce(taskId), taskId) }
-  restart(taskId: string, runId: string): Promise<SessionQueueRead> {
+  restart(taskId: string, target: QueueContinuationTarget): Promise<SessionQueueRead> {
     return this.owned(async () => {
-      if (typeof runId !== 'string' || !runId.trim() || runId.length > 256 || /[\x00-\x1f\x7f]/.test(runId))
+      if (!target || Object.keys(target).some(key => !['runId', 'attemptId', 'version', 'turnId', 'childRunId'].includes(key)) ||
+        [target.runId, target.attemptId, target.turnId].some(id => typeof id !== 'string' || !id.trim() || id.length > 256 || /[\x00-\x1f\x7f]/.test(id)) ||
+        target.childRunId !== undefined && (typeof target.childRunId !== 'string' || !target.childRunId.trim() || target.childRunId.length > 256 || /[\x00-\x1f\x7f]/.test(target.childRunId)) ||
+        !Number.isSafeInteger(target.version) || target.version < 1)
         throw new NextTurnQueueError('INVALID', '需要明确的待恢复任务身份')
       const job = await this.bind(taskId)
       if (job.scope.owner !== 'work' || !this.gateway.recoveryEnvelope) throw new NextTurnQueueError('AUTHORITY', '此模式不支持恢复 Work 任务')
-      const key = JSON.stringify([queueScopeIdentity(job.scope), runId]), pending = this.pendingRestarts.get(key)
+      const captured = structuredClone(target)
+      const key = canonicalAdmissionJson([queueScopeIdentity(job.scope), captured]), pending = this.pendingRestarts.get(key)
       if (pending) return pending
-      const operation = this.restartOnce(job, runId)
+      const operation = this.restartOnce(job, captured)
       this.pendingRestarts.set(key, operation)
       try { return await operation } finally { if (this.pendingRestarts.get(key) === operation) this.pendingRestarts.delete(key) }
     }, taskId)
   }
-  private async restartOnce(job: Job, runId: string): Promise<SessionQueueRead> {
+  private async restartOnce(job: Job, target: QueueContinuationTarget): Promise<SessionQueueRead> {
     while (job.busy) await job.busy
     if (this.closing) throw new NextTurnQueueError('AUTHORITY', 'Queue dispatcher is closing')
     if (this.running >= 2) throw new NextTurnQueueError('CAPACITY', '队列正在核对其他任务，请稍后重试')
     this.running++
     const operation = (async () => {
-      const id = 'work-recovery-' + createHash('sha256').update(JSON.stringify([queueScopeIdentity(job.scope), runId])).digest('hex')
+      const id = 'work-continue-' + createHash('sha256').update(canonicalAdmissionJson([queueScopeIdentity(job.scope), target])).digest('hex')
       let state = (await this.service.read(job.capability)).state
       let entry = state.entries.find(item => item.id === id)
       if (!entry) {
-        const envelope = await this.gateway.recoveryEnvelope!(job.scope, runId)
+        const envelope = await this.gateway.recoveryEnvelope!(job.scope, target)
         if (this.closing) throw new NextTurnQueueError('AUTHORITY', '恢复请求准备期间队列已关闭，尚未提交')
-        if (envelope.recovery?.runId !== runId) throw new NextTurnQueueError('AUTHORITY', '恢复请求未关联原任务')
+        if (canonicalAdmissionJson(envelope.recovery ?? null) !== canonicalAdmissionJson(target)) throw new NextTurnQueueError('AUTHORITY', '继续请求未关联原执行')
         // A fixed entry identity survives local ACK loss; only its first claim allocates an admission key.
         for (let attempt = 0; attempt < 4; attempt++) {
           state = (await this.service.read(job.capability)).state
@@ -188,7 +192,7 @@ export class NextTurnDispatcher {
           }
         }
       }
-      if (!entry || entry.envelope.recovery?.runId !== runId) throw new NextTurnQueueError('CONFLICT', '恢复请求身份冲突')
+      if (!entry || canonicalAdmissionJson(entry.envelope.recovery ?? null) !== canonicalAdmissionJson(target)) throw new NextTurnQueueError('CONFLICT', '继续请求身份冲突')
       // Terminal retry is observation only. A failed continuation owns its own later restart action.
       if (entry.phase !== 'terminal') await this.run(job, true, id)
       else {
@@ -346,7 +350,8 @@ export class NextTurnDispatcher {
       if (!entry || entry.phase !== 'pending') { delete job.error; return }
       const context = await this.gateway.context(job.scope)
       if (!context.root) throw new NextTurnQueueError('AUTHORITY', '先启动任务的首轮，再排下一轮消息')
-      const obsolete = state.entries.filter(item => item.phase === 'pending' && item.envelope.recovery && item.envelope.recovery.runId !== context.root!.runId)
+      const obsolete = state.entries.filter(item => item.phase === 'pending' && item.envelope.recovery &&
+        (item.envelope.recovery.runId !== context.root!.runId || item.envelope.recovery.attemptId !== context.root!.attemptId))
       for (const stale of obsolete) await update({ kind: 'abandon-recovery', id: stale.id, entryRevision: stale.revision, at: Date.now() })
       if (obsolete.length) {
         job.error = '任务已进入新一轮，旧恢复请求未执行；请在当前任务上继续'
@@ -354,7 +359,9 @@ export class NextTurnDispatcher {
         entry = state.entries.find(item => item.phase === 'pending' && item.envelope.recovery)
         if (!entry) return
       }
-      if (entry.envelope.recovery && (context.root.runId !== entry.envelope.recovery.runId || !['failed', 'interrupted'].includes(context.root.status)))
+      if (entry.envelope.recovery && (context.root.runId !== entry.envelope.recovery.runId || context.root.attemptId !== entry.envelope.recovery.attemptId ||
+        context.root.version !== entry.envelope.recovery.version || context.root.turnId !== entry.envelope.recovery.turnId ||
+        !['cancelled', 'failed', 'interrupted', ...(entry.envelope.recovery.childRunId ? ['succeeded'] : [])].includes(context.root.status)))
         throw new NextTurnQueueError('AUTHORITY', '待恢复的任务已变化，请同步当前任务后重试')
       if (context.root.status === 'running' || context.root.status === 'waiting') { delete job.error; return }
       if (!entry.envelope.recovery && context.root.status !== 'succeeded' && (!state.resumeAnchor || canonicalAdmissionJson(state.resumeAnchor) !== canonicalAdmissionJson(context.predecessor))) {

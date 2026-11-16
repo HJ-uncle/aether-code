@@ -13,6 +13,7 @@ import { ChatImage } from './ChatImage'
 const FileContext = createContext<ChatFileContext | undefined>(undefined)
 const RenderImages = createContext(true)
 const InsideLink = createContext(false)
+const ReadOnly = createContext(false)
 
 /**
  * Markdown 渲染（助手正文专用）
@@ -88,6 +89,7 @@ function copyCode(event: React.MouseEvent<HTMLButtonElement>): void {
 
 function ChatLink({ token, prefix, source, reveal }: { token: Tokens.Link; prefix: string; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
   const { engine } = useApp()
+  const readOnly = useContext(ReadOnly)
   const context = useContext(FileContext)
   const href = token.href ?? ''
   // Linked thumbnails use the same preview as ordinary images, without nesting
@@ -98,6 +100,7 @@ function ChatLink({ token, prefix, source, reveal }: { token: Tokens.Link; prefi
   const target = classifyChatLink(href, context?.sessionId, engine.snapshot.baseUrl)
   // A code-styled label inside an explicit link must keep that link's target.
   const label = <InsideLink.Provider value={true}>{renderInline(token.tokens, prefix, source, reveal)}</InsideLink.Provider>
+  if (readOnly) return <span>{label}</span>
   if (target.kind === 'artifact' || target.kind === 'invalid') {
     return <a href={href} title={target.kind === 'artifact' ? `在编辑器中打开 ${target.path}` : target.message} onClick={(event) => {
       event.preventDefault()
@@ -269,6 +272,7 @@ function renderHighlight(parts: HighlightPart[], prefix: string, source: SourceR
 }
 
 function CodeBlock({ token, source, reveal }: { token: Tokens.Code; source?: SourceRange; reveal: StreamReveal }): JSX.Element {
+  const readOnly = useContext(ReadOnly)
   const lang = normalizeLang(token.lang)
   const parts = useMemo(() => highlightedParts(highlight(token.text, token.lang ?? '')), [token.text, token.lang])
   // A fenced code body's first word can also occur in its language label.
@@ -280,7 +284,7 @@ function CodeBlock({ token, source, reveal }: { token: Tokens.Code; source?: Sou
     <div className="md-code">
       <div className="md-code__header">
         <span className="md-code__lang">{lang || 'text'}</span>
-        <button
+        {!readOnly ? <button
           type="button"
           className="md-code__copy"
           title="复制代码"
@@ -288,7 +292,7 @@ function CodeBlock({ token, source, reveal }: { token: Tokens.Code; source?: Sou
           onClick={copyCode}
         >
           <Icon name="copy" size={16} />
-        </button>
+        </button> : null}
       </div>
       {/* Keep highlight spans while revealing only new text, including code appends. */}
       <pre data-scroll-axis="x">
@@ -428,8 +432,8 @@ function tokenizeIncremental(text: string): Token[] {
   return [...head, ...tailTokens]
 }
 
-export const Markdown = memo(function Markdown({ text, fileContext, streaming = false, renderImages = true }: { text: string; fileContext?: ChatFileContext; streaming?: boolean; renderImages?: boolean }): JSX.Element {
+export const Markdown = memo(function Markdown({ text, fileContext, streaming = false, renderImages = true, readOnly = false }: { text: string; fileContext?: ChatFileContext; streaming?: boolean; renderImages?: boolean; readOnly?: boolean }): JSX.Element {
   const tokens = useMemo(() => tokenizeIncremental(text), [text])
   const reveal = useStreamReveal(text, streaming)
-  return <FileContext.Provider value={fileContext}><RenderImages.Provider value={renderImages}><div className="md">{renderBlock(tokens, 'md', { start: 0, end: text.length }, reveal)}</div></RenderImages.Provider></FileContext.Provider>
+  return <ReadOnly.Provider value={readOnly}><FileContext.Provider value={fileContext}><RenderImages.Provider value={renderImages}><div className="md">{renderBlock(tokens, 'md', { start: 0, end: text.length }, reveal)}</div></RenderImages.Provider></FileContext.Provider></ReadOnly.Provider>
 })

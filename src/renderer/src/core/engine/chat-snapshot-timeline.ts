@@ -4,13 +4,17 @@ import type { ChatMessage, TimelineItem } from './useChat'
 import type { ChatRecoverySnapshot } from './chat-recovery'
 import { extractText, normalizeTool, type EngineHistoryRow } from './chat-history'
 import { reducePayload } from './chat-payload'
-import { applyProjectedUserMessage, applyProjectedUsage, emptyRunAssistant, ownsRootMessage } from './chat-timeline'
+import { applyProjectedUserMessage, applyProjectedUsage, applyProjectedAssistantSegment, emptyRunAssistant, ownsRootMessage } from './chat-timeline'
 
 type ToolOwner = { message: number; tool: number }
 function reduceFrame(messages: ChatMessage[], payload: ChatSsePayload, run: RootRun, index: number,
   toolsById: Map<string, ToolOwner>, childrenById: Map<string, ToolOwner>): ChatMessage[] {
   const row = payload.userMessage as EngineHistoryRow | undefined
-  if (row) return applyProjectedUserMessage(messages, row, run)
+  if (row) {
+    const tail = messages.findLast(message => message.role === 'assistant')
+    return applyProjectedUserMessage(messages, row, tail?.attemptId ? { ...run, attemptId: tail.attemptId, assistantMessageId: tail.id } : run)
+  }
+  if (payload.assistantSegment) return applyProjectedAssistantSegment(messages, payload.assistantSegment, run)
   let owner = messages.length - 1
   const raw = payload.toolStart ?? payload.toolCall ?? payload.toolArgs ?? payload.toolEnd ?? payload.toolResult
   const toolId = raw ? normalizeTool(raw).id : payload.fileChange?.toolCallId ?? payload.publishedChild?.identity.parentToolCallId
@@ -92,11 +96,15 @@ function splitLegacyProjection(history: EngineHistoryRow[], replayed: ChatMessag
 export function restoreProjectedTimeline(snapshot: ChatRecoverySnapshot, historyMessages: ChatMessage[], run: RootRun): ChatMessage[] {
   const owned = historyMessages.filter(message => ownsRootMessage(message, run))
   const original = owned.find(message => message.role === 'user' && message.id === run.userMessageId)
-  let projected = [...(original ? [original] : []), emptyRunAssistant(run)]
+  const segmented = snapshot.projection.some(payload => payload.assistantSegment)
+  let projected = [...(original ? [original] : []), ...(segmented ? [] : [emptyRunAssistant(run)])]
   // When the original admission is not persisted yet, the first user frame
   // replaces the initial placeholder rather than following an empty bubble.
   const firstUser = snapshot.projection.find(payload => (payload.userMessage as EngineHistoryRow | undefined)?.id === run.userMessageId)?.userMessage as EngineHistoryRow | undefined
-  if (!original && firstUser) projected = applyProjectedUserMessage([], firstUser, run)
+  if (!original && firstUser) {
+    projected = applyProjectedUserMessage([], firstUser, run)
+    if (segmented) projected = projected.filter(message => message.role === 'user')
+  }
   let usageMessage: ChatMessage | undefined
   const toolsById = new Map<string, ToolOwner>(), childrenById = new Map<string, ToolOwner>()
   for (const [index, payload] of snapshot.projection.entries()) {
@@ -118,15 +126,16 @@ export function restoreProjectedTimeline(snapshot: ChatRecoverySnapshot, history
     // The projection keeps one cumulative usage frame. Durable assistant rows
     // retain per-iteration billing and stable segment IDs before each boundary.
     const byUser = new Map<string, ChatMessage>()
+    const historyKey = (userId: string, message: ChatMessage) => JSON.stringify([userId, segmented ? message.attemptId ?? null : null])
     let precedingUser = run.userMessageId
     for (const message of owned) {
       if (message.role === 'user') precedingUser = message.id
-      else byUser.set(precedingUser, message)
+      else byUser.set(historyKey(precedingUser, message), message)
     }
     precedingUser = run.userMessageId
     projected = projected.map((message, index) => {
       if (message.role === 'user') { precedingUser = message.id; return message }
-      const persisted = byUser.get(precedingUser)
+      const persisted = byUser.get(historyKey(precedingUser, message))
       if (!persisted) return message
       const current = index === projected.length - 1
       return { ...message,

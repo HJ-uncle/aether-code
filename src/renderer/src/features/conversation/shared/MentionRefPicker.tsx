@@ -176,7 +176,9 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
       {toolkitGroups.map(group => <div key={group.name} role="group" aria-label={group.name} className="mention-ref-picker__group">
         <div className="mention-ref-picker__heading" aria-hidden="true">{group.name}</div>{group.items.map(renderOption)}
       </div>)}
-      {!options.length && !loading && !files.error && !agents.error ? <div className="mention-ref-picker__empty">没有匹配的引用或工具包</div> : null}
+      {toolkits.loading ? <div className="mention-ref-picker__empty" role="status">正在加载工具包…</div> : toolkits.error ?
+        <div className="mention-ref-picker__empty" role="alert">{toolkits.error}<button type="button" data-mention-list-control className="mention-ref-picker__retry" onClick={toolkits.retry}>重试</button></div> : null}
+      {!options.length && !loading && !files.error && !agents.error && !toolkits.error ? <div className="mention-ref-picker__empty">没有匹配的引用或工具包</div> : null}
     </div>
   </div>
 }

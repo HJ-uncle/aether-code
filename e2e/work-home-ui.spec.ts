@@ -1,7 +1,7 @@
 /** Real Electron + authenticated owned engine: Work home draft/template
  * retention, recent-task filters and search, true multipart upload + Enter
- * delivery, home run-list navigation, workspace selection/ownership, and
- * light/dark responsive layouts. */
+ * delivery, removal of the duplicate run-list entry, retained session navigation,
+ * workspace ownership and light/dark responsive layouts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -14,7 +14,7 @@ import type { ChatAttachment } from '../src/renderer/src/core/engine/useChat'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
 import { OUTLINE_ICON_PATHS } from '../src/renderer/src/ui/outline-icons'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'remove-run-list')
 const token = 'disposable-work-home-token', modelId = 'work-home-model'
 const modelName = '面向文档研究与复杂推理的超长模型名称 · Professional Writing and Reasoning Edition'
 const workspaceRoot = '/remote/home-ui/project', homeId = 'work-home-6c9a5914-8bdb-4613-9801-051398088ede'
@@ -293,7 +293,7 @@ async function expectOutlineIcons(container: Locator, minimum = 1): Promise<void
 }
 
 test.describe.serial('Work 首页', () => {
-  test.beforeAll(async () => {
+  test.beforeAll(async ({}, info) => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'work-home-profile-'))
     await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done) })
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port')
@@ -309,8 +309,25 @@ test.describe.serial('Work 首页', () => {
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
     app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
+    const startupConsole: string[] = [], failedResources: string[] = []
+    page.on('console', message => { if (message.type() === 'error') startupConsole.push(message.text()) })
+    page.on('requestfailed', request => failedResources.push(`${request.url()}: ${request.failure()?.errorText}`))
     await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1440, 900); win.show(); win.focus() })
-    await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
+    try {
+      // Shell loading and engine readiness fail differently; capture a blank renderer promptly.
+      await expect(page.locator('.status-bar')).toBeVisible({ timeout: 10_000 })
+      await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
+    } catch (error) {
+      const diagnostic = { url: page.url(), errors, startupConsole, failedResources,
+        page: await page.evaluate(() => ({ title: document.title, body: document.body?.innerText,
+          html: document.body?.innerHTML.slice(0, 4000), bridge: typeof window.aether, scripts: [...document.scripts].map(script => script.src) })) }
+      const diagnosticPath = info.outputPath('startup-diagnostic.json')
+      writeFileSync(diagnosticPath, JSON.stringify(diagnostic, null, 2))
+      await info.attach('startup-diagnostic', { path: diagnosticPath, contentType: 'application/json' })
+      const screenshot = info.outputPath('startup-failure.png')
+      await page.screenshot({ path: screenshot }); await info.attach('startup-failure', { path: screenshot, contentType: 'image/png' })
+      throw error
+    }
   })
   test.beforeEach(async () => { await setWindow(1440); await seed() })
   test.afterEach(async ({}, info) => {
@@ -341,143 +358,109 @@ test.describe.serial('Work 首页', () => {
     }
   })
 
-  test('首页运行列表：仅首页右上角显示，真实切换任务与浅深窄窗键盘交互可用', async ({}, info) => {
-    const navigation = page.locator('.work-navigation')
-    const entry = page.locator('.work-main > .work-run-list')
-    const trigger = entry.getByRole('button', { name: '查看运行列表，共 2 项任务', exact: true })
-    const dialog = page.getByRole('dialog', { name: '运行列表', exact: true })
-    const assertHomeEntry = async (): Promise<void> => {
-      await expect(home()).toBeVisible()
-      expect((await savedHome()).activeTaskId).toBeNull()
-      await expect(page.locator('.work-run-list')).toHaveCount(1)
-      await expect(entry).toHaveCount(1)
-      await expect(page.locator('.work-sidebar .work-run-list, .work-task-heading .work-run-list')).toHaveCount(0)
-      await expect(trigger).toBeVisible(); await expect(trigger).toBeEnabled()
-      await expect(trigger.locator('.work-run-list__label')).toHaveText('运行列表')
-      await expect(trigger.locator('.work-run-list__count')).toHaveText('2')
-      await expect(trigger.locator('svg[data-icon="list-play"]')).toHaveCount(1)
-      await settleLayout()
-      expect(await entry.evaluate(element => {
-        const bounds = element.getBoundingClientRect(), main = element.parentElement!.getBoundingClientRect()
-        return bounds.left >= main.left + main.width / 2 && bounds.right <= main.right + 1 && main.right - bounds.right <= 48 &&
-          bounds.top >= main.top && bounds.top - main.top <= 48
-      })).toBe(true)
-    }
-    const assertNoEntry = async (): Promise<void> => {
-      await expect(page.locator('.work-run-list')).toHaveCount(0)
-      await expect(page.getByRole('button', { name: /^查看运行列表，共/ })).toHaveCount(0)
-      await expect(dialog).toHaveCount(0)
+  test('移除运行列表专项：侧栏与最近任务保留运行状态和会话切换', async () => {
+    const sidebarRow = (id: string): Locator => page.locator(`.work-sidebar__task-row[data-task-id="${id}"]`)
+    const recentRow = (id: string): Locator => recent().locator(`.work-task-row[data-task-id="${id}"]`)
+    const noRunList = async (): Promise<void> => {
+      await expect(page.locator('[class*="work-run-list"]')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: /^查看运行列表/ })).toHaveCount(0)
+      await expect(page.getByRole('dialog', { name: '运行列表', exact: true })).toHaveCount(0)
     }
     const returnHome = async (): Promise<void> => {
       await page.locator('.work-sidebar').getByRole('button', { name: '新任务', exact: true }).click()
-      await assertHomeEntry()
-      await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      await expect(home()).toBeVisible()
+      expect((await savedHome()).activeTaskId).toBeNull()
+      await noRunList()
     }
-    const openList = async (): Promise<void> => {
-      await trigger.click(); await expect(dialog).toBeVisible()
-      await expect(dialog.locator('.work-run-list__item-main strong')).toHaveText([tasks[0].title, tasks[1].title])
-      await expect(dialog.locator('.work-run-list__status--running')).toHaveCount(1)
-      await expect(dialog.locator('.work-run-list__status--waiting')).toHaveCount(1)
-      await expect(dialog.locator('.work-run-list__item')).toHaveCount(2)
-      await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    }
-    const closeWithEscape = async (): Promise<void> => {
-      await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0)
-      await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(trigger).toBeFocused()
-    }
-    const selectListedTask = async (task: SessionTask): Promise<void> => {
-      await dialog.locator('.work-run-list__item-main').filter({ hasText: task.title }).click()
-      await expect(dialog).toHaveCount(0)
+    const expectOpened = async (task: SessionTask): Promise<void> => {
       await expect.poll(async () => (await savedHome()).activeTaskId).toBe(task.id)
       await expect(page.locator('.work-task-heading h1')).toHaveText(task.title)
       await expect(page.locator('.work-conversation')).toContainText(`HOME_OPENED:${task.id}`)
-      await assertNoEntry()
+      await noRunList()
+    }
+    await noRunList()
+    await expect(sidebarRow(tasks[0].id).getByRole('img', { name: '运行中', exact: true })).toBeVisible()
+    await expect(sidebarRow(tasks[1].id).getByRole('img', { name: '待处理', exact: true })).toBeVisible()
+    await expect(recentRow(tasks[0].id).locator('.work-status')).toHaveText('进行中')
+    await expect(recentRow(tasks[1].id).locator('.work-status')).toHaveText('待处理')
+    await expect(page.locator('.work-navigation .work-count')).toHaveText('1')
+    await expect(page.locator('.work-navigation .work-count')).toHaveAttribute('aria-label', '1 个任务等待处理')
+
+    await sidebarRow(tasks[0].id).locator('.work-sidebar__task').click()
+    await expectOpened(tasks[0])
+    await expect.poll(() => liveStreams.get(tasks[0].id)?.size ?? 0).toBeGreaterThan(0)
+    await returnHome()
+    await recentRow(tasks[1].id).click()
+    await expectOpened(tasks[1])
+    await returnHome()
+    await recentRow(tasks[0].id).click()
+    await expectOpened(tasks[0])
+    await returnHome()
+    await sidebarRow(tasks[1].id).locator('.work-sidebar__task').click()
+    await expectOpened(tasks[1])
+    await returnHome()
+
+    // The removed switcher must not have owned polling for the remaining task surfaces.
+    const running = latest(tasks[0].id)!, finishedAt = Date.now()
+    runs.set(tasks[0].id, [{ ...running, status: 'succeeded', version: running.version + 1, updatedAt: finishedAt, finishedAt }])
+    await expect.poll(async () => (await savedHome()).tasks.find(task => task.id === tasks[0].id)?.status).toBe('done')
+    await expect(recentRow(tasks[0].id).locator('.work-status')).toHaveText('已完成')
+    await expect(sidebarRow(tasks[0].id)).toBeVisible()
+    await expect(sidebarRow(tasks[0].id).getByRole('img', { name: '运行中', exact: true })).toHaveCount(0)
+    await expect(sidebarRow(tasks[1].id).getByRole('img', { name: '待处理', exact: true })).toBeVisible()
+    await noRunList()
+    expect(chats).toHaveLength(0)
+  })
+
+  test('移除运行列表专项：深浅宽窄首页无重复入口或顶部占位', async ({}, info) => {
+    const noRunList = async (): Promise<void> => {
+      await expect(page.locator('[class*="work-run-list"]')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: /^查看运行列表/ })).toHaveCount(0)
+      await expect(page.getByRole('dialog', { name: '运行列表', exact: true })).toHaveCount(0)
     }
     try {
-      await assertHomeEntry(); await openList(); await closeWithEscape()
-      await taskRows().filter({ hasText: longTitle }).click()
-      await expect.poll(async () => (await savedHome()).activeTaskId).toBe(tasks[4].id)
-      await expect(page.locator('.work-task-heading h1')).toHaveText(longTitle)
-      await assertNoEntry()
-      await returnHome(); await openList(); await selectListedTask(tasks[0])
-      await returnHome(); await openList(); await selectListedTask(tasks[1])
-      await navigation.getByRole('button', { name: '项目', exact: true }).click()
-      await expect(navigation.getByRole('button', { name: '项目', exact: true })).toHaveAttribute('aria-current', 'page')
-      await expect(page.locator('.work-task-heading')).toHaveCount(0)
-      await assertNoEntry(); await returnHome()
       for (const appearance of ['light', 'dark'] as const) {
         await setWindow(1440); await setAppearance(appearance)
         for (const width of [1440, 540]) {
           await setWindow(width, width === 540 ? 650 : 900)
-          await assertHomeEntry(); await openList(); await settleLayout()
-          expect(await dialog.evaluate(element => {
-            const bounds = element.getBoundingClientRect()
-            return bounds.left >= 0 && bounds.top >= 0 && bounds.right <= window.innerWidth + 1 && bounds.bottom <= window.innerHeight + 1
-          })).toBe(true)
-          const screenshot = info.outputPath(`home-run-list-${appearance}-${width}.png`)
+          await home().evaluate(element => { element.scrollTop = 0 })
+          await page.mouse.move(5, 5); await settleLayout()
+          await noRunList()
+          await expect(composer()).toBeVisible()
+          await expect(taskRows().filter({ hasText: tasks[0].title }).locator('.work-status')).toHaveText('进行中')
+          await expect(taskRows().filter({ hasText: tasks[1].title }).locator('.work-status')).toHaveText('待处理')
+          const geometry = await home().evaluate(element => {
+            const main = element.closest('.work-main')!, mainBounds = main.getBoundingClientRect(), bounds = element.getBoundingClientRect()
+            // Homepage breathing room belongs inside its scroll content, not an orphaned header row.
+            return { firstChildIsHome: main.firstElementChild === element, topGap: bounds.top - mainBounds.top,
+              leftGap: bounds.left - mainBounds.left, rightGap: mainBounds.right - bounds.right,
+              overflow: element.scrollWidth - element.clientWidth }
+          })
+          expect(geometry.firstChildIsHome).toBe(true)
+          expect(Math.abs(geometry.topGap)).toBeLessThanOrEqual(1)
+          expect(Math.abs(geometry.leftGap)).toBeLessThanOrEqual(1)
+          expect(Math.abs(geometry.rightGap)).toBeLessThanOrEqual(1)
+          expect(geometry.overflow).toBe(0)
+          const screenshot = info.outputPath(`remove-run-list-${appearance}-${width}.png`)
           await page.screenshot({ path: screenshot, animations: 'disabled' })
-          await info.attach(`首页运行列表-${appearance}-${width}`, { path: screenshot, contentType: 'image/png' })
-          await closeWithEscape()
+          await info.attach(`移除重复入口-${appearance}-${width}`, { path: screenshot, contentType: 'image/png' })
         }
       }
-      await setWindow(1440)
-      await page.locator('.work-sidebar').getByRole('button', { name: '收起 应用导航', exact: true }).click()
-      await expect(page.locator('.work-view')).toHaveAttribute('data-collapsed', 'true')
-      await assertHomeEntry(); await openList(); await closeWithEscape()
-      await openList(); await selectListedTask(tasks[1])
+      // The compact navigation drawer remains the session entry point on a narrow window.
+      const sidebar = page.locator('.work-sidebar')
+      await sidebar.getByRole('button', { name: '展开 应用导航', exact: true }).click()
+      const waiting = sidebar.locator(`.work-sidebar__task-row[data-task-id="${tasks[1].id}"]`)
+      await expect(waiting.getByRole('img', { name: '待处理', exact: true })).toBeVisible()
+      await waiting.locator('.work-sidebar__task').click()
+      await expect(page.locator('.work-task-heading h1')).toHaveText(tasks[1].title)
+      await noRunList()
+      await sidebar.getByRole('button', { name: '新任务', exact: true }).click()
+      await expect(home()).toBeVisible(); await noRunList()
+      expect((await savedHome()).activeTaskId).toBeNull()
       expect(chats).toHaveLength(0)
     } finally {
       await page.keyboard.press('Escape'); await setWindow(1440); await setAppearance('light')
     }
-  })
-
-  test('首页运行列表：单项任务实时归零后再出现保持关闭', async () => {
-    await seed({}, [], [tasks[0]])
-    const trigger = page.locator('.work-main > .work-run-list').getByRole('button', { name: '查看运行列表，共 1 项任务', exact: true })
-    const dialog = page.getByRole('dialog', { name: '运行列表', exact: true })
-    await expect(trigger).toBeVisible(); await trigger.click()
-    await expect(dialog.locator('.work-run-list__item-main strong')).toHaveText([tasks[0].title])
-    await expect(dialog.locator('.work-run-list__item-main.is-active')).toHaveCount(0)
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    const id = tasks[0].id, running = latest(id)!
-    const finishedAt = Date.now(), terminal: RootRun = { ...running, status: 'succeeded', version: running.version + 1, updatedAt: finishedAt, finishedAt }
-    runs.set(id, [terminal])
-    await expect.poll(async () => (await savedHome()).tasks.find(task => task.id === id)?.status).toBe('done')
-    await expect(dialog).toHaveCount(0)
-    await expect(page.locator('.work-run-list')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: /^查看运行列表，共/ })).toHaveCount(0)
-    expect((await savedHome()).tasks.filter(task => ['running', 'waiting'].includes(task.status))).toEqual([])
-    expect((await savedHome()).activeTaskId).toBeNull()
-    await expect(home()).toBeVisible()
-
-    // Idle-row discovery has a 15-second cooldown. Keep the same home mounted and wait for its real server probe.
-    const restartedAt = Date.now(), seq = running.seq + 1
-    const restarted: RootRun = { ...running, runId: `${running.runId}-next`, turnId: `${running.turnId}-${seq}`,
-      userMessageId: `${running.userMessageId}-${seq}`, assistantMessageId: `${running.assistantMessageId}-${seq}`,
-      seq, version: 1, createdAt: restartedAt, updatedAt: restartedAt, startedAt: restartedAt }
-    runs.set(id, [terminal, restarted])
-    histories.set(id, [...histories.get(id)!,
-      { id: restarted.userMessageId, role: 'user', content: tasks[0].title, createdAt: restartedAt, conversationId: restarted.turnId, metadata: { rootRunId: restarted.runId } },
-      { id: restarted.assistantMessageId, role: 'assistant', content: `HOME_RESTARTED:${id}`, createdAt: restartedAt, conversationId: restarted.turnId, metadata: { rootRunId: restarted.runId } },
-    ])
-    await expect(trigger).toBeVisible({ timeout: 30_000 })
-    await expect.poll(async () => (await savedHome()).tasks.find(task => task.id === id)?.status).toBe('running')
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(dialog).toHaveCount(0)
-    expect((await savedHome()).activeTaskId).toBeNull()
-    await expect(home()).toBeVisible(); await expect(page.locator('.work-sidebar .work-run-list')).toHaveCount(0)
-    await trigger.click(); await expect(dialog.locator('.work-run-list__item-main.is-active')).toHaveCount(0)
-    await expect(dialog.locator('.work-run-list__item-main strong')).toHaveText([tasks[0].title])
-    await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0); await expect(trigger).toBeFocused()
-    await trigger.click(); await dialog.locator('.work-run-list__item-main').click()
-    await expect.poll(async () => (await savedHome()).activeTaskId).toBe(id)
-    await expect(page.locator('.work-conversation')).toContainText(`HOME_RESTARTED:${id}`)
-    await expect(page.locator('.work-run-list')).toHaveCount(0)
-    await expect.poll(() => liveStreams.get(id)?.size ?? 0).toBeGreaterThan(0)
-    expect(streamRequests).toContainEqual({ sessionId: id, lastEventId: streamCursor(restarted) })
-    await page.locator('.work-sidebar').getByRole('button', { name: '新任务', exact: true }).click()
-    await expect(home()).toBeVisible(); await expect(trigger).toBeVisible()
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(dialog).toHaveCount(0)
-    expect(chats).toHaveLength(0)
   })
 
   test('Work 图标：导航语义、跨门户一致性与浅深主题', async ({}, info) => {

@@ -7,7 +7,9 @@ import { changeSessionMemoryEnabled, useMemoryScope } from '@renderer/core/engin
 import { Icon, type IconName } from '@renderer/ui/icons'
 import { Popover } from '@renderer/ui/Popover'
 import { Select } from '@renderer/ui/Select'
+import { Toggle } from '@renderer/features/settings/SettingsGroup'
 import type { SessionThinkingMode } from './session-thinking-store'
+import { useSessionThinkingVisible } from './session-display-store'
 import type { ComposerThinkingMode } from './session-request-config'
 import { ComposerCodegraphRow } from './ComposerCodegraphRow'
 import './composer-options.css'
@@ -31,7 +33,7 @@ const THINKING_OPTIONS: Array<{
 const SECURITY_MENU: Record<SecurityMode, { icon: IconName; description: string }> = {
   safe: { icon: 'shield', description: '仅工作区内；拦截高危，询问未知命令。' },
   standard: { icon: 'terminal', description: '风险命令需确认；可读写工作区外文件。' },
-  'full-access': { icon: 'lock-open', description: '命令免确认；可读写工作区外文件。' }
+  'full-access': { icon: 'lock-open', description: '操作免确认，提问仍需回答；可访问工作区外文件。' }
 }
 
 /** 菜单里的一个选项行：名称 + 说明 + 选中勾 */
@@ -76,6 +78,7 @@ function MenuOption({
 export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingChange, workspacePath }: { sessionId: string; modelId: string; thinkingMode: ComposerThinkingMode; onThinkingChange: (mode: SessionThinkingMode) => void; workspacePath?: string }): JSX.Element {
   const { ready } = useApp()
   const { models } = useModels()
+  const [thinkingVisible, setThinkingVisible] = useSessionThinkingVisible(sessionId)
   const [openMenu, setOpenMenu] = useState<'memory' | 'thinking' | 'security' | null>(null)
   const [optionsOpen, setOptionsOpen] = useState(false)
   const { mode: storedMode, loaded, loading, error, refresh } = useSecurityMode(sessionId)
@@ -187,8 +190,7 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
         <button
           type="button"
           className={`composer-options__trigger${isOpen ? ' is-open' : ''}`}
-          disabled={!ready}
-          title={`对话偏好：${secDescriptor?.label ?? '访问权限尚未确认'} / 本会话记忆 / 思考档位`}
+          title={`对话偏好：${secDescriptor?.label ?? '访问权限尚未确认'} / 本会话记忆 / 思考档位 / 显示思考`}
           aria-label="对话偏好"
           aria-expanded={isOpen}
           aria-haspopup="dialog"
@@ -309,6 +311,15 @@ export function ComposerOptions({ sessionId, modelId, thinkingMode, onThinkingCh
               ))}
             </div>
           </Popover>
+        </div>
+
+        <div className="composer-options__row composer-options__display-row">
+          <Icon name="eye-outline" size={16} />
+          <div className="composer-options__text">
+            <div className="composer-options__title">显示思考</div>
+            <div className="composer-options__summary">在过程里显示思考内容</div>
+          </div>
+          <Toggle label="显示思考" checked={thinkingVisible} onChange={setThinkingVisible} />
         </div>
 
         <div className="composer-options__row">

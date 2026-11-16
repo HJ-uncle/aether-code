@@ -38,20 +38,24 @@
 .work-plugins__feedback.is-error { color: var(--danger-fg); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); background: var(--danger-soft); }
 /* List */
 .work-plugins__toolbar { justify-content: space-between; gap: 12px; margin: 2px 0 12px; }
-.work-plugins__search { display: flex; align-items: center; gap: 8px; width: min(360px, 100%); min-height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--input-radius); background: var(--bg-input); color: var(--fg-muted); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.work-plugins__search { display: flex; align-items: center; flex: 0 1 360px; gap: 8px; min-width: 100px; min-height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--input-radius); background: var(--bg-input); color: var(--fg-muted); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
 .work-plugins__search:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .work-plugins__search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font-size: 13px; }
 .work-plugins__search input::placeholder { color: var(--fg-muted); }
 .work-plugins__refresh { flex: 0 0 auto; }
+.work-plugins__selection { display: inline-flex; align-items: center; gap: 8px; padding-inline: 4px; color: var(--fg-muted); font-size: 12px; white-space: nowrap; }
+.work-plugins .work-plugins__delete:not(:disabled):hover { color: var(--danger-fg); background: var(--danger-soft); }
 .work-plugins__list { list-style: none; padding: 4px; margin: 0; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--bg-surface); box-shadow: var(--shadow-card); }
 .work-plugins__list > li { display: flex; align-items: center; gap: 8px; min-height: 62px; padding: 2px 4px 2px 2px; border-bottom: 1px solid var(--border); }
+.work-plugins__list > li.is-selected { background: var(--accent-soft); border-radius: var(--radius-lg); }
+.work-plugins__list > li > .work-selection-check { margin-left: 10px; }
 .work-plugins__list > li:last-child { border-bottom: 0; }
 .work-plugins__row { display: flex; align-items: center; flex: 1; gap: 11px; min-width: 0; padding: 10px; border: 0; border-radius: var(--radius-lg); background: transparent; color: var(--fg-muted); text-align: left; cursor: pointer; font: inherit; transition: background var(--duration-fast) var(--ease-out); }
 .work-plugins__row:hover { background: var(--bg-hover); }
 .work-plugins__row > svg { flex: 0 0 auto; color: var(--accent); }
-.work-plugins__copy { display: flex; align-items: baseline; flex: 1; gap: 12px; min-width: 0; }
-.work-plugins__copy strong { max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong); font-size: 13px; font-weight: 600; }
-.work-plugins__copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.work-plugins__copy { display: grid; grid-template-columns: fit-content(60%) minmax(0, 1fr); align-items: center; flex: 1; gap: 16px; min-width: 0; }
+.work-plugins__copy strong { min-width: 0; color: var(--fg-strong); font-size: 13px; font-weight: 600; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
+.work-plugins__copy > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .work-plugins__row small { flex: 0 0 auto; min-width: 54px; color: var(--fg-muted); font-size: 11px; text-align: right; }
 .work-plugins__list > li > .btn { flex: 0 0 auto; min-width: 30px; padding: 6px; color: var(--fg-muted); }
 .work-plugins__list > li > .btn:hover { color: var(--fg-strong); background: var(--bg-hover); }
@@ -60,6 +64,24 @@
 .work-plugins__empty > svg { color: var(--fg-faint); }
 .work-plugins__empty h2 { color: var(--fg-strong); }
 .work-plugins__empty p { margin: 0; font-size: 12px; }
+/* Developer mode keeps a local source directory transient. The two-column
+   surface makes the lifecycle obvious without adding another install state. */
+.work-plugins--development { max-width: 1040px; }
+.work-plugins__development-source, .work-plugins__development-run { padding: 18px; }
+.work-plugins__development-source { max-width: 720px; }
+.work-plugins__development-bar { display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.work-plugins__development-identity { display: grid; gap: 5px; min-width: 0; flex: 1; }
+.work-plugins__development-identity strong { font-size: 14px; color: var(--fg-strong); }
+.work-plugins__development-identity span { font-size: 11px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-plugins__development-revision { font: 11px var(--font-mono); color: var(--fg-muted); }
+.work-plugins__development-context { display: flex; align-items: center; gap: 8px; padding: 12px 18px 0; }
+.work-plugins__development-context > .select { max-width: min(360px, 80%); }
+.work-plugins__development-context > [role='alert'] { font-size: 11px; color: var(--danger-fg); }
+.work-plugins__development-workbench > .work-plugins__segments { margin: 14px 18px 0; }
+.work-plugins__development-preview { padding: 16px 18px 18px; display: grid; gap: 12px; }
+.work-plugins__development-preview .extension-page__webview { min-height: 440px; }
+.work-plugins__development-preview iframe { min-height: 440px; }
+.work-plugins__development-run .work-plugins__result { max-height: 280px; }
 /* Import and editor surfaces */
 .work-plugins__surface,
 .work-plugins__editor-shell { border: 1px solid var(--border-strong); border-radius: var(--radius-panel); background: var(--bg-surface); box-shadow: var(--shadow-card); }
@@ -72,6 +94,22 @@
 .work-plugins__field > span { color: var(--fg-muted); font-size: 11px; font-weight: 550; }
 .work-plugins__field small { margin-left: 4px; color: var(--fg-faint); font-size: 10px; font-weight: 400; }
 .work-plugins__field .ui-input { width: 100%; min-width: 0; }
+.work-plugins input.ui-input { padding: 6px 10px; line-height: 1.4; }
+.work-plugins .select__trigger { min-height: var(--input-height); height: var(--input-height); padding-inline: 10px; }
+.work-plugins .select > .popover__trigger { flex: 1; width: 100%; min-width: 0; }
+.work-plugins__field > .select,
+.work-plugins__source-bar .select { display: flex; width: 100%; min-width: 0; }
+.work-plugins__field > .select .select__trigger,
+.work-plugins__source-bar .select .select__trigger { width: 100%; min-width: 0; justify-content: space-between; }
+.work-plugins :is(input.ui-input, textarea.ui-input, .select__trigger) { transition: border-color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+/* Keep native checkbox semantics while matching the host's selection controls. */
+.work-plugins :not(.work-selection-check) > input[type='checkbox'] { appearance: none; display: inline-grid; place-content: center; flex: 0 0 auto; width: 16px; height: 16px; margin: 0; border: 1px solid var(--input-border-hover); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--accent-fg); cursor: pointer; transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.work-plugins :not(.work-selection-check) > input[type='checkbox']:hover:not(:disabled) { border-color: var(--accent); }
+.work-plugins :not(.work-selection-check) > input[type='checkbox']:is(:checked, :indeterminate) { background: var(--accent); border-color: var(--accent); }
+.work-plugins :not(.work-selection-check) > input[type='checkbox']::after { content: ''; width: 8px; height: 5px; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-1px) rotate(-45deg); opacity: 0; }
+.work-plugins :not(.work-selection-check) > input[type='checkbox']:checked::after { opacity: 1; }
+.work-plugins :not(.work-selection-check) > input[type='checkbox']:indeterminate::after { width: 8px; height: 0; border-left: 0; transform: none; opacity: 1; }
+.work-plugins :not(.work-selection-check) > input[type='checkbox']:disabled { opacity: .45; cursor: default; }
 .work-plugins textarea.ui-input { height: auto; min-height: 88px; padding: 10px 11px; resize: vertical; line-height: 1.55; }
 .work-plugins__two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 .work-plugins__note { margin: 4px 0 18px; color: var(--fg-muted); font-size: 11px; line-height: 1.6; }
@@ -118,14 +156,16 @@
 @media (max-width: 900px) {
   .work-plugins__heading { align-items: flex-start; flex-wrap: wrap; }
   .work-plugins__heading .work-plugins__actions { width: 100%; justify-content: flex-end; }
-  .work-plugins__copy { gap: 8px; }
-  .work-plugins__copy strong { max-width: 48%; }
+  .work-plugins__copy { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
 @media (max-width: 620px) {
   .work-plugins { padding-bottom: 24px; }
   .work-plugins__heading { gap: 12px; }
   .work-plugins__heading h1 { font-size: 20px; }
   .work-plugins__heading .work-plugins__actions { justify-content: flex-start; overflow-x: auto; }
+  .work-plugins__toolbar { flex-wrap: wrap; }
+  .work-plugins__search { flex-basis: 100%; }
+  .work-plugins__toolbar > .work-plugins__actions { margin-left: auto; }
   .work-plugins__two { grid-template-columns: 1fr; }
   .work-plugins__import { padding: 14px; }
   .work-plugins__editor-bar { align-items: flex-start; flex-direction: column; padding: 12px; }

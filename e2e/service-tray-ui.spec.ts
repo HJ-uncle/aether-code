@@ -99,8 +99,12 @@ async function settleSurface(selector: string): Promise<void> {
   })
 }
 async function openTray(): Promise<void> {
-  if (!(await tray().isVisible())) await entry().click()
+  // Exit animation retains a visible but closed panel. Reopen via the trigger's
+  // actual state; DOM presence cannot establish whether the activity is open.
+  if (await entry().getAttribute('aria-expanded') !== 'true') await entry().click()
+  await expect(entry()).toHaveAttribute('aria-expanded', 'true')
   await expect(tray()).toBeVisible()
+  await expect(page.locator('.service-tray__popover')).toHaveAttribute('data-motion-state', 'open')
 }
 
 test.describe.serial('服务托盘真实动作与通知', () => {
@@ -142,6 +146,34 @@ test.describe.serial('服务托盘真实动作与通知', () => {
         rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     }
+  })
+
+  test('会话头部服务入口默认显示运行中，历史按钮切换并在关闭后恢复默认', async () => {
+    const service = page.locator('.work-task-heading__actions .service-tray--services')
+    const serviceEntry = service.locator('.service-tray__button')
+    const servicePanel = page.locator('.service-tray__popover:visible .service-tray__panel')
+    const serviceRow = servicePanel.locator('.service-tray__row[data-service-id="command:service-tray-job"]')
+
+    await expect(service).toHaveCount(1)
+    await expect(serviceEntry).toHaveAccessibleName('服务，1 个运行中')
+    await expect(serviceEntry).toBeVisible()
+    await serviceEntry.click()
+    await expect(servicePanel).toBeVisible()
+    await expect(servicePanel.locator('.service-tray__tabs')).toHaveCount(0)
+    await expect(servicePanel).toContainText('服务')
+    await expect(serviceRow).toContainText('运行中')
+    await expect(servicePanel.getByRole('button', { name: '查看服务历史', exact: true })).toBeVisible()
+
+    await servicePanel.getByRole('button', { name: '查看服务历史', exact: true }).click()
+    await expect(servicePanel).toContainText('暂无服务历史')
+    await expect(servicePanel.getByRole('button', { name: '返回运行中服务', exact: true })).toBeVisible()
+
+    await servicePanel.getByRole('button', { name: '关闭服务历史', exact: true }).click()
+    await expect(serviceEntry).toHaveAttribute('aria-expanded', 'false')
+    await serviceEntry.click()
+    await expect(servicePanel).toContainText('运行中')
+    await expect(servicePanel.getByRole('button', { name: '查看服务历史', exact: true })).toBeVisible()
+    expect(outputReads).toBe(0)
   })
 
   test('紧凑图标打开服务，查看详情不读取完整日志；右键停止等待真实回执', async ({}, info) => {
@@ -213,6 +245,10 @@ test.describe.serial('服务托盘真实动作与通知', () => {
   })
 
   test('服务菜单真实打开对应终端输出，关闭服务浮层并保留会话归属', async () => {
+    await tray().getByRole('button', { name: '关闭服务与通知', exact: true }).click()
+    await page.locator('.work-navigation').getByRole('button', { name: '插件', exact: true }).click()
+    await expect(page.getByRole('region', { name: '插件管理', exact: true })).toBeVisible()
+    await openTray()
     await row().click({ button: 'right' })
     await page.getByRole('menuitem', { name: '在终端中查看', exact: true }).click()
     await expect(tray()).toBeHidden()

@@ -12,6 +12,7 @@ export interface ServiceContribution {
   detail?: string
   updatedAt: number
   sessionId?: string
+  notification?: boolean
   open?: () => void | Promise<void>
   stop?: () => Promise<void>
 }
@@ -30,6 +31,29 @@ export interface ServiceItem {
   revision: number
   job?: CommandJobSnapshot
   contribution?: ServiceContribution
+}
+
+/** Services tab only exposes entries that still have a live action. */
+export function getActiveServiceItems(items: readonly ServiceItem[]): ServiceItem[] {
+  return items.filter(item => item.active)
+}
+
+/** Session trays own command jobs and explicitly session-scoped plugin services. */
+export function getSessionServiceItems(items: readonly ServiceItem[], sessionId: string | null): ServiceItem[] {
+  if (!sessionId) return []
+  return items.filter(item => item.kind === 'command'
+    ? item.job?.sessionId === sessionId
+    : item.contribution?.sessionId === sessionId)
+}
+
+/** Only explicit plugin notifications belong in the notification tab. */
+export function getNotificationServiceItems(items: readonly ServiceItem[]): ServiceItem[] {
+  return items.filter(item => item.kind === 'plugin' && item.contribution?.notification === true)
+}
+
+/** History keeps completed services, while explicit notifications use their own history rows. */
+export function getHistoryServiceItems(items: readonly ServiceItem[]): ServiceItem[] {
+  return items.filter(item => !item.active && item.status !== 'idle' && !(item.kind === 'plugin' && item.contribution?.notification === true))
 }
 
 const pluginLabels: Record<ServiceContribution['status'], string> = {
@@ -86,6 +110,23 @@ export interface ServiceNotificationState {
 export const SERVICE_NOTIFICATION_LIMIT = 100
 export const emptyServiceNotifications: ServiceNotificationState = { observed: new Map(), notifications: [] }
 
+/** Rehydrates a notice after its plugin has been unloaded or its page is hidden. */
+export function serviceNotificationToItem(notification: ServiceNotification): ServiceItem {
+  return {
+    id: notification.serviceId,
+    kind: 'plugin',
+    label: notification.label,
+    detail: notification.detail,
+    status: notification.status,
+    statusLabel: notification.statusLabel,
+    active: false,
+    attention: false,
+    tone: notification.tone,
+    updatedAt: notification.updatedAt,
+    revision: 0
+  }
+}
+
 /** Restored history starts read. Only a newly observed status transition asks for attention. */
 export function reconcileServiceNotifications(previous: ServiceNotificationState, items: readonly ServiceItem[]): ServiceNotificationState {
   const observed = new Map<string, string>()
@@ -103,8 +144,17 @@ export function reconcileServiceNotifications(previous: ServiceNotificationState
       id: changed || !old ? `${item.id}:${item.status}:${item.revision}` : old.id,
       serviceId: item.id, label: item.label.slice(0, 512), detail: item.detail.slice(0, 1024),
       status: item.status, statusLabel: item.statusLabel, tone: item.tone, updatedAt: item.updatedAt,
-      read: changed || !old ? oldStatus === undefined : old.read
+      read: changed || !old ? oldStatus === undefined && !item.contribution?.notification : old.read
     })
+  }
+  // An unloaded plugin must not make an unread global notice vanish. Keep the
+  // bounded summary until the user opens it; read entries already live in the
+  // persistent history and can be dropped from this in-memory scope.
+  for (const notification of previous.notifications) {
+    if (!notification.read && !items.some(item => item.id === notification.serviceId) && !notifications.some(item => item.id === notification.id)) {
+      notifications.push(notification)
+      observed.set(notification.serviceId, previous.observed.get(notification.serviceId) ?? notification.status)
+    }
   }
   notifications.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
   if (notifications.length > SERVICE_NOTIFICATION_LIMIT) notifications.length = SERVICE_NOTIFICATION_LIMIT

@@ -1,0 +1,176 @@
+<p>插件是一个包含 <code>aether-plugin.json</code> 和所引用文件的目录。可在 Aether 的「插件 → 开发模式」中直接打开，修改后刷新即可运行。</p>
+<p>也可以在会话中添加「插件管理」工具包，让 Agent 创建工程、修改源码、测试和发布。需要连续自动执行时，在操作确认卡中选择「完全访问并放行」，授权仅对当前会话生效；详见<a href="./permissions.html#session-approval">会话操作确认</a>。</p>
+<h2 id="minimal-project">最小工程</h2>
+<pre><code class="language-text">text-counter/
+├── aether-plugin.json
+├── main.mjs
+└── ui.html
+</code></pre>
+<p><code>aether-plugin.json</code>：</p>
+<pre><code class="language-json">{
+  &quot;apiVersion&quot;: 1,
+  &quot;id&quot;: &quot;text-counter&quot;,
+  &quot;name&quot;: &quot;字符统计&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;description&quot;: &quot;统计文本的 Unicode 字符数&quot;,
+  &quot;runtime&quot;: &quot;node&quot;,
+  &quot;tools&quot;: [{
+    &quot;name&quot;: &quot;count&quot;,
+    &quot;description&quot;: &quot;统计文本字符数&quot;,
+    &quot;entry&quot;: &quot;main.mjs&quot;,
+    &quot;inputSchema&quot;: {
+      &quot;type&quot;: &quot;object&quot;,
+      &quot;properties&quot;: { &quot;text&quot;: { &quot;type&quot;: &quot;string&quot;, &quot;maxLength&quot;: 10000 } },
+      &quot;required&quot;: [&quot;text&quot;],
+      &quot;additionalProperties&quot;: false
+    }
+  }],
+  &quot;contributes&quot;: {
+    &quot;pages&quot;: [{ &quot;id&quot;: &quot;main&quot;, &quot;title&quot;: &quot;字符统计&quot;, &quot;kind&quot;: &quot;webview&quot;, &quot;entry&quot;: &quot;ui.html&quot;, &quot;tools&quot;: [&quot;count&quot;] }],
+    &quot;navigation&quot;: [{ &quot;id&quot;: &quot;counter&quot;, &quot;title&quot;: &quot;字符统计&quot;, &quot;page&quot;: &quot;main&quot;, &quot;icon&quot;: &quot;puzzle&quot; }]
+  }
+}
+</code></pre>
+<p><code>main.mjs</code>：</p>
+<pre><code class="language-js">try {
+  let input = &#39;&#39;
+  process.stdin.setEncoding(&#39;utf8&#39;)
+  for await (const chunk of process.stdin) input += chunk
+  const { tool, args } = JSON.parse(input)
+  if (tool !== &#39;count&#39; || typeof args.text !== &#39;string&#39;) throw new Error(&#39;参数无效&#39;)
+  const result = { count: [...args.text].length }
+  process.stdout.write(JSON.stringify({ result }) + &#39;\n&#39;)
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error))
+  process.exitCode = 1
+}
+</code></pre>
+<p><code>ui.html</code>：</p>
+<pre><code class="language-html">&lt;main style=&quot;padding:16px&quot;&gt;
+  &lt;label&gt;文本 &lt;textarea id=&quot;text&quot;&gt;你好🍎&lt;/textarea&gt;&lt;/label&gt;
+  &lt;button id=&quot;count&quot; type=&quot;button&quot;&gt;统计&lt;/button&gt;
+  &lt;output id=&quot;result&quot; aria-live=&quot;polite&quot;&gt;&lt;/output&gt;
+&lt;/main&gt;
+&lt;script&gt;
+  document.querySelector(&#39;#count&#39;).onclick = async () =&gt; {
+    const output = document.querySelector(&#39;#result&#39;)
+    try {
+      const { result } = await $AE.invoke(&#39;count&#39;, {
+        text: document.querySelector(&#39;#text&#39;).value
+      })
+      output.textContent = `${result.count} 个字符`
+    } catch (error) {
+      output.textContent = error.message
+    }
+  }
+&lt;/script&gt;
+</code></pre>
+<p>打开开发模式中的「界面预览」，点击统计，结果为 <code>3 个字符</code>。开发预览用于调试页面和工具；正式导航等挂载在发布、启用插件后出现。</p>
+<h2 id="manifest-fields">清单字段</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>apiVersion</code></td>
+<td>是</td>
+<td>当前为 <code>1</code></td>
+</tr>
+<tr>
+<td><code>id</code></td>
+<td>是</td>
+<td>1–48 位小写字母、数字、单连字符；首尾为字母或数字</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>是</td>
+<td>显示名称，最多 120 字符</td>
+</tr>
+<tr>
+<td><code>version</code></td>
+<td>是</td>
+<td>作者维护的版本字符串，最多 64 字符</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>是</td>
+<td>功能说明，最多 2000 字符</td>
+</tr>
+<tr>
+<td><code>runtime</code></td>
+<td>是</td>
+<td>当前为 <code>&quot;node&quot;</code></td>
+</tr>
+<tr>
+<td><code>tools</code></td>
+<td>是</td>
+<td>非空工具列表，见下表</td>
+</tr>
+<tr>
+<td><code>contributes</code></td>
+<td>否</td>
+<td><a href="contributions.html">页面、菜单等挂载声明</a></td>
+</tr>
+<tr>
+<td><code>permissions.requested</code></td>
+<td>否</td>
+<td><a href="permissions.html">所需权限</a>，申请后仍需用户授权</td>
+</tr>
+</tbody></table>
+<p><code>tools[]</code>：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>name</code></td>
+<td>本地工具名：小写字母开头，允许数字和下划线，最多 32 字符</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>工具说明，最多 4000 字符</td>
+</tr>
+<tr>
+<td><code>entry</code></td>
+<td>包内 <code>.mjs</code> 入口路径</td>
+</tr>
+<tr>
+<td><code>inputSchema</code></td>
+<td>参数 JSON Schema；推荐明确 <code>properties</code>、<code>required</code> 和 <code>additionalProperties</code></td>
+</tr>
+</tbody></table>
+<p>页面调用填写本地工具名，如 <code>count</code>。不要自行添加 <code>plugin_</code> 前缀。工具在平台中的全名总长最多 64 字符，插件 ID 较长时应缩短工具名。</p>
+<h2 id="tool-protocol">工具输入与输出</h2>
+<p>每次调用读取一份 stdin JSON：</p>
+<pre><code class="language-json">{ &quot;tool&quot;: &quot;count&quot;, &quot;args&quot;: { &quot;text&quot;: &quot;你好🍎&quot; } }
+</code></pre>
+<p>向 stdout 输出一行 JSON：</p>
+<pre><code class="language-json">{ &quot;result&quot;: { &quot;count&quot;: 3 }, &quot;artifacts&quot;: [] }
+</code></pre>
+<p>日志写 stderr；失败使用非零退出码。每次调用独立运行，不用内存变量保存长期状态；持久配置使用 <a href="platform.html#settings"><code>settings</code></a>。</p>
+<p>文件产物格式：</p>
+<pre><code class="language-json">{
+  &quot;result&quot;: { &quot;message&quot;: &quot;报告已生成&quot; },
+  &quot;artifacts&quot;: [{ &quot;path&quot;: &quot;report.md&quot;, &quot;content&quot;: &quot;# 检查结果\n&quot;, &quot;encoding&quot;: &quot;utf8&quot; }]
+}
+</code></pre>
+<p><code>encoding</code> 可为 <code>utf8</code>（默认）或 <code>base64</code>。产物数量和内容不设插件专属上限。产物回执不等于工作区文件已写入：写工作区用 <a href="platform.html#workspace-write"><code>workspace.write</code></a>，让用户选择保存位置用 <a href="page.html#download"><code>download</code></a>。</p>
+<h2 id="development-and-distribution">调试与分发</h2>
+<ol>
+<li>在「插件 → 开发模式」打开工程目录，按需要绑定会话、启用权限。</li>
+<li>修改源码后点击刷新，在「界面预览」或「工具测试」验证结果。源码变化而未刷新时会拒绝运行旧快照。</li>
+<li>通过插件管理导入目录或 ZIP，完成测试后发布、启用。也可在管理页导出工程供别人导入。</li>
+</ol>
+<p>ZIP 根目录应直接包含 <code>aether-plugin.json</code>。GitHub 导入要求仓库采用平台支持的插件格式，并非任意仓库都可运行。</p>
+<h2 id="file-constraints">文件约束</h2>
+<p>文件使用 UTF-8，路径使用 <code>/</code> 分隔的包内相对路径。源码文件数、单文件、工程和页面大小不设插件专属上限。不包含凭据、缓存、数据库或 <code>node_modules</code>。Webview 的脚本和样式内联，第三方依赖需预先打包进自包含文件。</p>
+<p><code>inputSchema</code> 支持常用类型、枚举、必填、范围和组合校验；不支持 <code>$ref</code>、正则 <code>pattern</code>、<code>patternProperties</code>、<code>format</code>、<code>uniqueItems: true</code> 或异步校验。复杂业务校验写在工具入口中。</p>
+
+<p>Node 工具和工程测试默认不强加执行时限、V8 内存、输入输出字节配额。运行中的日志使用磁盘缓冲；返回的 <code>stderr</code> 是最多 64 KiB 的尾部预览，<code>stderrTruncated: true</code> 表示预览已省略更早日志，不影响完整结果。独立工程测试可主动设置 <code>AETHER_PLUGIN_TEST_TIMEOUT_MS</code>（正整数毫秒）限定运行时间，省略或 0 不附加时限。</p>

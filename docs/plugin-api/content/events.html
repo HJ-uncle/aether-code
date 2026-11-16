@@ -1,0 +1,88 @@
+<p>页面订阅用于更新界面，hooks 用于事件触发工具，background 用于周期任务。</p>
+<h2 id="subscribe">events.subscribe(eventName, listener)</h2>
+<p>订阅当前插件可见的事件，返回订阅 ID。仅页面可用，权限：<code>events.subscribe</code>。</p>
+<pre><code class="language-js">const subscription = await $AE.events.subscribe(&#39;agent.completed&#39;, event =&gt; {
+  console.log(event.sessionId, event.payload)
+})
+</code></pre>
+<p><code>eventName</code> 为下表名称或 <code>&quot;*&quot;</code>。<code>listener</code> 接收 <code>{ id, type, sessionId, payload, timestamp, sequence }</code>；<code>timestamp</code> 是毫秒时间戳，<code>payload</code> 是事件相关数据。订阅不附加固定数量限制；不再使用时取消订阅，页面销毁时会释放。</p>
+<h2 id="unsubscribe">events.unsubscribe(id)</h2>
+<p>释放订阅，不返回业务数据。</p>
+<pre><code class="language-js">await $AE.events.unsubscribe(subscription)
+</code></pre>
+<p>页面不再使用事件时释放；页面关闭或权限撤销也会停止订阅。</p>
+<h2 id="event-catalogue">事件目录</h2>
+<table>
+<thead>
+<tr>
+<th>事件</th>
+<th>发生时机</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>app.started</code> / <code>app.stopping</code></td>
+<td>插件运行服务启动 / 停止，不是页面开关</td>
+</tr>
+<tr>
+<td><code>session.opened</code> / <code>session.closed</code></td>
+<td>会话打开 / 离开</td>
+</tr>
+<tr>
+<td><code>session.changed</code></td>
+<td>当前会话上下文变化</td>
+</tr>
+<tr>
+<td><code>message.created</code> / <code>message.completed</code></td>
+<td>新消息产生 / 消息完成；初次加载历史不作为新消息</td>
+</tr>
+<tr>
+<td><code>workspace.changed</code></td>
+<td>工作区上下文变化</td>
+</tr>
+<tr>
+<td><code>file.changed</code></td>
+<td>已接入的文件操作或回退产生变化；不是任意外部文件监听</td>
+</tr>
+<tr>
+<td><code>editor.selectionChanged</code></td>
+<td>已接入代码预览的选区变化</td>
+</tr>
+<tr>
+<td><code>composer.changed</code></td>
+<td>输入框草稿变化</td>
+</tr>
+<tr>
+<td><code>agent.started</code></td>
+<td>主 Agent 或子代理任务开始</td>
+</tr>
+<tr>
+<td><code>agent.completed</code> / <code>agent.failed</code> / <code>agent.cancelled</code></td>
+<td>Agent 完成 / 失败 / 取消</td>
+</tr>
+</tbody></table>
+<p>输入与选择等高频事件会合并。事件不是持久消息队列，不保证每个瞬间都送达；完整消息与运行结果使用相应平台 API 读取。</p>
+<h2 id="hooks">contributes.hooks</h2>
+<p>指定事件到达时调用插件工具。必要字段：<code>id, title, event, tool</code>；可选 <code>args</code> 及贡献通用字段。权限：<code>events.subscribe</code>。</p>
+<pre><code class="language-json">{
+  &quot;permissions&quot;: { &quot;requested&quot;: [&quot;events.subscribe&quot;] },
+  &quot;contributes&quot;: {
+    &quot;hooks&quot;: [{ &quot;id&quot;: &quot;completed&quot;, &quot;title&quot;: &quot;完成后检查&quot;, &quot;event&quot;: &quot;message.completed&quot;, &quot;tool&quot;: &quot;review&quot;, &quot;scope&quot;: &quot;session&quot; }]
+  }
+}
+</code></pre>
+<p>工具从 <code>args.event</code> 取得 <code>{ id, type, sessionId, payload, timestamp }</code>。按事件 ID 去重，避免事件处理再次无限触发同类操作。</p>
+<p>同一 hook/会话忙碌或 250ms 冷却未结束时会跳过，不排队补发；不附加固定并发数或普通 hook 执行时限。退出事件只有短暂收尾时间，不用于保存唯一业务数据。开发预览不自动注册 hooks。</p>
+<h2 id="background">contributes.background</h2>
+<p>运行可在重启后恢复的周期工具。必要字段：<code>id, title, tool, intervalMs</code>；可选 <code>args, runOnStartup</code>。权限：<code>background.run</code>。</p>
+<pre><code class="language-json">{
+  &quot;permissions&quot;: { &quot;requested&quot;: [&quot;background.run&quot;] },
+  &quot;contributes&quot;: {
+    &quot;background&quot;: [{ &quot;id&quot;: &quot;sync&quot;, &quot;title&quot;: &quot;定期同步&quot;, &quot;tool&quot;: &quot;sync&quot;, &quot;intervalMs&quot;: 60000, &quot;runOnStartup&quot;: true }]
+  }
+}
+</code></pre>
+<p><code>intervalMs</code> 为 1 秒至 7 天（毫秒）。后台任务独立于会话，不能声明 <code>scope: &quot;session&quot;</code> 或要求会话/工作区存在。工具实际调用的 AI、设置等能力仍需要各自权限。</p>
+<p>同一任务不重叠；不附加插件或账户的固定并发数。错过多个周期只补一次，任务应允许安全重试。发布、启用并授权后调度，开发预览不自动启动持久任务。</p>
+<p>关闭桌面窗口进入托盘后继续运行；真正退出或关机后停止，下次启动恢复。停用、卸载插件或撤销权限会停止后续调度。</p>
+
+<p>事件订阅用于接收近期活动，不是永久消息队列。宿主仅保留近期事件历史（最多 256 条或约 8 MiB，超出时淘汰旧条目，并保留最新一条），不会因为当前事件较大而拒绝正常任务。需要长期历史时由插件持久化处理结果。</p>

@@ -1,0 +1,114 @@
+<p>用 JSON 描述表单和内容，由 Aether 渲染主题、输入和按钮。适合设置和小型操作页面；需要自定义图表、复杂交互时使用 Webview。</p>
+<h2 id="page-declaration">页面声明</h2>
+<pre><code class="language-json">{ &quot;id&quot;: &quot;preferences&quot;, &quot;title&quot;: &quot;报告设置&quot;, &quot;kind&quot;: &quot;native&quot;, &quot;entry&quot;: &quot;ui/preferences.json&quot;, &quot;tools&quot;: [&quot;save&quot;] }
+</code></pre>
+<p><code>ui/preferences.json</code>：</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: 1,
+  &quot;root&quot;: {
+    &quot;type&quot;: &quot;stack&quot;,
+    &quot;children&quot;: [
+      { &quot;type&quot;: &quot;heading&quot;, &quot;text&quot;: &quot;报告设置&quot; },
+      { &quot;type&quot;: &quot;input&quot;, &quot;bind&quot;: &quot;title&quot;, &quot;label&quot;: &quot;报告标题&quot;, &quot;value&quot;: &quot;检查报告&quot; },
+      { &quot;type&quot;: &quot;checkbox&quot;, &quot;bind&quot;: &quot;includeDetails&quot;, &quot;label&quot;: &quot;包含详情&quot;, &quot;value&quot;: true },
+      { &quot;type&quot;: &quot;button&quot;, &quot;label&quot;: &quot;保存&quot;, &quot;variant&quot;: &quot;primary&quot;, &quot;action&quot;: {
+        &quot;tool&quot;: &quot;save&quot;, &quot;args&quot;: { &quot;title&quot;: { &quot;$field&quot;: &quot;title&quot; }, &quot;details&quot;: { &quot;$field&quot;: &quot;includeDetails&quot; } }
+      } }
+    ]
+  }
+}
+</code></pre>
+<p>此例需要在清单中声明 <code>save</code> 工具。动作结果与错误由页面显示。</p>
+<h2 id="components">组件目录</h2>
+<table>
+<thead>
+<tr>
+<th><code>type</code></th>
+<th>用途</th>
+<th>常用属性</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>text</code></td>
+<td>正文</td>
+<td><code>text</code></td>
+</tr>
+<tr>
+<td><code>heading</code></td>
+<td>标题</td>
+<td><code>text</code></td>
+</tr>
+<tr>
+<td><code>markdown</code></td>
+<td>只读 Markdown</td>
+<td><code>text</code>；不加载其中的图片或提供外链操作</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td>图片</td>
+<td><code>src, alt</code>；<code>src</code> 使用 PNG/JPEG/WebP/GIF 的 base64 data URL</td>
+</tr>
+<tr>
+<td><code>divider</code></td>
+<td>分隔线</td>
+<td>无</td>
+</tr>
+<tr>
+<td><code>stack</code></td>
+<td>纵向布局</td>
+<td><code>children, label?</code></td>
+</tr>
+<tr>
+<td><code>row</code></td>
+<td>横向布局</td>
+<td><code>children, label?</code></td>
+</tr>
+<tr>
+<td><code>card</code></td>
+<td>分组容器</td>
+<td><code>children, label?</code></td>
+</tr>
+<tr>
+<td><code>input</code></td>
+<td>单行文本</td>
+<td><code>bind, label, value?, placeholder?</code></td>
+</tr>
+<tr>
+<td><code>textarea</code></td>
+<td>多行文本</td>
+<td><code>bind, label, value?, placeholder?</code></td>
+</tr>
+<tr>
+<td><code>select</code></td>
+<td>选择项</td>
+<td><code>bind, label, value?, options</code></td>
+</tr>
+<tr>
+<td><code>checkbox</code></td>
+<td>开关</td>
+<td><code>bind, label, value?</code>，值为布尔值</td>
+</tr>
+<tr>
+<td><code>button</code></td>
+<td>执行动作</td>
+<td><code>label, action, variant?</code></td>
+</tr>
+</tbody></table>
+<p>所有组件可选 <code>id</code>。输入控件需要 <code>bind</code> 才能编辑；它是当前页面字段名，不是自动保存的配置键。</p>
+<h2 id="bindings">字段绑定</h2>
+<p><code>bind</code> 在整个页面内必须唯一，使用字母开头的字母、数字、下划线，最多 64 字符，不使用 <code>constructor</code>、<code>prototype</code>。文本输入和下拉值为字符串，勾选值为布尔值。</p>
+<pre><code class="language-json">{ &quot;type&quot;: &quot;select&quot;, &quot;bind&quot;: &quot;format&quot;, &quot;label&quot;: &quot;格式&quot;, &quot;value&quot;: &quot;markdown&quot;, &quot;options&quot;: [
+  { &quot;label&quot;: &quot;Markdown&quot;, &quot;value&quot;: &quot;markdown&quot; },
+  { &quot;label&quot;: &quot;纯文本&quot;, &quot;value&quot;: &quot;text&quot; }
+] }
+</code></pre>
+<p><code>value</code> 是初始值。<code>{ &quot;$field&quot;: &quot;format&quot; }</code> 在执行动作时替换为字段当前值，也可用于嵌套参数；不支持表达式计算或执行 JavaScript。</p>
+<h2 id="actions">动作</h2>
+<p><code>action</code> 在 <code>tool</code>、<code>command</code> 中二选一：</p>
+<pre><code class="language-json">{ &quot;type&quot;: &quot;button&quot;, &quot;label&quot;: &quot;生成报告&quot;, &quot;action&quot;: { &quot;tool&quot;: &quot;generate&quot;, &quot;args&quot;: { &quot;format&quot;: { &quot;$field&quot;: &quot;format&quot; } } } }
+</code></pre>
+<pre><code class="language-json">{ &quot;type&quot;: &quot;button&quot;, &quot;label&quot;: &quot;打开报告&quot;, &quot;action&quot;: { &quot;command&quot;: &quot;open-report&quot; } }
+</code></pre>
+<p>工具必须在页面 <code>tools</code> 白名单中，命令必须在本插件声明。<code>variant</code> 支持 <code>primary</code>、<code>secondary</code>、<code>danger</code>。动作执行期间控件暂时禁用。</p>
+<h2 id="limits">限制</h2>
+<p>不附加固定层数、组件数、文本长度或选项数量限制；大型页面应根据实际渲染成本组织内容。不支持任意 React 模块、JSX、脚本或 HTML 属性注入；目前没有异步数据源、工具结果到组件属性的自动绑定。</p>

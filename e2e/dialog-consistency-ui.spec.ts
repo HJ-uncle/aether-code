@@ -251,7 +251,11 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
   })
 
   test('删除服务历史：取消不发请求，确认仅删除所属历史记录', async () => {
-    await work().locator('.work-service-tray--rail').getByRole('button').click()
+    await page.locator('.status-bar .service-tray__button').click()
+    const activity = page.locator('.service-tray__panel')
+    await expect(activity).toBeVisible()
+    await activity.locator('.service-tray__row-main').first().click()
+    await activity.getByRole('button', { name: '在终端中查看', exact: true }).click()
     const panel = work().getByRole('region', { name: '任务终端', exact: true })
     await expect(panel).toBeVisible()
     await expect(panel.getByRole('tab', { name: /^后台运行/ })).toHaveAttribute('aria-selected', 'true')

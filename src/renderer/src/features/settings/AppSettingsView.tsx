@@ -33,6 +33,7 @@ import { useApp } from '@renderer/core/app-context'
 import { getSettingsDefinitions, onSettingsRegistryChanged, searchSettings, type SettingDefinition } from './settings-registry'
 import type { IconName } from '@renderer/ui/icons'
 import { Icon } from '@renderer/ui/icons'
+import { ExtensionPage, extensionRegistry, extensionVisible, extensionId, useExtensionContext } from '../extensions'
 import './settings-pages.css'
 
 /**
@@ -204,6 +205,11 @@ const SECTION_GROUPS: { label: Section['group']; items: Section[] }[] = [
 ]
 
 export function AppSettingsView(): JSX.Element {
+  const extensionContext = useExtensionContext()
+  const extensions = useSyncExternalStore(extensionRegistry.subscribe, extensionRegistry.getSnapshot)
+  const sections: Section[] = useMemo(() => [...SECTIONS, ...extensions.settings.filter(item => extensionVisible(item.scope ?? 'global', item.when, extensionContext) &&
+    extensions.pages.some(page => page.id === extensionId(item.identity.pluginId, item.page) && extensionVisible(page.scope, page.when, extensionContext))).map(item => ({ id: item.id, label: item.title, icon: 'puzzle' as const, group: '高级' as const,
+      description: `来自 ${item.identity.pluginId} 的插件设置。`, component: () => <ExtensionPage contributionId={extensionId(item.identity.pluginId, item.page)} context={extensionContext} /> }))], [extensions, extensionContext])
   const { settings } = useApp()
   const request = useSyncExternalStore(subscribeSectionRequest, getSectionRequest)
   const editorOptions = useSyncExternalStore(onEditorDisplayOptionsChanged, getEditorDisplayOptions)
@@ -235,22 +241,22 @@ export function AppSettingsView(): JSX.Element {
     return modifiedOnly ? candidates.filter((item) => modifiedKeys.has(item.key)) : candidates
   }, [modifiedKeys, modifiedOnly, query, settingDefinitions])
   const visibleSections = useMemo(() => {
-    if (!query.trim() && !modifiedOnly) return SECTIONS
+    if (!query.trim() && !modifiedOnly) return sections
     const ids = new Set(results.map((result) => result.section))
-    return SECTIONS.filter((item) => ids.has(item.id))
-  }, [modifiedOnly, query, results])
+    return sections.filter((item) => ids.has(item.id) || (!modifiedOnly && item.id.startsWith('plugin:') && item.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
+  }, [modifiedOnly, query, results, sections])
   const visibleGroups = useMemo(
     () => SECTION_GROUPS
-      .map((group) => ({ ...group, items: group.items.filter((item) => visibleSections.includes(item)) }))
+      .map((group) => ({ ...group, items: visibleSections.filter((item) => item.group === group.label) }))
       .filter((group) => group.items.length > 0),
     [visibleSections]
   )
-  const section = SECTIONS.find((item) => item.id === active) ?? SECTIONS[0]
+  const section = sections.find((item) => item.id === active) ?? SECTIONS[0]
   const visibleSection = visibleSections.find((item) => item.id === section.id) ?? visibleSections[0] ?? section
   const SectionBody = visibleSection.component
   const selectedSectionId = visibleSection.id
   const resultLabel = (result: SettingDefinition): string =>
-    SECTIONS.find((item) => item.id === result.section)?.label ?? result.section
+    sections.find((item) => item.id === result.section)?.label ?? result.section
 
   return (
     <div className="app-settings">

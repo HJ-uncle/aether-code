@@ -5,6 +5,7 @@ import type { DiffStats } from '../conversation/shared/diff'
 import { sessionChangePathKey } from './file-changes'
 import { sessionFileChangeStats } from './file-change-presentation'
 import type { SessionArtifact } from '../sessions/state'
+import { userMessageText } from '../conversation/shared/mention-context'
 
 const artifactCollator = new Intl.Collator('zh-CN', { numeric: true })
 
@@ -86,9 +87,9 @@ export function buildArtifactTurnOptions(sessionId: string, messages: readonly C
     const key = artifactTurnScopeKey(scope)
     const existing = turns.get(key)
     if (existing?.timeSource === 'request' && (existing.createdAt ?? Infinity) <= message.createdAt) continue
-    const request = message.content.replace(/\s+/g, ' ').trim()
-    const summary = request ? request.length > 72 ? `${request.slice(0, 72)}…` : request
-      : message.attachments?.length ? `附件：${message.attachments.map(item => item.name).join('、')}` : '无文字请求'
+    const request = userMessageText(message.content).replace(/\s+/g, ' ').trim()
+    const label = request || (message.attachments?.length ? `附件：${message.attachments.map(item => item.name).join('、')}` : '无文字请求')
+    const summary = label.length > 72 ? `${label.slice(0, 72)}…` : label
     turns.set(key, { key, scope, summary, createdAt: message.createdAt, timeSource: 'request' })
   }
   const options: SessionArtifactTurnOption[] = [{ key: 'session', scope: { kind: 'session' }, summary: '整个会话' },

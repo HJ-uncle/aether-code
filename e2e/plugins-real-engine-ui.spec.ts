@@ -1,12 +1,13 @@
 /** Isolated Electron + real engine + real Node plugin processes. No model call or user data. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import JSZip from 'jszip'
 import type { PluginRecord } from '../src/renderer/src/core/engine/plugins'
-import { newPlugin, pluginSource } from './fixtures/plugin'
+import { newPlugin, pluginSource, pluginArchive } from './fixtures/plugin'
+import { selectOption, expectSelectedOption } from './fixtures/select'
 import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp/plugins'), engineEntry = resolve(root, '../ai-agent-engine/dist/main.js')
@@ -19,6 +20,14 @@ async function api<T>(path: string): Promise<T> {
   const response = await fetch(`${origin}/api/v1${path}`, { headers: { 'x-aether-instance-token': token, 'x-aether-tool-profile': 'general' } })
   const body = await response.json() as { code: number; message: string; data: T }
   if (!response.ok || body.code !== 200) throw new Error(`${path}: ${body.message}`)
+  return body.data
+}
+async function apiMutation<T>(method: 'PATCH' | 'DELETE', path: string, input?: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${origin}/api/v1${path}`, { method,
+    headers: { 'x-aether-instance-token': token, 'x-aether-tool-profile': 'general', 'content-type': 'application/json' },
+    ...(input ? { body: JSON.stringify(input) } : {}) })
+  const body = await response.json() as { code: number; message: string; data: T }
+  if (!response.ok || body.code !== 200) throw new Error(`${method} ${path}: ${body.message}`)
   return body.data
 }
 function cleanEnv(): Record<string, string> {
@@ -62,7 +71,7 @@ test('真实引擎完成插件编辑、子进程测试、版本固定、导入�
     }, stateKey)
     await page.reload()
     await manager().getByRole('button',{ name: '新建插件', exact: true }).click()
-    await expect(manager().getByLabel('官方模板',{ exact: true })).toHaveValue('json-tool')
+    await expectSelectedOption(manager().getByLabel('官方模板',{ exact: true }), 'json-tool', '基础 JSON 工具')
     await manager().getByLabel('名称',{ exact: true }).fill('真实问候助手')
     await manager().getByLabel('标识',{ exact: true }).fill('real-greeting')
     await manager().getByRole('tab',{ name: '源文件', exact: true }).click()
@@ -146,8 +155,8 @@ test('真实引擎完成插件编辑、子进程测试、版本固定、导入�
     // loader, sandbox bridge and Node tool; no engine/application result is mocked here.
     await page.getByRole('navigation').getByRole('button',{ name: '插件', exact: true }).click()
     await manager().getByRole('button',{ name: '新建插件', exact: true }).click()
-    await manager().getByLabel('官方模板',{ exact: true }).selectOption('desktop-timer')
-    await expect(manager().getByLabel('官方模板',{ exact: true })).toHaveValue('desktop-timer')
+    await selectOption(manager().getByLabel('官方模板',{ exact: true }), 'desktop-timer', '桌面计时器')
+    await expectSelectedOption(manager().getByLabel('官方模板',{ exact: true }), 'desktop-timer', '桌面计时器')
     await expect(manager().getByLabel('名称',{ exact: true })).toHaveValue('计时器')
     await manager().getByLabel('名称',{ exact: true }).fill('真实桌面计时器')
     await manager().getByLabel('标识',{ exact: true }).fill('real-desktop-timer')
@@ -186,12 +195,170 @@ test('真实引擎完成插件编辑、子进程测试、版本固定、导入�
     await expect(timerFrame.locator('#state')).toHaveText('时间到')
     await expect(timerFrame.locator('#detail')).toHaveText('已完成')
     await screenshot('real-plugin-timer-completed.png')
+
+    // Mutate through the real engine from outside the renderer. The management page
+    // is unmounted, so only the catalogue stream can update these contribution slots.
+    await page.getByRole('navigation').getByRole('button', { name: '工作台', exact: true }).click()
+    await expect(manager()).toHaveCount(0)
+    await page.evaluate(() => { document.body.dataset.realPluginLifecycle = 'same-document' })
+    const disabledTimer = await apiMutation<{ plugin: PluginRecord }>('PATCH', '/plugins/real-desktop-timer', { enabled: false })
+    expect(disabledTimer.plugin.enabled).toBe(false)
+    await expect(timerNavigation).toHaveCount(0)
+    await page.locator('.service-tray__button').click()
+    await servicePanel.getByRole('tab', { name: '服务', exact: true }).click()
+    await expect(timerService).toHaveCount(0)
+    const enabledTimer = await apiMutation<{ plugin: PluginRecord }>('PATCH', '/plugins/real-desktop-timer', { enabled: true })
+    expect(enabledTimer.plugin.enabled).toBe(true)
+    expect(enabledTimer.plugin.publishedRevision).toBe(1)
+    await expect(timerNavigation).toBeVisible()
+    await expect(timerService).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(servicePanel).toBeHidden()
+    await timerNavigation.click()
+    await expect(timerFrame.getByRole('heading', { name: '计时器', exact: true })).toBeVisible()
+    await expect(timerFrame.locator('#state')).toHaveText('就绪')
+    await timerFrame.getByRole('spinbutton', { name: '秒数', exact: true }).fill('30')
+    await timerFrame.getByRole('button', { name: '开始', exact: true }).click()
+    await expect(timerFrame.locator('#state')).toHaveText('计时中')
+    await expect(timerFrame.locator('#detail')).toHaveText('30 秒倒计时')
+    await timerFrame.getByRole('button', { name: '停止', exact: true }).click()
+    await expect(timerFrame.locator('#state')).toHaveText('已停止')
+    await page.getByRole('navigation').getByRole('button', { name: '工作台', exact: true }).click()
+    await apiMutation('DELETE', '/plugins/real-desktop-timer', { expectedRevision: 1 })
+    await expect(timerNavigation).toHaveCount(0)
+    await expect(page.locator('iframe[title="计时器"]')).toHaveCount(0)
+    await page.locator('.service-tray__button').click()
+    await servicePanel.getByRole('tab', { name: '服务', exact: true }).click()
+    await expect(timerService).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    expect((await api<{ plugins: PluginRecord[] }>('/plugins')).plugins.some(plugin => plugin.id === 'real-desktop-timer')).toBe(false)
+    await expect(page.locator('body')).toHaveAttribute('data-real-plugin-lifecycle', 'same-document')
+    await screenshot('real-plugin-background-lifecycle.png')
     expect(rendererErrors).toEqual([])
   } finally {
     try { if (page && !page.isClosed()) await screenshot('real-plugin-final.png') } finally {
       await app?.close()
       if (runner && runner.exitCode === null) { runner.kill(); await new Promise<void>(done => runner!.once('exit',() => done())) }
       if (fixture) { if (dirname(resolve(fixture)) !== fixtureRoot) throw new Error('Unsafe real plugin cleanup'); rmSync(fixture,{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+    }
+  }
+})
+
+test('真实引擎批量导入混合ZIP与交付总包，勾选决定安装且已安装标识不会覆盖', async () => {
+  test.setTimeout(240_000)
+  mkdirSync(fixtureRoot,{ recursive: true })
+  const owned = mkdtempSync(join(fixtureRoot,'real-batch-')), workspace = join(owned,'workspace'), profile = join(owned,'profile')
+  mkdirSync(workspace); mkdirSync(profile); mkdirSync(join(owned,'skills'))
+  let engine: ChildProcess | undefined, desktop: ElectronApplication | undefined, window: Page | undefined, engineLogs = ''
+  const errors: string[] = []
+  const env = { ...cleanEnv(), AUTH_ENABLED: 'false', DATA_DIR: join(owned,'agent.db'), MEMORY_DB_PATH: join(owned,'memory.db'), WORKSPACE_ROOT: workspace,
+    AETHER_GLOBAL_DIR: join(owned,'global'), SKILLS_ROOT: join(owned,'skills'), MCP_CONFIG_PATH: join(owned,'mcp.json'), ENCRYPTION_KEY: randomBytes(32).toString('hex'),
+    AETHER_INSTANCE_TOKEN: token, AETHER_ENGINE_PORT: '12541', AETHER_ENGINE_HOST: '127.0.0.1', HISTORY_BACKEND: 'jsonl', OSM_MODE: 'off', LOG_LEVEL: 'warn',
+    QA_LOG_ENABLED: 'false', DEFAULT_SECURITY_MODE: 'standard', ENABLE_LONG_TERM_MEMORY: 'false' }
+  try {
+    engine = spawn(process.execPath,[engineEntry],{ cwd: owned, env, windowsHide: true, stdio: ['ignore','pipe','pipe'] })
+    engine.stdout?.on('data',chunk => { engineLogs = (engineLogs + String(chunk)).slice(-30_000) }); engine.stderr?.on('data',chunk => { engineLogs = (engineLogs + String(chunk)).slice(-30_000) })
+    await expect.poll(async () => { if (engine?.exitCode !== null) throw new Error(`Engine exited: ${engineLogs}`); try { return (await fetch(`${origin}/health`)).ok } catch { return false } },{ timeout: 45_000 }).toBe(true)
+    writeFileSync(join(profile,'settings.json'),JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, autoStartEngine: true, remoteWorkspaceRoot: workspace, lastFolder: '', appearance: 'light', thinkingMode: 'off' }))
+    desktop = await electron.launch({ args: [join(root,'out/main/index.js'),`--user-data-dir=${profile}`], cwd: root,
+      env: { ...cleanEnv(), AETHER_IDE_REMOTE_INSTANCE_TOKEN: token, AETHER_GLOBAL_DIR: join(owned,'ide-global') } })
+    window = await desktop.firstWindow(); window.on('pageerror',error => errors.push(error.message))
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1320,900))
+    await expect(window.locator('.status-bar')).toContainText('引擎：就绪',{ timeout: 45_000 })
+    await window.evaluate(key => {
+      localStorage.setItem(key,JSON.stringify({ tasks: [], activeTaskId: null, homeDraft: '', homeResources: { skills: [], mcpServers: [], knowledgeBases: [], toolkits: [] } }))
+      localStorage.setItem('aether.work.view.v1',JSON.stringify({ page: 'plugins', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 56 }))
+    },stateKey)
+    await window.reload()
+    const view = window.getByRole('region',{ name: '插件管理', exact: true })
+    const openImport = async () => { await view.getByRole('button',{ name: '导入', exact: true }).click(); await view.getByRole('tab',{ name: 'ZIP 文件', exact: true }).click() }
+    await openImport()
+    await view.locator('input[type=file]').setInputFiles([
+      { name: 'selected.zip', mimeType: 'application/zip', buffer: await pluginArchive('real-batch-selected','真实批量选择') },
+      { name: 'unselected.zip', mimeType: 'application/zip', buffer: await pluginArchive('real-batch-unselected','真实取消选择') },
+      { name: 'broken.zip', mimeType: 'application/zip', buffer: Buffer.from('deliberately invalid ZIP fixture') }
+    ])
+    await view.getByRole('button',{ name: '预览插件', exact: true }).click()
+    let list = view.getByRole('list',{ name: '待导入插件', exact: true })
+    await expect(list.getByRole('listitem')).toHaveCount(3)
+    await expect(list.getByRole('listitem').filter({ hasText: 'broken.zip' })).toContainText(/无法读取|失败/)
+    await list.getByRole('checkbox',{ name: '选择 真实取消选择', exact: true }).uncheck()
+    await view.getByRole('button',{ name: '导入所选（1）', exact: true }).click()
+    await expect(list.locator('[data-plugin-id="real-batch-selected"]')).toContainText('已导入')
+    expect((await api<{ plugins: PluginRecord[] }>('/plugins')).plugins.map(plugin => plugin.id)).toEqual(['real-batch-selected'])
+    await view.getByRole('button',{ name: '完成', exact: true }).click()
+
+    // An explicit delivery ZIP exercises the exact artifact shipped to the user. When
+    // absent in a fresh checkout, retain a self-contained nested-bundle regression.
+    const deliveredPath = process.env.AETHER_PLUGIN_DELIVERY_BUNDLE ?? resolve(root,'../ai-agent-engine/.e2e-tmp/plugin-real-world-20261112/delivery/release-2/aether-real-world-plugins.zip')
+    let bundleBytes: Buffer
+    if (process.env.AETHER_PLUGIN_DELIVERY_BUNDLE || existsSync(deliveredPath)) bundleBytes = readFileSync(deliveredPath)
+    else {
+      const fallback = new JSZip()
+      fallback.file('fixture/plugins/bundle-one.zip',await pluginArchive('bundle-one','总包插件一'))
+      fallback.file('fixture/plugins/bundle-two.zip',await pluginArchive('bundle-two','总包插件二'))
+      fallback.file('fixture/README.md','# Import bundle fixture')
+      bundleBytes = await fallback.generateAsync({ type: 'nodebuffer' })
+    }
+    const bundle = await JSZip.loadAsync(bundleBytes), sourcePlugins: Array<{ manifest: PluginRecord['manifest']; entry: string }> = []
+    for (const entry of Object.values(bundle.files).filter(entry => !entry.dir && /(?:^|\/)plugins\/[^/]+\.zip$/.test(entry.name))) {
+      const nested = await JSZip.loadAsync(await entry.async('nodebuffer'))
+      const manifestFile = nested.file('aether-plugin.json')
+      expect(manifestFile,entry.name).not.toBeNull()
+      const manifest = JSON.parse(await manifestFile!.async('string')) as PluginRecord['manifest']
+      const toolFile = nested.file(manifest.tools[0].entry)
+      expect(toolFile,manifest.tools[0].entry).not.toBeNull()
+      sourcePlugins.push({ manifest, entry: await toolFile!.async('string') })
+    }
+    expect(sourcePlugins.length).toBeGreaterThanOrEqual(2)
+    if (process.env.AETHER_PLUGIN_DELIVERY_BUNDLE || existsSync(deliveredPath)) expect(sourcePlugins).toHaveLength(10)
+    await openImport()
+    await view.locator('input[type=file]').setInputFiles({ name: 'aether-real-world-plugins.zip', mimeType: 'application/zip', buffer: bundleBytes })
+    await view.getByRole('button',{ name: '预览插件', exact: true }).click()
+    list = view.getByRole('list',{ name: '待导入插件', exact: true })
+    await expect(list.getByRole('listitem')).toHaveCount(sourcePlugins.length)
+    for (const { manifest } of sourcePlugins) await expect(list.locator(`[data-plugin-id="${manifest.id}"]`).getByRole('checkbox')).toBeChecked()
+    await window.screenshot({ path: test.info().outputPath('real-delivery-bundle-preview-light.png'), animations: 'disabled' })
+    await window.evaluate(() => document.documentElement.dataset.appearance = 'dark')
+    await window.screenshot({ path: test.info().outputPath('real-delivery-bundle-preview-dark.png'), animations: 'disabled' })
+    writeFileSync(test.info().outputPath('real-batch-dark-button-colors.json'), JSON.stringify(await list.locator('button').evaluateAll(buttons => buttons.map(button => ({ label: button.getAttribute('aria-label'), disabled: (button as HTMLButtonElement).disabled, color: getComputedStyle(button).color, opacity: getComputedStyle(button).opacity, svgColor: getComputedStyle(button.querySelector('svg') ?? button).color }))), null, 2))
+    await window.evaluate(() => document.documentElement.dataset.appearance = 'light')
+    expect((await api<{ plugins: PluginRecord[] }>('/plugins')).plugins).toHaveLength(1)
+    await view.getByRole('checkbox',{ name: '全选可导入插件', exact: true }).uncheck()
+    for (const { manifest } of sourcePlugins.slice(0,2)) await list.locator(`[data-plugin-id="${manifest.id}"]`).getByRole('checkbox').check()
+    await view.getByRole('button',{ name: '导入所选（2）', exact: true }).click()
+    await expect.poll(async () => (await api<{ plugins: PluginRecord[] }>('/plugins')).plugins.length).toBe(3)
+    for (const { manifest } of sourcePlugins.slice(0,2)) await expect(list.locator(`[data-plugin-id="${manifest.id}"]`)).toContainText('已导入')
+    if (sourcePlugins.length > 2) {
+      await view.getByRole('checkbox',{ name: '全选可导入插件', exact: true }).check()
+      await view.getByRole('button',{ name: `导入所选（${sourcePlugins.length - 2}）`, exact: true }).click()
+    }
+    for (const { manifest, entry } of sourcePlugins) {
+      await expect(list.locator(`[data-plugin-id="${manifest.id}"]`)).toContainText('已导入')
+      const installed = (await api<{ plugin: PluginRecord }>(`/plugins/${manifest.id}`)).plugin
+      expect(installed.manifest).toEqual(manifest)
+      expect(installed.files?.[manifest.tools[0].entry]).toBe(entry)
+      expect(installed.revision).toBe(1); expect(installed.enabled).toBe(false); expect(installed.publishedRevision).toBeUndefined()
+    }
+    expect((await api<{ plugins: PluginRecord[] }>('/plugins')).plugins).toHaveLength(sourcePlugins.length + 1)
+    await window.screenshot({ path: test.info().outputPath('real-batch-imported.png') })
+    await view.getByRole('button',{ name: '完成', exact: true }).click()
+    await openImport()
+    await view.locator('input[type=file]').setInputFiles({ name: 'same-bundle.zip', mimeType: 'application/zip', buffer: bundleBytes })
+    await view.getByRole('button',{ name: '预览插件', exact: true }).click()
+    list = view.getByRole('list',{ name: '待导入插件', exact: true })
+    await expect(list.getByRole('listitem')).toHaveCount(sourcePlugins.length)
+    for (const { manifest } of sourcePlugins) await expect(list.locator(`[data-plugin-id="${manifest.id}"]`).getByRole('checkbox')).toBeDisabled()
+    await expect(view.getByRole('button',{ name: '导入所选（0）', exact: true })).toBeDisabled()
+    expect((await api<{ plugins: PluginRecord[] }>('/plugins')).plugins.every(plugin => plugin.revision === 1)).toBe(true)
+    await window.screenshot({ path: test.info().outputPath('real-batch-duplicate-blocked.png') })
+    expect(errors).toEqual([])
+  } finally {
+    try { if (window && !window.isClosed()) await window.screenshot({ path: test.info().outputPath('real-batch-final.png') }) } finally {
+      await desktop?.close()
+      if (engine && engine.exitCode === null) { engine.kill(); await new Promise<void>(done => engine!.once('exit',() => done())) }
+      if (dirname(resolve(owned)) !== fixtureRoot) throw new Error('Unsafe real batch plugin cleanup')
+      rmSync(owned,{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }
 })

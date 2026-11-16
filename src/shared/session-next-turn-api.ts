@@ -1,5 +1,5 @@
 import type { EngineSnapshot } from './ipc'
-import type { NextTurnQueueEnvelope, NextTurnQueueState, NextTurnQueueUserMutation, QueueCommitResult } from './next-turn-queue'
+import type { NextTurnQueueEnvelope, NextTurnQueueState, NextTurnQueueUserMutation, QueueCommitResult, QueueContinuationTarget } from './next-turn-queue'
 export const SESSION_QUEUE_IPC = { invoke: 'work:next-turn-queue', changed: 'work:next-turn-queue:changed' } as const
 export type SessionQueueTarget = Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>
 export interface SessionQueueDraft {
@@ -8,7 +8,7 @@ export interface SessionQueueDraft {
   attachments: { path: string; name: string; type: string; size: number; remoteUploadId?: string; attachmentId?: string; referenceLabel?: string }[]
 }
 export type SessionQueueAction =
-  | { kind: 'restart'; runId: string }
+  | { kind: 'restart'; target: QueueContinuationTarget }
   | { kind: 'read' } | { kind: 'reconcile'; retryIfAbsent?: boolean }
   | { kind: 'enqueue'; expectedRevision: number; operationId: string; id: string; submission: SessionQueueDraft }
   | { kind: 'edit-draft'; expectedRevision: number; operationId: string; id: string; entryRevision: number; draft: SessionQueueDraft['draft'] }

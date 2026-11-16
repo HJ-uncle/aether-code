@@ -11260,10 +11260,6 @@ select.field__input {
   border-radius: var(--radius-lg);
 }
 
-.menu-bar__brand:hover {
-  background: var(--bg-hover);
-}
-
 .menu-bar__trigger,
 .menu-bar__action,
 .menu-bar__win-btn {

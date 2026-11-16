@@ -7,7 +7,7 @@ const PREFIXES: Record<ResourceCatalogueKind, string> = { skill: 'skill_', knowl
 const MCP_MANAGEMENT_ACTIONS: Record<string, readonly string[]> = {
   mcp_server_create: ['create'], mcp_server_update: ['update'], mcp_server_delete: ['delete'], mcp_server_set_enabled: ['set_enabled']
 }
-const ACTIONS = new Set(['create', 'update', 'delete', 'set_enabled', 'import', 'import_install', 'publish'])
+const ACTIONS = new Set(['create', 'update', 'delete', 'set_enabled', 'import', 'import_install', 'publish', 'scaffold'])
 
 /** Tool prose and unrelated extensions cannot fabricate management receipts. */
 export function resourceCatalogueChange(raw: unknown): ResourceCatalogueChange | null {

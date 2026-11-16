@@ -26,10 +26,10 @@
   flex-direction: column;
   max-height: calc(100dvh - 24px);
   min-width: 0;
-  padding: 12px 14px;
+  padding: 10px 14px;
   overflow: hidden;
   color: var(--fg);
-  font: 13px/1.5 var(--font-ui);
+  font: 13px/1.4 var(--font-ui);
 }
 .composer-options__header {
   display: flex;
@@ -38,7 +38,7 @@
   flex: none;
   gap: 12px;
   min-height: 28px;
-  padding-bottom: 8px;
+  padding-bottom: 6px;
   color: var(--fg-strong);
   font-size: 13px;
   font-weight: 600;
@@ -78,9 +78,9 @@
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 4px 10px;
+  gap: 2px 8px;
   min-width: 0;
-  padding-block: 10px;
+  padding-block: 8px;
   color: var(--fg-muted);
 }
 .composer-options__settings > .composer-options__row:first-child { padding-top: 2px; }
@@ -89,7 +89,7 @@
   position: absolute;
   top: 0;
   right: 0;
-  left: 26px;
+  left: 24px;
   height: 1px;
   background: var(--border);
   pointer-events: none;
@@ -103,21 +103,22 @@
   min-width: 0;
   color: var(--fg-muted);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.4;
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.composer-options__workspace { flex: none; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.composer-options__workspace { flex: none; margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--border); }
 .composer-options__workspace .composer-options__row { padding-block: 2px; }
+.composer-options__display-row > .toggle { grid-row: 1; grid-column: 3; justify-self: end; margin-right: 6px; }
 .composer-options__dd { position: relative; grid-row: 1; grid-column: 3; min-width: 0; max-width: 184px; justify-self: end; }
 .composer-options__dd-btn {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  min-height: 28px;
+  min-height: 26px;
   max-width: 100%;
-  padding: 4px 6px;
+  padding: 3px 6px;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
@@ -137,7 +138,8 @@
 .composer-options__index-action > svg { flex: none; width: 16px; height: 16px; }
 .composer-options__trigger:focus-visible,
 .composer-options__close:focus-visible,
-.composer-options__dd-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.composer-options__dd-btn:focus-visible,
+.composer-options__display-row > .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .composer-options__dd-menu {
   display: flex;
@@ -175,7 +177,7 @@
 .composer-options__dd-text { display: flex; flex-direction: column; flex: 1; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .composer-options__dd-label { font-size: var(--menu-title-size); font-weight: 500; }
 .composer-options__dd-hint { color: var(--fg-muted); font-size: var(--menu-description-size); line-height: 1.5; }
-.composer-options__error { padding: 0 0 10px 26px; color: var(--warn); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.composer-options__error { padding: 0 0 8px 24px; color: var(--warn); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .composer-options__error button,
 .composer-options__summary button {
   margin-left: 6px;
@@ -203,5 +205,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .composer-options__trigger, .composer-options__close,
-  .composer-options__dd-btn, .composer-options__dd-item { transition: none; }
+  .composer-options__dd-btn, .composer-options__dd-item,
+  .composer-options__display-row > .toggle,
+  .composer-options__display-row .toggle__knob { transition: none; }
 }

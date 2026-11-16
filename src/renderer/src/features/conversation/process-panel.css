@@ -33,6 +33,8 @@
 .work-message__process-jump:hover { background: var(--bg-hover); color: var(--fg); }
 .work-message__process-jump:focus-visible,
 .work-message__process-viewport:focus-visible,
+.work-process-section__toggle:focus-visible,
+.work-process-section__viewport:focus-visible,
 .work-activity-group__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .work-message__process-viewport {
@@ -40,27 +42,26 @@
   max-height: min(400px, 48vh);
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  /* Explicit position restoration must not compete with anchoring as groups animate. */
+  overflow-anchor: none;
+  scrollbar-width: none;
   scroll-padding: 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
 }
-/* Alpha masks blend into either theme without an overlay that captures input.
- * The second mask keeps the reserved native scrollbar gutter opaque. */
+.work-message__process-viewport::-webkit-scrollbar { display: none; }
+/* Edge fades keep overflow discoverable without a visible scrollbar or an
+ * overlay that captures input. */
 .work-message__process-viewport[data-scroll-edges] {
   --work-process-fade-top: 0px;
   --work-process-fade-bottom: 0px;
   mask-image: linear-gradient(to bottom,
     transparent, var(--fg) var(--work-process-fade-top),
-    var(--fg) calc(100% - var(--work-process-fade-bottom)), transparent),
-    linear-gradient(var(--fg), var(--fg));
+    var(--fg) calc(100% - var(--work-process-fade-bottom)), transparent);
   mask-mode: alpha;
   mask-repeat: no-repeat;
-  mask-size: calc(100% - var(--work-process-scrollbar-gutter, 0px)) 100%,
-    var(--work-process-scrollbar-gutter, 0px) 100%;
-  mask-position: left top, right top;
+  mask-size: 100% 100%;
 }
 .work-message__process-viewport:is([data-scroll-edges='top'], [data-scroll-edges='both']) {
   --work-process-fade-top: min(24px, 20%);
@@ -69,6 +70,41 @@
   --work-process-fade-bottom: min(24px, 20%);
 }
 .work-message__process-content { min-width: 0; padding: 4px 0 8px; }
+.work-process-section { min-width: 0; margin: 4px 0 8px; }
+.work-process-section__toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font: 12px/1.5 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.work-process-section__toggle:hover { color: var(--fg); }
+.work-process-section__dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.work-process-section__count { font-variant-numeric: tabular-nums; }
+.work-process-section__count::before { content: '·'; margin-right: 7px; }
+.work-process-section__chevron { flex: 0 0 auto; margin-left: auto; transition: transform var(--duration-fast) var(--ease-out); }
+.work-process-section__toggle[aria-expanded='true'] .work-process-section__chevron { transform: rotate(90deg); }
+/* The disclosure touches its summary: translating upward would paint over it. */
+:root .work-process-section__disclosure[data-motion-state] { --motion-offset-y: 0px; }
+.work-process-section__viewport {
+  min-width: 0;
+  max-height: min(280px, 36vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scroll-padding: 12px;
+}
+.work-process-section__viewport > .work-message__process-content { padding: 2px 8px 6px 0; }
+.work-process-section__content { min-width: 0; }
 .work-message__process .work-subagent-card__name,
 .work-message__process .command-job-card[data-surface='work'] .command-job-card__toggle > strong { color: var(--fg-muted); }
 /* Progress narration shares the answer's typography; spacing separates it from tool records. */
@@ -122,4 +158,6 @@
 @media (max-width: 720px) {
   .work-activity-group__label { flex-basis: auto; max-width: 9em; }
 }
-@media (prefers-reduced-motion: reduce) { .work-activity-group__chevron { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .work-activity-group__chevron, .work-process-section__chevron { transition: none; }
+}

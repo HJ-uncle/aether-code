@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { extensionRegistry, extensionVisible } from './registry'
-import { extensionServices, setExtensionContext } from './host'
+import { extensionServices, setExtensionContext, getExtensionContextSnapshot, subscribeExtensionContext } from './host'
 import type { ExtensionContext, PluginServiceSnapshot } from './types'
 export * from './types'
+export { ExtensionSlot, useExtensionMenuItems, useExtensionEditorDecorations } from './slots'
+export { publishExtensionEvent, registerExtensionTarget } from './interactions'
+export { getExtensionContext } from './host'
 export { ExtensionPage } from './ExtensionPage'
 export { ExtensionRegistry, extensionRegistry, extensionVisible } from './registry'
 export { startExtensionHost, refreshExtensionHost, getExtensionHostSnapshot, subscribeExtensionHost, setExtensionContext, unloadExtension } from './host'
 export { getExtensionNavigationRequest, subscribeExtensionNavigation, requestExtensionPage } from './navigation'
 export const getExtensionPage = (id: string) => extensionRegistry.getPage(id)
+export const useExtensionContext = (): ExtensionContext => useSyncExternalStore(subscribeExtensionContext, getExtensionContextSnapshot)
 
 export function useExtensionContributions(context: ExtensionContext) {
   const snapshot = useSyncExternalStore(extensionRegistry.subscribe, extensionRegistry.getSnapshot)

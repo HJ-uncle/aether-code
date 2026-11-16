@@ -685,7 +685,8 @@ export class EngineHost extends EventEmitter {
     query?: Record<string, string>,
     expectedEngine?: Pick<EngineSnapshot, 'mode' | 'baseUrl' | 'instanceId' | 'accountId'>,
     toolProfile: ToolProfile = 'general',
-    subagentProtocol?: 2
+    subagentProtocol?: 2,
+    consumePayload?: (event: StreamEvent, signal: AbortSignal) => Promise<void>
   ): Promise<void> {
     const snapshot = this.snapshot
     const boundExpectedEngine = expectedEngine ?? engineIdentityOf(snapshot)
@@ -774,7 +775,8 @@ export class EngineHost extends EventEmitter {
         for (const block of blocks) {
           const parsed = parseSseBlock(block)
           if (parsed) {
-            this.emit('stream', { streamId, ...parsed } satisfies StreamEvent)
+            if (parsed.type === 'payload' && consumePayload) await consumePayload({ streamId, ...parsed }, requestSignal)
+            else this.emit('stream', { streamId, ...parsed } satisfies StreamEvent)
             if (parsed.type === 'snapshot-required') {
               // A protocol fault closes this viewer only. Leaving its reader
               // open would retain an unconsumed connection during recovery.

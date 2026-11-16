@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SessionQueueAction, SessionQueueDraft, SessionQueueRead } from '@shared/session-next-turn-api'
-import type { NextTurnQueueState } from '@shared/next-turn-queue'
+import type { NextTurnQueueState, QueueContinuationTarget } from '@shared/next-turn-queue'
 import { assertQueueState, sameQueueScope } from '@shared/next-turn-queue-state'
 import { assertEngineSource, getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
 import type { Mention } from './shared/mention-context'
@@ -112,7 +112,7 @@ export function useSessionNextTurnQueue(taskId: string | null, source: number, r
     if (!read) return Promise.reject(new Error('队列尚未就绪'))
     return commit({ kind: 'edit-draft', expectedRevision: read.state.revision, operationId: crypto.randomUUID(), id, entryRevision, draft })
   }
-  const restart = useCallback((runId: string) => commit({ kind: 'restart', runId }), [commit])
+  const restart = useCallback((target: QueueContinuationTarget) => commit({ kind: 'restart', target }), [commit])
   const currentRead = readOwner.current?.taskId === taskId && readOwner.current.source === source ? read : null
   return { state: currentRead?.state ?? null, error: error ?? currentRead?.dispatchError ?? null, saving, ready: Boolean(currentRead), enqueue, mutate, editDraft,
     restart,

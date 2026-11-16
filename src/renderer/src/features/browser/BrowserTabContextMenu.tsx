@@ -104,12 +104,12 @@ export function BrowserTabContextMenu({
       onSelect: onStop
     },
     { id: 'copy-address', label: tab.localFile ? '复制文件路径' : '复制网页地址', onSelect: onCopyAddress },
-    { id: 'devtools', label: '开发者工具', disabled: !!tab.localFile && tab.localFile.kind !== 'html', onSelect: onDevtools },
+    { id: 'devtools', label: '开发者工具', disabled: !!tab.pluginPage || !!tab.localFile && tab.localFile.kind !== 'html', onSelect: onDevtools },
     {
       id: 'add-to-chat',
       label: '添加到当前会话',
       hint: addToChatHint,
-      disabled: !!tab.localFile || addToChatDisabled,
+      disabled: !!tab.pluginPage || !!tab.localFile || addToChatDisabled,
       onSelect: onAddToChat
     },
     { id: 'close', label: '关闭标签页', hint: 'Ctrl+W', onSelect: onCloseTab },

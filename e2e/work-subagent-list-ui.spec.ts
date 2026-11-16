@@ -155,10 +155,9 @@ const row = (index: number): Locator => panel().locator(`.work-subagents__row[da
 const list = (): Locator => panel().locator('.work-subagents__list')
 const back = (): Locator => panel().getByRole('button', { name: '返回子代理列表', exact: true })
 async function openList(): Promise<void> {
-  if (!(await workspace().isVisible())) await work().getByRole('button', { name: '打开工作区', exact: true }).click()
   const tab = workspace().getByRole('tab', { name: '子代理', exact: true })
   if (await tab.isVisible()) await tab.click()
-  else { await workspace().getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
+  else { await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
   await expect(panel()).toBeVisible()
   if (await back().isVisible()) await back().click()
   await expect(rows()).toHaveCount(4)

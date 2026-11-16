@@ -163,7 +163,7 @@
 .input-composer.work-composer.chat__surface:has(> .input-composer__input:focus-visible) { box-shadow: var(--composer-focus-shadow); }
 .input-composer.work-composer > .input-composer__input { min-height: 72px; max-height: 240px; padding: 0 2px; font-size: 14px; line-height: 1.7; }
 .input-composer.work-composer > :is(.work-attachments, .work-resource-strip) { padding: 0 2px; }
-.work-composer .input-composer__toolbar { padding: 8px 0 6px; border-top: 1px solid var(--border); min-height: 44px; }
+.work-composer .input-composer__toolbar { padding: 7px 0; border-top: 1px solid var(--border); min-height: 44px; }
 .work-composer .input-composer__trailing > .chat__polish-btn { position: static; width: 28px; height: 28px; padding: 0; color: var(--fg-muted); }
 .work-composer .input-composer__leading > .work-quiet-button { color: var(--fg-muted); }
 .input-composer.work-composer .model-picker { max-width: 228px; }

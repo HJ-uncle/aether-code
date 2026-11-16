@@ -1,30 +1,19 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
-import { parseToolkitCatalogue, type SessionToolkit } from '@shared/toolkits'
-import { request } from './client'
+import { useEffect, useSyncExternalStore } from 'react'
+import { parseToolkitCatalogue } from '@shared/toolkits'
+import { requestOrThrow } from './client'
 import { getEngineSource, subscribeEngineSource } from './source'
-import { subscribeAgentCatalogueChanges } from './agent-catalogue'
-import { subscribeResourceCatalogueChanges } from './resource-catalogue'
+import { startReferenceCatalogues, toolkitReferenceCache } from './reference-catalogues'
+import { useCatalogue } from './use-catalogue'
 
 /** No static fallback: an older or differently configured engine may not support these tools. */
 export function useToolkitCatalogue(enabled: boolean, sessionId?: string, agentId?: string, path?: string | null) {
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
-  const scope = JSON.stringify([source, sessionId ?? null, agentId ?? null, path ?? null])
-  const [result, setResult] = useState<{ scope: string; items: SessionToolkit[]; loading: boolean }>({ scope: '', items: [], loading: false })
-  const [revision, setRevision] = useState(0)
-  useEffect(() => subscribeAgentCatalogueChanges(() => setRevision(value => value + 1)), [])
-  useEffect(() => subscribeResourceCatalogueChanges(['plugin'], () => setRevision(value => value + 1)), [source])
-  useEffect(() => {
-    if (!enabled) return
-    let cancelled = false
-    setResult({ scope, items: [], loading: true })
-    void request({ method: 'GET', path: '/toolkits', toolProfile: 'general',
-      query: { sessionId, agentId: sessionId ? undefined : agentId, path: path || undefined } })
-      .then(response => {
-        if (!cancelled && source === getEngineSource()) setResult({ scope, items: response.ok ? parseToolkitCatalogue(response.data) : [], loading: false })
-      }).catch(() => {
-        if (!cancelled && source === getEngineSource()) setResult({ scope, items: [], loading: false })
-      })
-    return () => { cancelled = true }
-  }, [enabled, scope, source, sessionId, agentId, path, revision])
-  return enabled && result.scope === scope ? result : { items: [], loading: enabled }
+  const effectiveAgentId = sessionId ? undefined : agentId
+  // The local agent identity also invalidates a bound session while its new binding is being applied.
+  const scope = JSON.stringify([source, sessionId ?? null, agentId ?? null, path || null])
+  useEffect(startReferenceCatalogues, [])
+  const result = useCatalogue(toolkitReferenceCache, scope, enabled, async () => parseToolkitCatalogue(
+    await requestOrThrow({ method: 'GET', path: '/toolkits', toolProfile: 'general',
+      query: { sessionId, agentId: effectiveAgentId, path: path || undefined } })))
+  return { items: result.value ?? [], loading: result.loading, error: result.error, retry: result.retry }
 }

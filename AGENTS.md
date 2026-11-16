@@ -23,6 +23,14 @@ Aether：Electron + React + TypeScript 的桌面 IDE。
 
 前端只有一个默认界面，结构及插件承载约定见 [docs/frontend-architecture.md](docs/frontend-architecture.md)。不要新建 Work / Code 模式目录。持久化键与 IPC 中的历史标识不随文件重命名变更。
 
+## 插件公开参考必须同步
+
+- 插件 API 的唯一公开文档源是 `docs/plugin-api/content/*.html`，导航在 `docs/plugin-api/pages.mjs`。不要再维护平行的 Markdown API 参考，不能手改生成的 `dist/`。
+- 新增、优化或删除插件接口、挂载、权限、事件、参数、返回值、运行限制和用户流程时，必须在同一变更中同步 HTML 参考、例子及对应验证。页面只介绍开发者可使用的能力，不暴露引擎仓库路径和内部 HTTP 接口。
+- 修改受监控实现后先审阅文档与实际行为，再运行 `npm run docs:review` 显式确认快照；禁止未经审阅自动接受快照或只修改快照让检查变绿。仅重构且公开行为未变，也须核对并记录确认。
+- 运行 `npm run docs:check` 和 `npm run docs:test`；`npm run build` 已强制执行文档同步检查与 HTML 构建。检查默认使用同级引擎源码，可通过 `AETHER_ENGINE_SOURCE_DIR` 指定配对仓库。缺少引擎源码时不能宣称交叉验证通过。
+- HTML 站点独立构建/预览不启动引擎、不读取账户数据。维护说明见 `docs/plugin-api/maintenance.html`，验证产物统一放 `.e2e-tmp/plugin-api-site/`。
+
 ---
 
 ## 改完代码必须验证

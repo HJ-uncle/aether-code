@@ -4,12 +4,12 @@
  * 对接引擎的 /api/v1/security 系列接口。理解这块的关键是三个概念：
  *
  *  1. **安全模式（会话级）**：safe / standard / full-access。
- *     模式存在引擎内存里，按 tenant+sessionId 区分，**不持久化**——
- *     引擎重启或换会话就回到默认值。因此这里所有模式读写都必须带 sessionId。
+ *     引擎按 tenant+sessionId 在内存中保存模式；客户端 security-state 会按
+ *     引擎端点 + sessionId 恢复用户已确认的选择。所有模式读写都必须带 sessionId。
  *     各模式的实际行为（见引擎 policy-engine）：
  *       - safe:        完整策略 + 注入/穿越检测，高危命令硬拒绝，未知命令弹确认
  *       - standard:    能放行的放行；deny 降级为确认、ask 升为放行，零硬报错
- *       - full-access: 跳过策略与白名单，全部放行（仍写审计日志）
+ *       - full-access: 本会话的操作确认自动通过，提问仍需用户回答（仍写审计日志）
  *
  *  2. **策略规则（全局）**：按 command + argPattern 匹配，priority 越小越优先。
  *     界面上的「放行 / 询问 / 拒绝」调的是规则本身，对所有会话生效。
@@ -68,7 +68,7 @@ export const MODE_DESCRIPTORS: readonly ModeDescriptor[] = [
   {
     value: 'full-access',
     label: '完全访问',
-    summary: '跳过策略与白名单，所有命令直接执行（仍写审计日志）。',
+    summary: '本会话的操作确认自动通过，提问仍需你回答（保留审计日志）。',
     warning: '同时会解除工具的工作区路径限制，Agent 可读写工作区以外的文件。'
   }
 ]

@@ -8,7 +8,7 @@ import { createContext, useContext, type JSX, type ReactNode } from 'react'
 import type { BuiltinAgentIconName } from '@shared/builtin-agents'
 import { OUTLINE_ICON_PATHS, OUTLINE_ICON_STROKE } from './outline-icons'
 
-type OutlineOnlyIconName = 'dashboard' | 'puzzle' | 'globe' | 'activity' | 'list-play' | 'library' | 'users' | 'refresh' | 'folder-plus' | 'file-check' | 'book-open' | 'extensions' | 'plug' | 'archive' | 'redo'
+type OutlineOnlyIconName = 'dashboard' | 'panels' | 'puzzle' | 'globe' | 'activity' | 'bell' | 'list-play' | 'library' | 'users' | 'refresh' | 'folder-plus' | 'file-check' | 'book-open' | 'extensions' | 'plug' | 'archive' | 'redo'
 const IconStyleContext = createContext<'default' | 'outline'>('default')
 
 /** React context follows dialogs and menus through portals, unlike a DOM ancestor selector. */
@@ -174,7 +174,7 @@ const PATHS: Record<Exclude<IconName, OutlineOnlyIconName>, JSX.Element> = {
   // MDI brand/navigation paths, matching the installed @iconify-json/mdi set.
   vscode: <path fill="currentColor" d="M17 16.47V7.39l-6 4.54M2.22 9.19a.86.86 0 0 1-.02-1.15l1.2-1.11c.2-.18.69-.26 1.05 0l3.42 2.61l7.93-7.25c.32-.32.87-.45 1.5-.12l4 1.91c.36.21.7.54.7 1.15v13.5c0 .4-.29.83-.6 1l-4.4 2.1c-.32.13-.92.01-1.13-.2l-8.02-7.3l-3.4 2.6c-.38.26-.85.19-1.05 0l-1.2-1.1c-.32-.33-.28-.87.05-1.2l3-2.7" />,
   'open-in-new': <path fill="currentColor" d="M14 3v2h3.59l-9.83 9.83l1.41 1.41L19 6.41V10h2V3m-2 16H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2z" />,
-  chat: <path d="M3 3h18v14H7l-4 4V3zm3 2v2h12V5H6zm0 4v2h9V9H6z" fill="currentColor" />,
+  chat: <path d={OUTLINE_ICON_PATHS.chat} fill="none" stroke="currentColor" strokeWidth={OUTLINE_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round" />,
   'chat-outline': <path d={CHAT_OUTLINE_PATH} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />,
   palette: (
     <path

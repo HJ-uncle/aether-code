@@ -34,6 +34,7 @@ import { confirmDialog } from '@renderer/ui/ConfirmDialog'
 import {
   buildToolResponse,
   normalizePending,
+  normalizeSourceChangeWaitStatus,
   type PendingInteraction
 } from './pending'
 import { patchSessionMeta } from '@renderer/features/history/session-meta'
@@ -44,7 +45,7 @@ import { createHistoryMutationGuard } from './history-mutation'
 import { cacheDisplayHistory, checkDisplayHistory, mergeDisplayHistory, type DisplayHistoryCache, type DisplayHistoryCompleteness, type DisplayHistoryTurn } from './display-history'
 import { normalizeRootFollowupMessage, type RootFollowupMessage } from './root-followup-message'
 import { applyProjectedFinalResult } from './final-result'
-import { applyProjectedUserMessage, bindProjectedAssistantId, applyProjectedUsage } from './chat-timeline'
+import { applyProjectedUserMessage, applyProjectedAssistantSegment, bindProjectedAssistantId, applyProjectedUsage } from './chat-timeline'
 import { ChatRequestRejectedError, dispatchChatRequest } from './chat-send-request'
 
 
@@ -98,6 +99,7 @@ export interface ChatMessage {
   finalResult?: import('@shared/final-result').FinalResult
   publishedChildFence?: import('@shared/published-child').PublishedChildFence
   runId?: string
+  attemptId?: string
   run?: RootRun
   interactions?: PendingInteraction[]
   id: string
@@ -294,6 +296,8 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
   ) => Promise<void>
   /** Recheck the selected durable request before a related UI side effect. */
   assertPendingResponse: (requestId: string, sessionId: string, runId: string) => void
+  /** Read the authoritative source guard state before automatic recheck. */
+  waitForSourceChange: (input: { sessionId: string; runId: string; requestId: string }) => Promise<import('./pending').SourceChangeWaitStatus>
   abort: () => Promise<void>
   /** 清空当前会话；传入 sessionId 时同步删除引擎侧历史；失败时抛错且不清理界面 */
   clear: (sessionId?: string) => Promise<void>
@@ -942,6 +946,15 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
         acknowledgeOutgoingSend(event.streamId, merged)
         return
       }
+      if (event.payload.assistantSegment) {
+        const currentRun = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
+        if (currentRun && currentRun.attemptId === event.payload.assistantSegment.attemptId) {
+          flushStreamPatches()
+          setMessages(previous => scopeIsCurrent(eventScope) ? applyProjectedAssistantSegment(previous, event.payload.assistantSegment, currentRun) : previous,
+            { event, currentRun, eventScope })
+        }
+        return
+      }
       if (event.payload.userMessage) {
         const currentRun = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
         if (currentRun) {
@@ -1502,12 +1515,12 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
     const currentRun = pending?.runId ? rootRunsRef.current.get(pending.runId) : undefined
     const currentPending = currentRun?.pending.find(item => item.requestId === requestId)
     // History keeps unanswered requests after cancellation. Only the currently
-    // bound waiting root can authorize an interaction, including before React
+    // bound waiting/stopped root can accept an explicit decision, before React
     // has committed the terminal frame and unmounted its old card.
-    if (viewSessionRef.current !== sessionId || !target?.run || !pending?.runId || target.run.status !== 'waiting' ||
+    if (viewSessionRef.current !== sessionId || !target?.run || !pending?.runId || !['waiting', 'cancelled'].includes(target.run.status) ||
       target.run.sessionId !== sessionId || pending.runId !== target.run.runId || target.runId !== pending.runId ||
       activeRunIdRef.current !== pending.runId || (expectedRunId !== undefined && expectedRunId !== pending.runId) ||
-      currentRun?.sessionId !== sessionId || currentRun.status !== 'waiting' || currentPending?.status !== 'pending' ||
+      currentRun?.sessionId !== sessionId || !['waiting', 'cancelled'].includes(currentRun.status) || currentPending?.status !== 'pending' ||
       currentPending.toolCallId !== pending.toolCallId || currentPending.toolName !== pending.toolName || currentPending.kind !== pending.kind) {
       throw new Error('待应答请求已变化，请重新加载会话')
     }
@@ -1565,6 +1578,15 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
       }
     }, [pendingResponseTarget, runStream, renderSource, recoveryScope, scopeIsCurrent]
   )
+
+  const waitForSourceChange = useCallback(async (input: { sessionId: string; runId: string; requestId: string }): Promise<import('./pending').SourceChangeWaitStatus> => {
+    assertEngineSource(renderSource)
+    const result = await engine.request<unknown>({ method: 'GET', path: '/chat/source-change-status', query: input })
+    if (!result.ok) throw new Error(result.message || '源码等待状态暂时不可用')
+    const status = normalizeSourceChangeWaitStatus(result.data)
+    if (!status) throw new Error('源码等待状态协议无效')
+    return status
+  }, [renderSource])
 
   const abort = useCallback((): Promise<void> => {
     assertEngineSource(renderSource)
@@ -1948,6 +1970,7 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
     send,
     respond,
     assertPendingResponse,
+    waitForSourceChange,
     abort,
     clear,
     loadHistory,

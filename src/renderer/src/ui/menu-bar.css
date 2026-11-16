@@ -1,5 +1,28 @@
 /* The window controls must keep their size; commands move into a menu before
    flex compression can turn Chinese labels into vertical text. */
+.menu-bar .menu-bar__brand,
+.menu-bar .menu-bar__trigger {
+  height: var(--control-h-lg);
+  line-height: 1.5;
+  align-items: center;
+  justify-content: center;
+}
+.menu-bar .menu-bar__trigger {
+  /* Native button line boxes differ from the adjacent flex brand label. */
+  display: inline-flex;
+}
+.menu-bar .menu-bar__brand {
+  min-width: 0;
+  padding-inline: var(--space-2);
+}
+@supports (text-box-trim: trim-both) and (text-box-edge: text) {
+  .menu-bar__brand-name,
+  .menu-bar__label {
+    /* Center font bounds rather than the uneven leading around Latin/CJK text. */
+    text-box-trim: trim-both;
+    text-box-edge: text;
+  }
+}
 .menu-bar .menu-bar__menus {
   display: flex;
   align-items: center;

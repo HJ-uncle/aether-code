@@ -12,7 +12,7 @@ export const pluginToolTitle = (tool: PluginTool): string => typeof tool.inputSc
 export function pluginFormFields(tool: PluginTool): PluginFormField[] {
   const properties = pluginObject(tool.inputSchema.properties) ? tool.inputSchema.properties : {}
   const required = Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
-  return Object.entries(properties).slice(0, 64).sort(([left], [right]) => Number(required.includes(right)) - Number(required.includes(left))).map(([key, value]) => {
+  return Object.entries(properties).sort(([left], [right]) => Number(required.includes(right)) - Number(required.includes(left))).map(([key, value]) => {
     const schema = pluginObject(value) ? value : {}
     const choices = Array.isArray(schema.enum) && schema.enum.every(item => item === null || ['string', 'number', 'boolean'].includes(typeof item)) ? schema.enum : undefined
     const primitive = ['string', 'number', 'integer', 'boolean'].includes(String(schema.type)) ? schema.type as 'string' | 'number' | 'integer' | 'boolean' : 'json'

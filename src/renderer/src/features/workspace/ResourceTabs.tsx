@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ChangeEvent, type JSX } from 'react'
 import { ActionMenu, type ActionMenuItem } from '@renderer/ui/ActionMenu'
+import { Icon } from '@renderer/ui/icons'
 import { browserAction, initializeBrowser, selectBrowserTab } from '../browser/browser-store'
 import { openExternalSessionFileResource, selectSessionResource } from './resource-store'
 import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
@@ -10,8 +11,8 @@ import { toast } from '@renderer/core/toast'
 import './resource-tabs.css'
 
 /**
- * Resource actions share the workspace menu so open tabs retain the strip's
- * width. The file input stays mounted when the menu closes for a native picker.
+ * The heading owns this menu so destinations remain available with the pane
+ * collapsed. Keep the file input mounted when the menu closes for a native picker.
  */
 export function ResourceTabs({ sessionId, onSelect, items }: {
   sessionId: string
@@ -53,7 +54,7 @@ export function ResourceTabs({ sessionId, onSelect, items }: {
   }
 
   return <>
-    <ActionMenu className="work-workspace__more" panelClassName="work-workspace-menu" label="更多工作区" items={[
+    <ActionMenu className="work-workspace__more" panelClassName="work-workspace-menu" label="更多工作区" icon={<Icon name="panels" size={16} />} items={[
       ...items,
       { id: 'open-file', label: '打开文件…', icon: 'file', separatorBefore: true, onSelect: () => fileInput.current?.click() },
       { id: 'new-webpage', label: '新建网页', icon: 'plus', onSelect: openBrowser }

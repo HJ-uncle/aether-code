@@ -33,6 +33,9 @@ test('only successful structured plugin receipts trigger catalogue refresh', () 
   expect(resourceCatalogueChange({ name: 'plugin_publish', success: true, metadata: { resourceChange: { kind: 'plugin', action: 'publish', id: 'report-helper' } } })).toEqual({ kind: 'plugin', action: 'publish', id: 'report-helper' })
   expect(resourceCatalogueChange({ name: 'mcp_plugin_publish', success: true, metadata: { resourceChange: { kind: 'plugin', action: 'publish', id: 'report-helper' } } })).toBeNull()
   expect(resourceCatalogueChange({ name: 'plugin_import_install', success: true, metadata: { resourceChange: { kind: 'plugin', action: 'import_install', id: 'report-helper' } } })).toEqual({ kind: 'plugin', action: 'import_install', id: 'report-helper' })
+  expect(resourceCatalogueChange({ name: 'plugin_scaffold', success: true, metadata: { resourceChange: { kind: 'plugin', action: 'scaffold', id: 'report-helper' } } })).toEqual({ kind: 'plugin', action: 'scaffold', id: 'report-helper' })
+  expect(resourceCatalogueChange({ name: 'plugin_scaffold', success: true, metadata: { resourceChange: { kind: 'plugin-project', action: 'scaffold', id: 'report-helper' } } })).toBeNull()
+  expect(resourceCatalogueChange({ name: 'plugin_scaffold', success: false, metadata: { resourceChange: { kind: 'plugin', action: 'scaffold', id: 'report-helper' } } })).toBeNull()
 })
 
 test('selecting a new plugin revision replaces its prior selection without enabling historical labels', () => {
@@ -52,4 +55,65 @@ test('template examples prefill exact local tool arguments while invalid drafts 
   expect(JSON.parse(pluginExampleArgs(files,'normalize_text'))).toEqual({ text: '  你好 🌟  ' })
   expect(pluginExampleArgs(files,'missing')).toBe('{}')
   expect(pluginExampleArgs({ 'examples/cases.json': '{broken' },'normalize_text')).toBe('{}')
+})
+
+test('batch plugin preview permits only its declared POST transport', () => {
+  expect(remoteRequestError('remote','POST','/plugins/imports/preview-batch')).toBeNull()
+  for (const method of ['GET','PUT','PATCH','DELETE'])
+    expect(remoteRequestError('remote',method,'/plugins/imports/preview-batch'),method).not.toBeNull()
+  expect(remoteRequestError('remote','POST','/plugins/imports/preview-batch/private')).not.toBeNull()
+})
+
+test('plugin catalogue subscription permits only the exact GET transport', () => {
+  expect(remoteRequestError('remote', 'GET', '/plugins/runtime/changes')).toBeNull()
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'])
+    expect(remoteRequestError('remote', method, '/plugins/runtime/changes'), method).not.toBeNull()
+  expect(remoteRequestError('remote', 'GET', '/plugins/runtime/changes/private')).not.toBeNull()
+})
+
+test('developer mode permits only explicit transient source actions', () => {
+  for (const path of ['/plugins/dev/open', '/plugins/dev/dev-session/refresh', '/plugins/dev/dev-session/invoke', '/plugins/dev/dev-session/close', '/plugins/dev/dev-session/capabilities/invoke', '/plugins/helper/capabilities/invoke'])
+    expect(remoteRequestError('remote', 'POST', path), path).toBeNull()
+  for (const [method, path] of [['GET', '/plugins/dev/open'], ['DELETE', '/plugins/dev/dev-session'], ['POST', '/plugins/dev/dev-session/publish'], ['POST', '/plugins/dev/../invoke'], ['POST', '/plugins/dev/dev-session/private']])
+    expect(remoteRequestError('remote', method, path), `${method} ${path}`).not.toBeNull()
+})
+test('plugin permissions and capability catalogue allow only declared methods', () => {
+  expect(remoteRequestError('remote', 'GET', '/plugins/project/capabilities')).toBeNull()
+  expect(remoteRequestError('remote', 'PUT', '/plugins/helper/permissions')).toBeNull()
+  expect(remoteRequestError('remote', 'PUT', '/plugins/dev/dev-session/permissions')).toBeNull()
+  expect(remoteRequestError('remote', 'POST', '/plugins/project/capabilities')).not.toBeNull()
+  expect(remoteRequestError('remote', 'GET', '/plugins/helper/permissions')).not.toBeNull()
+  expect(remoteRequestError('remote', 'GET', '/plugins/helper/capabilities/invoke')).not.toBeNull()
+})
+
+test('AI and Agent streams use only the declared installed and development POST endpoints', () => {
+  for (const path of ['/plugins/helper/capabilities/stream', '/plugins/dev/dev-session/capabilities/stream']) {
+    expect(remoteRequestError('remote', 'POST', path)).toBeNull()
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) expect(remoteRequestError('remote', method, path)).not.toBeNull()
+    expect(remoteRequestError('remote', 'POST', path + '/private')).not.toBeNull()
+  }
+})
+
+test('plugin Agent tool management exposes only exact GET and PUT paths', () => {
+  for (const path of ['/plugins/helper/agent-tools', '/plugins/dev/dev-session/agent-tools']) {
+    expect(remoteRequestError('remote', 'GET', path)).toBeNull()
+    expect(remoteRequestError('remote', 'PUT', path)).toBeNull()
+    expect(remoteRequestError('remote', 'POST', path)).not.toBeNull()
+    expect(remoteRequestError('remote', 'GET', path + '/other')).not.toBeNull()
+  }
+})
+
+test('trusted plugin confirmation transport exposes only exact POST resume routes', () => {
+  for (const path of ['/plugins/helper/agents/outer-run/respond', '/plugins/dev/dev-session/agents/outer-run/respond']) {
+    expect(remoteRequestError('remote', 'POST', path)).toBeNull()
+    expect(remoteRequestError('remote', 'GET', path)).not.toBeNull()
+    expect(remoteRequestError('remote', 'POST', path + '/arbitrary')).not.toBeNull()
+  }
+})
+
+test('remote collaboration controller accepts only exact POST mailbox writes', () => {
+  const path = '/collaboration/roots/root-run/messages'
+  expect(remoteRequestError('remote', 'POST', path)).toBeNull()
+  expect(remoteRequestError('remote', 'GET', path)).not.toBeNull()
+  expect(remoteRequestError('remote', 'POST', path + '/arbitrary')).not.toBeNull()
 })

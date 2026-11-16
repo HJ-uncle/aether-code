@@ -220,10 +220,9 @@ const transcript = (): Locator => panel().locator('.work-subagent-transcript')
 const scroller = (): Locator => transcript().locator('.work-subagent-transcript__scroll')
 const message = (suffix: string): Locator => transcript().locator(`[data-message-id="compact-child-1-${suffix}"]`)
 async function openChildren(): Promise<void> {
-  if (!(await workspace().isVisible())) await work().getByRole('button', { name: '打开工作区', exact: true }).click()
   const tab = workspace().getByRole('tab', { name: '子代理', exact: true })
   if (await tab.isVisible()) await tab.click()
-  else { await workspace().getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
+  else { await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
   await expect(panel()).toBeVisible()
 }
 async function selectChild(index: number): Promise<void> {
@@ -539,7 +538,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     const artifacts = workspace().getByRole('region', { name: '本会话成果与改动', exact: true })
     const tab = workspace().getByRole('tab', { name: '成果', exact: true })
     if (await tab.isVisible()) await tab.click()
-    else { await workspace().getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '成果', exact: true }).click() }
+    else { await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '成果', exact: true }).click() }
     await expect(workspace().locator('[data-final-result-fallback="changes"]')).toBeVisible()
     await expect(artifacts).toHaveAttribute('data-session-id', taskA)
     await expect(artifacts.locator('.work-session-artifacts__header')).toContainText('2 个文件')

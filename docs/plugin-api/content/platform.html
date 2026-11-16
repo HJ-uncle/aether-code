@@ -1,0 +1,538 @@
+<p><code>$AE</code> 由 Aether 注入受信插件页面和宿主启动的 Node 工具。以下方法在两者中通用，不需要插件保存模型密钥。普通网页和独立启动的 Node 程序没有此对象。</p>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>方法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>上下文</td>
+<td><a href="#context">context</a></td>
+</tr>
+<tr>
+<td>模型与 AI</td>
+<td><a href="#models-list">models.list</a>、<a href="#ai-run">ai.run（非流式）</a>、<a href="#ai-stream">ai.stream（流式输出）</a></td>
+</tr>
+<tr>
+<td>会话</td>
+<td><a href="#session-messages">session.messages</a></td>
+</tr>
+<tr>
+<td>Skills</td>
+<td><a href="#skills-list">skills.list</a>、<a href="#skills-get">skills.get</a></td>
+</tr>
+<tr>
+<td>Agent</td>
+<td><a href="#agents-list">agents.list</a>、<a href="#agents-tools">agents.tools</a>、<a href="#agents-run">agents.run（后台任务）</a>、<a href="#agents-stream">agents.stream（流式输出）</a>、<a href="#agents-status">agents.status</a>、<a href="#agents-cancel">agents.cancel</a></td>
+</tr>
+<tr>
+<td>工作区</td>
+<td><a href="#workspace-list">workspace.list</a>、<a href="#workspace-read">workspace.read</a>、<a href="#workspace-write">workspace.write</a></td>
+</tr>
+<tr>
+<td>知识库</td>
+<td><a href="#knowledge-list">knowledge.list</a>、<a href="#knowledge-search">knowledge.search</a>、<a href="#knowledge-get">knowledge.get</a>、<a href="#knowledge-create">knowledge.create</a>、<a href="#knowledge-update">knowledge.update</a></td>
+</tr>
+<tr>
+<td>MCP</td>
+<td><a href="#mcp-list">mcp.list</a>、<a href="#mcp-tools">mcp.tools</a>、<a href="#mcp-call">mcp.call</a></td>
+</tr>
+<tr>
+<td>插件设置</td>
+<td><a href="#settings-get">settings.get</a>、<a href="#settings-set">settings.set</a></td>
+</tr>
+<tr>
+<td>通用调用</td>
+<td><a href="#call">call</a></td>
+</tr>
+</tbody></table>
+<h2 id="common">通用约定</h2>
+<ul>
+<li>所有方法返回 <code>Promise</code>。失败时会拒绝，可读取 <code>Error.message</code>；不要依赖错误对象具有 <code>code</code> 属性。</li>
+<li>除 <code>context()</code> 外，能力必须在 <code>manifest.permissions.requested</code> 中声明，并获得用户对当前插件版本的授权。声明不等于授权。</li>
+<li>业务参数和返回值通过 JSON 传递；<code>Args</code> 表示 <code>Record&lt;string, unknown&gt;</code>，实际值应可序列化为 JSON。流式调用的第二参数 <code>onEvent</code> 和 <code>signal</code> 由 SDK 在本地处理。按签名传参，不添加未声明字段。</li>
+<li>会话、工作区与用户身份由宿主绑定，不能通过参数切换。版本变化、停用或撤销权限后，后续调用可能失败，需要刷新或重新授权。</li>
+<li>插件不额外设置调用时长、结果大小或并发配额。执行沿用平台、所选模型及系统资源策略；请求传输遵循平台通用配置。使用 AbortSignal 主动取消不再需要的任务。</li>
+<li>长输出使用 stream 接口；SDK 等待消费者处理后再接收后续事件，避免在页面排积大量待处理回调。</li>
+<li>权限开关控制 <code>$AE</code> 宿主能力。Node 工具是本机代码，这些开关不是操作系统沙箱。</li>
+</ul>
+<p>例如，只读取当前会话并调用 AI 的插件可以声明：</p>
+<pre><code class="language-json">{ &quot;permissions&quot;: { &quot;requested&quot;: [&quot;session.read&quot;, &quot;models.read&quot;, &quot;ai.run&quot;] } }
+</code></pre>
+<h2 id="context"><code>$AE.context()</code></h2>
+<p>读取此次页面或工具调用的宿主上下文。</p>
+<pre><code class="language-ts">$AE.context(): Promise&lt;{
+  sessionId: string | null;
+  workspacePath: string | null;
+  pluginId: string;
+  revision: number;
+  messageId?: string;
+  messageRole?: string;
+  filePath?: string;
+  selectionText?: string;
+  targetId?: string;
+  engineReady?: boolean; // 页面附加字段
+}&gt;
+</code></pre>
+<p><strong>参数：</strong>无。<strong>权限：</strong>不需要单独声明能力。</p>
+<p><strong>返回：</strong>插件标识和版本，以及宿主提供的会话、工作区和操作目标。全局入口的 <code>sessionId</code>、<code>workspacePath</code> 可以为 <code>null</code>；消息、文件、选区字段只在相应入口提供。上下文中的路径或标识本身不授予读写权限。</p>
+<pre><code class="language-js">const { sessionId, selectionText } = await $AE.context();
+</code></pre>
+<a id="models"></a>
+<h2 id="models-list"><code>$AE.models.list()</code></h2>
+<p>列出平台已配置且启用的模型，供用户选择。</p>
+<pre><code class="language-ts">$AE.models.list(): Promise&lt;{
+  models: Array&lt;{ id: string; modelId: string; name: string; provider: string }&gt;;
+}&gt;
+</code></pre>
+<p><strong>参数：</strong>无。<strong>权限：</strong><code>models.read</code>。</p>
+<p><strong>返回：</strong><code>id</code> 是平台模型配置 ID，<code>modelId</code> 是提供方模型名，<code>name</code> 是显示名称。列表不包含密钥或连接凭据；建议将选中的 <code>id</code> 传给 AI 或 Agent，以区分同名模型配置。</p>
+<pre><code class="language-js">const { models } = await $AE.models.list();
+</code></pre>
+<a id="ai"></a>
+<h2 id="ai-run"><code>$AE.ai.run(args)</code> · 非流式生成</h2>
+<p>使用平台模型生成文本，等待生成结束后一次性返回完整结果。需要边生成边显示时，使用 <a href="#ai-stream"><code>ai.stream()</code> 流式输出</a>。</p>
+<pre><code class="language-ts">$AE.ai.run(args: {
+  modelId: string;
+  prompt?: string;
+  messages?: Array&lt;{ role: &#39;user&#39; | &#39;assistant&#39;; content: string }&gt;;
+  systemPrompt?: string;
+  maxTokens?: number;
+}): Promise&lt;{
+  text: string;
+  model: string;
+  usage: { inputTokens?: number; outputTokens?: number };
+}&gt;
+</code></pre>
+<p><strong>权限：</strong><code>ai.run</code>；只有调用模型目录时才另需 <code>models.read</code>。</p>
+<p><strong>参数：</strong><code>modelId</code> 接受已启用模型的配置 ID 或模型名，为 1–4,096 字符。<code>prompt</code> 与 <code>messages</code> 至少提供一种；两者同时提供时，<code>prompt</code> 追加为最后一条用户消息。消息、提示词不设插件专属长度上限；<code>maxTokens</code> 为正整数，省略时沿用平台输出配置。实际上下文和输出仍取决于所选模型。</p>
+<p><strong>返回：</strong>完整可见正文、实际模型名称和 token 用量。空正文、输出截断或未完成的工具调用会报错，不会伪装成完整结果。此方法不自动读取会话，也不执行工具；需要工具循环时使用 <a href="#agents-run">agents.run</a>。模型调用产生正常费用。</p>
+<pre><code class="language-js">const { text } = await $AE.ai.run({ modelId, prompt: &#39;检查这份需求：&#39; + requirement });
+</code></pre>
+<h2 id="ai-stream"><code>$AE.ai.stream(args, options?)</code> · 流式输出</h2>
+<p>通过 <code>onEvent</code> 逐段接收 <code>text-delta</code> 事件，将每段 <code>event.text</code> 追加到页面，即可边生成边显示正文。生成结束后，Promise 返回与 <code>ai.run()</code> 相同的完整结果。页面和宿主启动的 Node 工具均可使用。</p>
+<pre><code class="language-ts">$AE.ai.stream(args: AetherPluginAIInput, options?: {
+  signal?: AbortSignal;
+  onEvent?: (event: AetherPluginStreamEvent&lt;AetherPluginAIResult&gt;) =&gt; void | Promise&lt;void&gt;;
+}): Promise&lt;AetherPluginAIResult&gt;
+
+type AetherPluginStreamEvent&lt;R = unknown&gt; =
+  | { type: 'started'; runId?: string; childSessionId?: string; model?: string }
+  | { type: 'text-delta'; text: string; runId?: string }
+  | { type: 'tool-start' | 'tool-end'; toolName: string; toolCallId?: string;
+      runId?: string; success?: boolean; durationMs?: number }
+  | { type: 'pending'; runId: string; childSessionId: string;
+      pending: AetherPluginAgentPending }
+  | { type: 'complete'; result: R }
+  | { type: 'error'; error: { code: string; message: string } };
+</code></pre>
+<p><strong>权限与参数：</strong>与 <a href="#ai-run">ai.run</a> 相同；<code>AetherPluginAIInput</code>、<code>AetherPluginAIResult</code> 是生成的 <code>aether-sdk.d.ts</code> 中的输入和返回类型。<code>onEvent</code> 按顺序处理事件，可返回 Promise。文本事件只是增量，不是累计全文；单次 AI 不发工具事件，也不发模型内部推理。提供方未报告的用量字段缺省，不应当作零。</p>
+<p><strong>完成与失败：</strong><code>complete</code> 才表示成功，Promise 返回完整结果。错误发 <code>error</code> 并拒绝 Promise；取消、断线、超时或消费者异常也会拒绝，断线时可能收不到错误事件。不能把已经显示的部分正文当作完整结果。用 <code>AbortController.abort()</code> 停止；页面关闭或开发会话关闭也会取消其流式请求，普通后台 <code>agents.run</code> 不受页面流关闭影响。</p>
+<p><strong>接收节奏：</strong>SDK 按顺序等待每次 <code>onEvent</code> 完成，再推进接收。不因回调超过 30 秒、输出超过旧容量或事件数量而取消。Promise 等全部事件处理完成后才结束。需要停止时调用 <code>abort()</code>，页面关闭、权限撤销及连接断开也会结束请求。</p>
+<pre><code class="language-js">const controller = new AbortController();
+const preview = document.createTextNode('');
+output.replaceChildren(preview);
+stopButton.onclick = () =&gt; controller.abort();
+try {
+  const result = await $AE.ai.stream({ modelId, prompt: requirement }, {
+    signal: controller.signal,
+    onEvent(event) {
+      if (event.type === 'text-delta') preview.appendData(event.text);
+    }
+  });
+  output.textContent = result.text;
+  status.textContent = '已完成';
+} catch (error) {
+  status.textContent = controller.signal.aborted ? '已停止，内容未完成' : error.message;
+}
+</code></pre>
+<a id="session"></a>
+<h2 id="session-messages"><code>$AE.session.messages(args?)</code></h2>
+<p>分页读取当前绑定会话的显示消息，或按消息 ID 读取所选消息。</p>
+<pre><code class="language-ts">$AE.session.messages(args?: {
+  offset?: number;
+  limit?: number;
+  ids?: string[];
+}): Promise&lt;{
+  messages: SessionMessage[];
+  total: number;
+  nextOffset: number | null;
+  revision?: string;
+}&gt;
+
+type SessionMessage = {
+  id?: string;
+  role: &#39;user&#39; | &#39;assistant&#39; | &#39;tool&#39; | &#39;system&#39;;
+  content: string | unknown[];
+  createdAt?: number;
+  metadata?: unknown;
+  reasoningContent?: string;
+  toolCall?: { id: string; name: string; args: Args };
+  toolCallId?: string;
+  toolName?: string;
+  tokens?: number;
+  usage?: Record&lt;string, number&gt; | null;
+  modelId?: string;
+};
+</code></pre>
+<p><strong>权限：</strong><code>session.read</code>；必须绑定会话。</p>
+<p><strong>参数：</strong><code>offset</code> 为从 0 开始的整数历史偏移，默认 <code>0</code>；<code>limit</code> 为正整数，默认 <code>50</code>。<code>ids</code> 每个为 1–4,096 字符，提供后优先于分页参数；只返回当前会话中找到的消息，缺失 ID 被忽略。</p>
+<p><strong>返回：</strong>分页时 <code>total</code> 是历史消息总数，<code>nextOffset: null</code> 表示结束；按 ID 读取时 <code>total</code> 是实际返回数量，<code>nextOffset</code> 恒为 <code>null</code>。<code>revision</code> 可能缺省。<code>content</code> 可能是内容块数组，附件信息可能在内容块或 <code>metadata</code> 中；不要把所有消息当成纯文本。返回值不包含模型请求的隐藏输入副本。</p>
+<pre><code class="language-js">const page = await $AE.session.messages({ limit: 50 });
+const selected = await $AE.session.messages({ ids: selectedMessageIds });
+</code></pre>
+<h2 id="skills">Skills</h2>
+<p>两个方法均需 <code>skills.read</code>。绑定会话时包含其工作区可用技能；没有会话时读取平台默认技能集合。读取技能说明不等于获得执行其脚本的权限。</p>
+<h3 id="skills-list"><code>$AE.skills.list()</code></h3>
+<p>列出当前可用技能的摘要。</p>
+<pre><code class="language-ts">$AE.skills.list(): Promise&lt;{
+  skills: Array&lt;{
+    id: string; name: string; description: string;
+    scope?: &#39;global&#39; | &#39;project&#39;; builtin?: boolean;
+  }&gt;;
+}&gt;
+</code></pre>
+<p><strong>参数：</strong>无。<strong>返回：</strong>技能标识、名称、描述和可选来源字段；不包含技能全文。</p>
+<pre><code class="language-js">const { skills } = await $AE.skills.list();
+</code></pre>
+<h3 id="skills-get"><code>$AE.skills.get(args)</code></h3>
+<p>读取一个可用技能的完整说明文本。</p>
+<pre><code class="language-ts">$AE.skills.get(args: { id: string }): Promise&lt;{ id: string; name: string; content: string }&gt;
+</code></pre>
+<p><strong>参数：</strong><code>id</code> 使用 <code>skills.list()</code> 返回的技能 ID，为 1–4,096 字符。<strong>返回：</strong>技能名称和全文。技能不存在、已停用或内容不可读时会报错。</p>
+<pre><code class="language-js">const { content } = await $AE.skills.get({ id: skillId });
+</code></pre>
+<h2 id="agents">Agent</h2>
+<p>任务方法必须绑定会话，仅访问当前插件在该会话中创建的任务。<code>agents.tools()</code> 可在没有会话时查询基础工具目录。它们不提供平台全部 Agent 的目录，也不提供向运行中任务追加消息的方法。</p>
+<p>分析已经拿到的消息或文本，用 <a href="#ai-stream"><code>ai.stream()</code></a> 边生成边显示，或用 <a href="#ai-run"><code>ai.run()</code></a> 等待完整结果。需要模型读写工作区并连续调用工具时，用 <code>agents.stream()</code> 接收流式进度，或用 <code>agents.run()</code> 启动后台任务。会话消息先由插件代码读取，再作为任务上下文传入。</p>
+<p>返回的任务快照使用以下结构；<code>result</code> 是当前结果摘要或已有部分输出，不是完整执行记录：</p>
+<pre><code class="language-ts">type AgentRun = {
+  runId: string;
+  childSessionId: string;
+  pluginId: string;
+  sessionId: string;
+  status: &#39;queued&#39; | &#39;running&#39; | &#39;cancelling&#39; | &#39;succeeded&#39;
+    | &#39;failed&#39; | &#39;cancelled&#39; | &#39;blocked&#39; | &#39;interrupted&#39;;
+  description: string;
+  modelId: string;
+  createdAt: number; // Unix 毫秒
+  updatedAt: number; // Unix 毫秒
+  result: string;
+  usage: {
+    inputTokens?: number; outputTokens?: number; totalTokens?: number;
+    cacheReadTokens?: number; cacheWriteTokens?: number;
+    estimated?: boolean; unknown?: boolean;
+  };
+  toolCount: number;
+  pending: AgentPending[]; // 当前等待用户答复的请求；没有时为空数组
+  error?: { code: string; message: string };
+};
+type AgentPending = {
+  requestId: string; toolCallId: string; toolName: string;
+  args: Record&lt;string, unknown&gt;;
+  kind: 'ask' | 'permission'; status: 'pending' | 'answered';
+  question?: string; options?: unknown[]; description?: string;
+  messageId?: string; output?: string;
+  displaySummary?: {
+    source: 'durable_approval'; fields: Array&lt;'args' | 'question' | 'description' | 'options'&gt;;
+    originalArgsBytes?: number; omittedArgumentKeys?: number;
+  };
+  sourceChangeWait?: Record&lt;string, unknown&gt;;
+};
+</code></pre>
+<p><code>pending</code> 是展示信息，供页面提示“等待用户确认”或“等待补充信息”。较大的确认参数可带 <code>displaySummary</code>；完整操作由平台保存。该对象不包含可执行的封存操作，不能拿它替代用户答复。</p>
+<h3 id="agents-list"><code>$AE.agents.list(args?)</code></h3>
+<p>分页列出当前插件与会话的 Agent 任务。</p>
+<pre><code class="language-ts">$AE.agents.list(args?: { cursor?: string; limit?: number }): Promise&lt;{
+  runs: AgentRun[]; nextCursor: string | null;
+}&gt;
+</code></pre>
+<p><strong>权限：</strong><code>agents.read</code>。<strong>参数：</strong>显式 <code>limit</code> 为 1–50 的整数；当前省略时默认取 64，建议显式传入。<code>cursor</code> 最长 4,096 字符，原样使用上次返回的 <code>nextCursor</code>，不要自行构造。<strong>返回：</strong>任务快照和下一页游标，<code>null</code> 表示没有下一页。</p>
+<pre><code class="language-js">const { runs, nextCursor } = await $AE.agents.list({ limit: 20 });
+</code></pre>
+<h3 id="agents-run"><code>$AE.agents.run(args)</code> · 后台任务</h3>
+<p>启动或接续后台 Agent 任务，在任务被接纳后返回快照。任务会继续调用已授权工具；通过 <code>agents.status()</code> 查询进度和最终结果。需要正文增量与工具进度回调时，使用 <a href="#agents-stream"><code>agents.stream()</code></a>。</p>
+<pre><code class="language-ts">$AE.agents.run(args: {
+  modelId: string;
+  task: string;
+  description?: string;
+  resumeRunId?: string;
+  identity?: { name?: string; description?: string };
+  systemPrompt?: string;
+  skillIds?: string[];
+  mcpServerIds?: string[];
+  disabledTools?: string[];
+  customTools?: Array&lt;{ name: string; tool: string }&gt;;
+}): Promise&lt;AgentRun&gt;
+</code></pre>
+<p><strong>权限：</strong><code>agents.manage</code>，以及任务实际需要的其他平台能力；读取任务状态另需 <code>agents.read</code>。</p>
+<p><strong>参数：</strong><code>modelId</code> 接受已启用模型的配置 ID 或模型名，最长 256 字符。<code>task</code> 是非空需求；<code>description</code> 是可选的任务摘要。<code>resumeRunId</code> 必须属于当前插件与会话，是该 <code>childSessionId</code> 的最新执行，并处于 <code>succeeded</code>、<code>failed</code>、<code>cancelled</code>、<code>blocked</code> 或 <code>interrupted</code> 状态。同一子会话有活动执行时不能再次接续，也不能从过期执行分叉。有待答复的请求时，应先由用户答复或取消；不能用新任务跳过确认。</p>
+<p><strong>返回：</strong>任务接纳后的快照，返回不代表任务已完成。用 <code>runId</code> 查询后续状态。接续会创建新 <code>runId</code>，复用原 <code>childSessionId</code> 和上下文；要求原工作区仍匹配，可调整身份、提示词、挂载与工具配置，实际执行始终检查当前授权和用户禁用名单。</p>
+<p><strong>运行策略：</strong>不增加插件专属 Agent 并发配额或任务时限。Agent 复用平台工具注册、模型执行与安全检查。工作区变化、插件停用或撤销授权会阻止后续执行。调用使用正常模型额度。</p>
+<p><strong>工具授权：</strong><code>agents.manage</code> 管理任务；<code>engine.tools</code> 开放下方六类、33 个内置工具，执行沿用绑定会话的安全策略。<code>agents.tools()</code> 返回准确名称、参数及可用性；未授权或已禁用的工具不会提供给模型。</p>
+<p>内置工具仅包含文件、命令、交互与计划、搜索、子代理、Skill。工具按需加载，检查 <code>available</code> 和 <code>reason</code> 了解当前授权与调用入口状态。Office、浏览器、工作台和成果工具不在插件 Agent 的内置范围中。</p>
+<p>插件 Agent 拥有独立的执行与会话记录，工作区继承绑定会话。其子代理遵循相同工具范围、用户禁用名单和当前授权。插件代码可直接使用已授权的 <code>$AE</code> 接口读取会话、知识库或设置，再把所需内容放入 <code>task</code>；这些接口不会自动包装成 Agent 工具。</p>
+<pre><code class="language-js">const run = await $AE.agents.run({ modelId, task: &#39;读取当前工作区的 README.md 并生成需求检查报告。&#39; });
+</code></pre>
+<h3 id="agents-configuration">身份、提示词与挂载</h3>
+<p><code>identity.name</code> 与 <code>identity.description</code> 设置身份；<code>systemPrompt</code> 设置专用指令；<code>task</code> 是本轮需求。提示词不授予权限。没有插件专属提示词长度限制。</p>
+<p><code>skillIds</code> 使用 <code>skills.list()</code> 返回的 ID，需要 <code>skills.read</code>；技能全文加载进系统上下文。<code>mcpServerIds</code> 使用 <code>mcp.list()</code> 返回的 ID，需要 <code>mcp.read</code>、<code>mcp.invoke</code>；使用服务器真实工具定义。不另限挂载数量或技能总字节数。脚本执行还需平台工具及对应安全策略。</p>
+<p>显式数组选择挂载范围，<code>[]</code> 清空该类挂载。首次运行省略数组时不自动挂载外部 Skill 或 MCP；插件代码可先调用 <code>$AE.skills.list()</code>、<code>$AE.mcp.list()</code> 选择资源。续跑省略配置继承原任务；显式传入新配置会更新，不需要新建会话。撤权、停用和用户禁用始终优先。</p>
+<pre><code class="language-js">const run = await $AE.agents.run({
+  modelId,
+  identity: { name: '需求审查员', description: '查找遗漏与相互冲突的约束' },
+  systemPrompt: '引用可验证依据，区分事实和建议。',
+  task: '检查当前工作区的需求，生成审查报告。',
+  skillIds: selectedSkillIds,
+  mcpServerIds: selectedServerIds
+});
+</code></pre>
+<h3 id="agents-tools"><code>$AE.agents.tools(args?)</code></h3>
+<p>查询真实工具名称、说明、JSON Schema、来源和当前可用状态。需要 <code>agents.read</code>；不启动模型、不执行工具。</p>
+<pre><code class="language-ts">$AE.agents.tools(args?: AetherPluginAgentConfiguration): Promise&lt;{
+  tools: Array&lt;{
+    name: string; description: string; parameters: Args;
+    source: 'engine' | 'skill' | 'mcp' | 'plugin';
+    enabled: boolean; available: boolean; reason?: string;
+  }&gt;;
+}&gt;
+</code></pre>
+<p><code>args</code> 接受与 run 相同的身份、提示词、<code>skillIds</code>、<code>mcpServerIds</code>、<code>disabledTools</code>、<code>customTools</code>。不接受任务或模型字段。可先查询、再把同一配置传给 run/stream。<code>enabled</code> 表示配置是否启用；<code>available</code> 表示当前授权和调用入口是否支持，不保证命令或语言服务等运行依赖已就绪；不可用原因在 <code>reason</code>。</p>
+<p>用户在插件管理 → 权限 → Agent 工具中可搜索和逐项开关。用户禁用名单独立保存；插件设置和请求不能把用户禁用的工具重新开启。工具开关控制准确的工具名：关闭 <code>write_file</code> 不会同时关闭 <code>execute_cmd</code>，也不改变插件代码通过 <code>$AE.workspace.write()</code> 或 Node 进行文件访问的权限。需要收回某类访问时，同时调整对应能力和工具。<code>disabledTools</code> 可追加本次任务不需要的工具，执行时同样拦截，不能用 <code>load_tools</code> 绕过。</p>
+<pre><code class="language-js">const configuration = {
+  disabledTools: ['execute_cmd', 'delete_file'],
+  customTools: [{ name: 'inspect_requirement', tool: 'review' }]
+};
+const { tools } = await $AE.agents.tools(configuration);
+const enabled = tools.filter(tool =&gt; tool.enabled &amp;&amp; tool.available);
+const run = await $AE.agents.stream({ modelId, task: '审查需求并汇总结果', ...configuration }, {
+  onEvent(event) { if (event.type === 'text-delta') output.append(event.text); }
+});
+</code></pre>
+<p><code>customTools</code> 的 <code>tool</code> 引用当前插件 <code>manifest.tools</code> 已声明的本地 Node 工具，<code>name</code> 是提供给模型的名称。说明、参数和执行入口取自清单，不需重复编写 schema。名称须满足模型工具命名规则且不能冲突；执行使用相同插件版本、绑定会话、工作区和实时授权。工具返回的产物按正常插件产物处理。不接受可执行函数字符串。</p>
+<h4>插件代码与显式扩展</h4>
+<p><code>$AE.session</code>、<code>$AE.ai</code>、<code>$AE.workspace</code>、<code>$AE.knowledge</code>、<code>$AE.settings</code> 等接口继续供插件代码直接调用，并分别检查授权；授权不会自动向 Agent 注入 <code>ae_*</code> 工具。</p>
+<p>开发者可用 <code>mcpServerIds</code> 显式挂载外部 MCP，或用 <code>customTools</code> 挂载本插件声明的工具。这些是开发者选择的扩展，参数与执行仍按各自权限校验。</p>
+<h4 id="engine-tool-catalogue">六类内置工具 · 33 个</h4>
+<p>以下为插件 Agent 的完整内置范围。<code>engine.tools</code> 授权后按需加载，用户仍可逐项禁用。工具目录以 <code>agents.tools()</code> 返回的实际状态为准；主会话 Agent 的工具配置与本表不同。</p>
+<p>已授权、未禁用工具且未挂载扩展的新任务，首轮向模型提供 16 个工具定义；其余通过 <code>load_tools</code> 按需加载。续跑历史、禁用设置与显式扩展会影响本轮实际定义数量。</p>
+<table><thead><tr><th>类别</th><th>工具名称</th></tr></thead><tbody>
+<tr><td>文件</td><td><code>read_file</code>、<code>write_file</code>、<code>edit_file</code>、<code>list_files</code>、<code>delete_file</code>、<code>create_dir</code></td></tr>
+<tr><td>命令</td><td><code>execute_cmd</code>、<code>command_output</code>、<code>cancel_command</code></td></tr>
+<tr><td>交互与计划</td><td><code>ask_user</code>、<code>plan_update</code>、<code>load_tools</code></td></tr>
+<tr><td>搜索</td><td><code>glob</code>、<code>grep</code>、<code>web_fetch</code>、<code>http_request</code>、<code>search_history</code>、<code>code_diagnose</code>、<code>codegraph</code></td></tr>
+<tr><td>子代理与协作</td><td><code>subagent</code>、<code>subagent_start</code>、<code>subagent_send</code>、<code>subagent_wait</code>、<code>subagent_cancel</code>、<code>subagent_participants</code>、<code>subagent_inbox</code>、<code>subagent_read_result</code>、<code>subagent_directory</code>、<code>subagent_followup</code>、<code>subagent_request_input</code></td></tr>
+<tr><td>Skill</td><td><code>list_skills</code>、<code>get_skill</code>、<code>run_skill_script</code></td></tr>
+</tbody></table>
+<h3 id="agents-stream"><code>$AE.agents.stream(args, options?)</code> · 流式输出与进度</h3>
+<p>通过 <code>onEvent</code> 逐段接收 <code>text-delta</code> 正文和工具执行进度；本次流结束后，Promise 返回 <code>AgentRun</code>。参数、身份配置、挂载和权限与后台任务 <code>agents.run()</code> 相同；回调及取消方式与 <code>ai.stream()</code> 相同。</p>
+<pre><code class="language-ts">$AE.agents.stream(args: AetherPluginAgentInput,
+  options?: AetherPluginStreamOptions&lt;AetherPluginAgentRun&gt;
+): Promise&lt;AetherPluginAgentRun&gt;
+</code></pre>
+<p><code>started</code> 提供本段 <code>runId</code> 和 <code>childSessionId</code>；<code>text-delta</code> 是本次运行的可见正文，<code>tool-start</code> / <code>tool-end</code> 只包含工具名和进度，不包含参数、工具结果或内部推理。失败终态拒绝 Promise。最终 <code>result</code> 仍是任务快照中的有界摘要；需要完整本次显示正文时自行拼接增量。此接口启动或续跑任务，不能订阅一个已在运行的 <code>runId</code>。</p>
+<p><strong>用户确认与问答：</strong><code>pending</code> 事件包含 <code>{ type: 'pending', runId, childSessionId, pending: AgentPending }</code>。插件页面调用 <code>agents.stream()</code> 时，Aether 在插件页面外显示确认或问答卡；用户答复后继续同一个 Promise 和事件回调，开发者无需拼接第二次调用。后续 <code>started</code> 提供新 <code>runId</code>，<code>childSessionId</code> 不变。取消请使用同一个 <code>AbortController</code>，或保存最新 <code>runId</code> 调用 <code>agents.cancel()</code>。若收到源码正在变化的提示，插件宿主提供手动重新检查或停止，不自动替用户选择。</p>
+<p><strong>后台与 Node：</strong>后台 <code>agents.run()</code> 通过 <code>status()</code> 返回 <code>blocked</code> 和 <code>pending</code>；Node 的 <code>agents.stream()</code> 在本段等待用户时返回相同快照。因此 <code>complete</code> 表示这次调用结束，仍须检查 <code>result.status</code>；只有 <code>succeeded</code> 表示任务成功。Node 和插件脚本不能代替用户批准；需要交互的任务优先从插件页面调用 <code>agents.stream()</code>。页面的宿主确认流程不会把中间 <code>blocked</code> 当作最终结果发给页面回调。</p>
+<p>流式运行不设插件专属时限；关闭页面、停止、撤权或断开连接会取消本次 Agent，已完成的外部操作不会回滚。需要跨页面长时间运行时使用 <code>agents.run()</code> 并查询 <code>status()</code>。</p>
+<pre><code class="language-js">let runId;
+const run = await $AE.agents.stream({ modelId, task: '检查工作区并保存审查报告。' }, {
+  signal: controller.signal,
+  onEvent(event) {
+    if (event.type === 'started') runId = event.runId;
+    if (event.type === 'text-delta') preview.appendData(event.text);
+    if (event.type === 'pending') status.textContent = '等待用户答复';
+    if (event.type === 'tool-start') status.textContent = '正在使用 ' + event.toolName;
+  }
+});
+</code></pre>
+<h3 id="agents-example">示例：检查工作区并保存报告</h3>
+<p>在清单中声明并授权以下能力，绑定工作区后运行。<code>selectedMessageIds</code> 是页面上用户选择的消息 ID；插件先读取这些消息，再交给 Agent 使用内置文件工具检查工作区。模型使用配置 <code>id</code>。</p>
+<pre><code class="language-json">{ "permissions": { "requested": ["models.read", "session.read", "agents.manage", "agents.read", "engine.tools"] } }
+</code></pre>
+<pre><code class="language-js">const { models } = await $AE.models.list();
+if (!models.length) throw new Error('请先配置并启用模型');
+const modelId = models[0].id;
+const { messages } = await $AE.session.messages({ ids: selectedMessageIds });
+let run = await $AE.agents.run({
+  modelId,
+  description: '检查工作区需求',
+  task: '根据以下所选会话内容，列出当前工作区、读取 README.md，检查需求是否完整。'
+    + '使用文件工具把报告写入 reports/review.md，并说明依据。\n'
+    + JSON.stringify(messages)
+});
+// 保存 runId，页面重开后也可以查询本插件在同一会话中的任务。
+const runId = run.runId;
+const pending = new Set(['queued', 'running', 'cancelling']);
+for (let attempt = 0; attempt &lt; 60 &amp;&amp; pending.has(run.status); attempt++) {
+  await new Promise(resolve =&gt; setTimeout(resolve, 1000));
+  run = await $AE.agents.status({ runId });
+}
+if (run.status === 'succeeded') {
+  console.log(run.result);
+} else if (pending.has(run.status)) {
+  console.log('任务仍在运行，稍后使用 runId 查询：', runId);
+} else {
+  console.log(run.status, run.error?.message || run.result);
+}
+</code></pre>
+<p>示例最多等待约一分钟；停止查询不会取消任务。用户点击取消时调用 <code>agents.cancel({runId})</code>。已结束后可传入 <code>resumeRunId</code> 接续，继续查询新返回的 <code>runId</code>。可在生成的 <code>aether-sdk.d.ts</code> 中使用 <code>AetherPluginAgentRun</code> 检查任务返回字段。</p>
+<pre><code class="language-js">// 使用最新执行的 ID 接续；后续查询和再次接续都更新为新返回的 ID。
+run = await $AE.agents.run({
+  modelId,
+  resumeRunId: run.runId,
+  task: '根据已有检查结果补充验证并更新报告。'
+});
+</code></pre>
+<p>插件接口仍要求明确的 <code>task</code>，通过原插件宿主接续并检查当前权限。会话界面的「继续」控制不替代插件接口，也不能接管插件 Agent 或自动答复其待处理确认。</p>
+<h3 id="agents-status"><code>$AE.agents.status(args)</code></h3>
+<p>读取指定 Agent 任务的最新快照。</p>
+<pre><code class="language-ts">$AE.agents.status(args: { runId: string }): Promise&lt;AgentRun&gt;
+</code></pre>
+<p><strong>权限：</strong><code>agents.read</code>。<strong>参数：</strong><code>runId</code> 为任务返回的 UUID。<strong>返回：</strong>状态、结果摘要、用量和工具计数；任务不属于当前插件与会话时会报错。</p>
+<pre><code class="language-js">const current = await $AE.agents.status({ runId: run.runId });
+</code></pre>
+<h3 id="agents-cancel"><code>$AE.agents.cancel(args)</code></h3>
+<p>请求取消当前插件与会话中的指定任务。</p>
+<pre><code class="language-ts">$AE.agents.cancel(args: { runId: string }): Promise&lt;AgentRun&gt;
+</code></pre>
+<p><strong>权限：</strong><code>agents.manage</code>。<strong>参数：</strong><code>runId</code> 为任务返回的 UUID。<strong>返回：</strong>取消请求处理后的快照；以返回状态或后续 <code>status()</code> 查询确认最终状态。取消不撤销任务已经完成的文件写入或其他操作。</p>
+<pre><code class="language-js">const stopped = await $AE.agents.cancel({ runId: run.runId });
+</code></pre>
+<h2 id="workspace">工作区</h2>
+<p>必须绑定会话。路径相对当前绑定工作区；SDK 拒绝越界路径，以及经符号链接或联接点访问文件。绝对路径也必须位于同一工作区。切换工作区后旧绑定不能继续使用。</p>
+<h3 id="workspace-list"><code>$AE.workspace.list(args?)</code></h3>
+<p>读取工作区内一个目录的直接子项。</p>
+<pre><code class="language-ts">$AE.workspace.list(args?: { path?: string }): Promise&lt;{
+  entries: Array&lt;{ name: string; type: &#39;file&#39; | &#39;directory&#39; | &#39;link&#39;; path: string }&gt;;
+}&gt;
+</code></pre>
+<p><strong>权限：</strong><code>workspace.read</code>。<strong>参数：</strong><code>path</code> 默认 <code>&#39;.&#39;</code>，最长 4,096 字符。<strong>返回：</strong>子项名称、类型和相对工作区路径，路径使用 <code>/</code>。不递归；<code>link</code> 项可以列出，但不能经由它继续读写。</p>
+<pre><code class="language-js">const { entries } = await $AE.workspace.list({ path: &#39;docs&#39; });
+</code></pre>
+<h3 id="workspace-read"><code>$AE.workspace.read(args)</code></h3>
+<p>以 UTF-8 文本读取一个工作区文件。</p>
+<pre><code class="language-ts">$AE.workspace.read(args: { path: string }): Promise&lt;{ path: string; content: string; size: number }&gt;
+</code></pre>
+<p><strong>权限：</strong><code>workspace.read</code>。<strong>参数：</strong><code>path</code> 为文件路径，最长 4,096 字符。<strong>返回：</strong>请求路径、文本和文件字节数；支持普通文本文件，不提供二进制或分段读取。</p>
+<pre><code class="language-js">const { content } = await $AE.workspace.read({ path: &#39;docs/requirements.md&#39; });
+</code></pre>
+<h3 id="workspace-write"><code>$AE.workspace.write(args)</code></h3>
+<p>以 UTF-8 文本创建或覆盖一个工作区文件。</p>
+<pre><code class="language-ts">$AE.workspace.write(args: { path: string; content: string }): Promise&lt;{ path: string; written: boolean }&gt;
+</code></pre>
+<p><strong>权限：</strong><code>workspace.write</code>。<strong>参数：</strong><code>path</code> 最长 4,096 字符，<code>content</code> 为文本，可以为空。<strong>返回：</strong>请求路径与写入结果。缺少的父目录会创建，已有文件整体覆盖；没有追加、删除或重命名选项。</p>
+<pre><code class="language-js">await $AE.workspace.write({ path: &#39;reports/review.md&#39;, content: report });
+</code></pre>
+<h2 id="knowledge">知识库</h2>
+<p>知识数据限当前用户空间，不要求绑定会话；<code>knowledge.read</code> / <code>knowledge.write</code> 分别控制下列读写方法。时间字段使用 Unix <strong>秒</strong>。</p>
+<pre><code class="language-ts">type KnowledgeBase = {
+  id: string; revision: number; tenantId: string;
+  name: string; description: string; documentCount: number;
+  createdAt: number; updatedAt: number;
+};
+type KnowledgeDocument = {
+  id: string; revision: number; tenantId: string;
+  knowledgeBaseId: string | null; filename: string; contentType: string;
+  chunkCount: number; status: &#39;ready&#39;; contentExact: boolean;
+  createdAt: number; updatedAt: number; content: string;
+};
+type KnowledgeMatch = {
+  chunkId: string; documentId: string; knowledgeBaseId: string | null;
+  filename: string; content: string; score: number; chunkIndex: number;
+};
+</code></pre>
+<h3 id="knowledge-list"><code>$AE.knowledge.list()</code></h3>
+<p>列出知识库及各知识库的文档数量。</p>
+<pre><code class="language-ts">$AE.knowledge.list(): Promise&lt;{ bases: KnowledgeBase[] }&gt;
+</code></pre>
+<p><strong>权限：</strong><code>knowledge.read</code>。<strong>参数：</strong>无。<strong>返回：</strong>知识库摘要，按最近更新时间排列；此方法不列出文档，也不返回正文。</p>
+<pre><code class="language-js">const { bases } = await $AE.knowledge.list();
+</code></pre>
+<h3 id="knowledge-search"><code>$AE.knowledge.search(args)</code></h3>
+<p>在知识内容中检索相关文本片段。</p>
+<pre><code class="language-ts">$AE.knowledge.search(args: {
+  query: string; limit?: number; knowledgeBaseIds?: string[];
+}): Promise&lt;{ results: KnowledgeMatch[] }&gt;
+</code></pre>
+<p><strong>权限：</strong><code>knowledge.read</code>。<strong>参数：</strong><code>query</code> 为非空文本；<code>limit</code> 为正整数，默认 <code>5</code>。<code>knowledgeBaseIds</code> 每个为 1–4,096 字符，可填知识库 ID 或文档 ID；省略时搜索当前用户空间的全部知识文档，空数组返回空结果。</p>
+<p><strong>返回：</strong>匹配的文本片段，包含所属文档和知识库 ID。<code>score</code> 是检索得分，不是百分比或置信度；需要全文时用 <code>documentId</code> 调用 <code>get()</code>。</p>
+<pre><code class="language-js">const { results } = await $AE.knowledge.search({ query: &#39;验收标准&#39;, limit: 5 });
+</code></pre>
+<h3 id="knowledge-get"><code>$AE.knowledge.get(args)</code></h3>
+<p>读取一份知识文档的正文和元数据。</p>
+<pre><code class="language-ts">$AE.knowledge.get(args: { id: string }): Promise&lt;KnowledgeDocument | null&gt;
+</code></pre>
+<p><strong>权限：</strong><code>knowledge.read</code>。<strong>参数：</strong><code>id</code> 是文档 ID，而非知识库 ID，为 1–4,096 字符。<strong>返回：</strong>完整文档或 <code>null</code>；<code>contentExact: false</code> 表示旧文档正文由已有片段重建，不能视为原文的精确副本。</p>
+<pre><code class="language-js">const document = await $AE.knowledge.get({ id: results[0].documentId });
+</code></pre>
+<h3 id="knowledge-create"><code>$AE.knowledge.create(args)</code></h3>
+<p>创建一份可检索的纯文本知识文档。</p>
+<pre><code class="language-ts">$AE.knowledge.create(args: {
+  filename: string; content: string; knowledgeBaseId?: string;
+}): Promise&lt;KnowledgeDocument&gt;
+</code></pre>
+<p><strong>权限：</strong><code>knowledge.write</code>。<strong>参数：</strong><code>filename</code> 为 1–4,096 字符，<code>content</code> 为非空文本。<code>knowledgeBaseId</code> 为 1–4,096 字符，指定已有知识库，省略时文档不归属某个知识库。</p>
+<p><strong>返回：</strong>新文档，<code>contentType</code> 为 <code>&#39;text/plain&#39;</code>，带文档 ID 和版本号。此方法创建文档，不创建知识库，也不按同名文件覆盖已有文档。</p>
+<pre><code class="language-js">const document = await $AE.knowledge.create({ filename: &#39;review.md&#39;, content: report });
+</code></pre>
+<h3 id="knowledge-update"><code>$AE.knowledge.update(args)</code></h3>
+<p>替换知识文档的全文并更新检索内容。</p>
+<pre><code class="language-ts">$AE.knowledge.update(args: {
+  id: string; content: string; expectedRevision?: number;
+}): Promise&lt;KnowledgeDocument | null&gt;
+</code></pre>
+<p><strong>权限：</strong><code>knowledge.write</code>。<strong>参数：</strong><code>id</code> 是文档 ID，为 1–4,096 字符，<code>content</code> 为非空文本。<code>expectedRevision</code> 是可选正整数；传入先前读到的 <code>revision</code> 可避免覆盖并发修改。</p>
+<p><strong>返回：</strong>更新后的文档，版本号递增；未找到文档且未指定版本检查时返回 <code>null</code>。版本不匹配会报错。此方法不修改文件名或所属知识库。</p>
+<pre><code class="language-js">await $AE.knowledge.update({ id: document.id, content: report, expectedRevision: document.revision });
+</code></pre>
+<h2 id="mcp">MCP</h2>
+<p>必须绑定会话，使用当前工作区可用的已启用服务。SDK 不暴露服务连接凭据，也不安装或启用新服务。</p>
+<h3 id="mcp-list"><code>$AE.mcp.list()</code></h3>
+<p>列出当前可用的 MCP 服务摘要。</p>
+<pre><code class="language-ts">$AE.mcp.list(): Promise&lt;{ servers: Array&lt;{ id: string; name: string; description: string }&gt; }&gt;
+</code></pre>
+<p><strong>权限：</strong><code>mcp.read</code>。<strong>参数：</strong>无。<strong>返回：</strong>服务 ID、名称和描述；不包含工具目录、参数 schema 或连接状态探测结果。</p>
+<pre><code class="language-js">const { servers } = await $AE.mcp.list();
+</code></pre>
+<h3 id="mcp-tools"><code>$AE.mcp.tools(args)</code></h3>
+<p>连接一个已启用服务，读取当前可用工具及其真实参数定义。</p>
+<pre><code class="language-ts">$AE.mcp.tools(args: { serverId: string }): Promise&lt;{
+  tools: Array&lt;{ name: string; description?: string; inputSchema: Args }&gt;;
+}&gt;
+</code></pre>
+<p><strong>权限：</strong><code>mcp.read</code>，必须绑定会话。<strong>参数：</strong><code>serverId</code> 使用 <code>mcp.list()</code> 的 ID，为 1–4,096 字符。<strong>返回：</strong>已启用工具的名称、说明和 JSON Schema；不返回凭据，被禁用工具不会出现在列表中。服务连接失败会报错。</p>
+<pre><code class="language-js">const { tools } = await $AE.mcp.tools({ serverId });
+</code></pre>
+<h3 id="mcp-call"><code>$AE.mcp.call(args)</code></h3>
+<p>调用一个已启用 MCP 服务中的工具。</p>
+<pre><code class="language-ts">$AE.mcp.call(args: { serverId: string; tool: string; arguments?: Args }): Promise&lt;{ output: string }&gt;
+</code></pre>
+<p><strong>权限：</strong><code>mcp.invoke</code>。<strong>参数：</strong><code>serverId</code> 是服务 ID；<code>tool</code> 是该服务真实工具名，两者均为 1–4,096 字符。<code>arguments</code> 默认 <code>{}</code>，需符合该工具自身的接口。</p>
+<p><strong>返回：</strong>工具输出文本。未启用服务、被禁用工具或平台策略拒绝都会报错；SDK 不绕过这些限制。工具名称与参数从 <code>mcp.tools()</code> 或该服务公开说明取得。</p>
+<pre><code class="language-js">const { output } = await $AE.mcp.call({ serverId, tool: toolName, arguments: toolArgs });
+</code></pre>
+<h2 id="settings">插件设置</h2>
+<p>设置按插件和当前用户空间隔离，不含平台模型密钥或全局安全配置。已安装插件的设置会持久保存；开发预览的设置仅属于当前开发会话。</p>
+<h3 id="settings-get"><code>$AE.settings.get()</code></h3>
+<p>读取当前插件自己的设置对象。</p>
+<pre><code class="language-ts">$AE.settings.get(): Promise&lt;Args&gt;
+</code></pre>
+<p><strong>权限：</strong><code>settings.read</code>。<strong>参数：</strong>无。<strong>返回：</strong>完整设置对象，未保存过时为 <code>{}</code>。</p>
+<pre><code class="language-js">const settings = await $AE.settings.get();
+</code></pre>
+<h3 id="settings-set"><code>$AE.settings.set(args)</code></h3>
+<p>整体保存当前插件的设置对象。</p>
+<pre><code class="language-ts">$AE.settings.set(args: { value: Args }): Promise&lt;Args&gt;
+</code></pre>
+<p><strong>权限：</strong><code>settings.write</code>。<strong>参数：</strong><code>value</code> 必须是 JSON 对象。<strong>返回：</strong>保存后的完整对象。此次写入会替换旧对象；要保留其他字段，先读取再合并，另需 <code>settings.read</code>。</p>
+<pre><code class="language-js">await $AE.settings.set({ value: { ...settings, modelId, rubric: &#39;准确性与完整性&#39; } });
+</code></pre>
+<h2 id="call"><code>$AE.call(capability, method, args?)</code></h2>
+<p>直接调用一个已公开的宿主能力方法，与对应的便捷方法使用同一权限和参数检查。</p>
+<pre><code class="language-ts">$AE.call(capability: string, method: string, args?: Args): Promise&lt;unknown&gt;
+</code></pre>
+<p><strong>参数：</strong><code>capability</code> 是能力 ID，<code>method</code> 是该能力的方法名，为 1–40 字符，<code>args</code> 默认 <code>{}</code>。例如 <code>models.read</code> + <code>list</code> 对应 <code>models.list()</code>，<code>workspace.write</code> + <code>write</code> 对应 <code>workspace.write()</code>。</p>
+<p><strong>权限与返回：</strong>与上文对应方法完全一致。此方法不能注册新能力、提升权限、访问未公开方法或更换绑定会话。常规开发优先使用便捷方法；<code>call()</code> 的返回类型需由调用方按目标接口处理。</p>
+<pre><code class="language-js">const result = await $AE.call(&#39;models.read&#39;, &#39;list&#39;);
+</code></pre>

@@ -8,6 +8,7 @@ import { openAppSettings } from '@renderer/features/settings/app-settings-naviga
 import { AccountMenu } from '@renderer/features/account/AccountMenu'
 import { Icon } from '@renderer/ui/icons'
 import brandIcon from '@renderer/assets/icon.png'
+import { useExtensionContext, useExtensionMenuItems } from '@renderer/features/extensions'
 import '../ui/menu-bar.css'
 import {
   getUserKeybindingRules,
@@ -17,6 +18,7 @@ import {
 interface MenuEntry {
   label: string
   command: string
+  onSelect?: () => void
 }
 interface Menu {
   label: string
@@ -117,7 +119,9 @@ export function MenuBar(): JSX.Element {
       if (dropdownRef.current?.contains(document.activeElement)) triggerRef.current?.focus()
       setOpen(null)
     }, restoreFocus: false })
-  const menus = SESSION_MENUS
+  const extensionContext = useExtensionContext()
+  const extensionItems = useExtensionMenuItems('app.menu', extensionContext)
+  const menus = extensionItems.length ? [...SESSION_MENUS, { label: '插件', items: extensionItems.map(item => ({ label: item.label, command: item.id, onSelect: item.onSelect })) }] : SESSION_MENUS
   // 订阅用户键位变化：自定义快捷键后菜单提示立即跟随
   useSyncExternalStore(onUserKeybindingsChanged, getUserKeybindingRules)
 
@@ -163,7 +167,7 @@ export function MenuBar(): JSX.Element {
               }
             }}
           >
-            {menu.label}
+            <span className="menu-bar__label">{menu.label}</span>
           </button>
         </div>
       ))}
@@ -172,7 +176,7 @@ export function MenuBar(): JSX.Element {
         aria-label={COMPACT_MENU} aria-haspopup="menu" aria-expanded={open?.label === COMPACT_MENU}
         onClick={event => toggleMenu(event.currentTarget, COMPACT_MENU)}
         onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); toggleMenu(event.currentTarget, COMPACT_MENU, true) } }}>
-        菜单 <Icon name="chevron-down" size={12} />
+        <span className="menu-bar__label">菜单</span><Icon name="chevron-down" size={12} />
       </button>
       {/* 下拉 portal 到 body：菜单栏自身带 backdrop-filter，是 backdrop root，
           嵌在里面的模糊浮层采不到栏下方的真实内容（只能采到栏自己的半透明底色），
@@ -215,7 +219,7 @@ export function MenuBar(): JSX.Element {
                   className="menu-bar__item"
                   onClick={() => {
                     setOpen(null)
-                    void executeCommand(item.command)
+                    if (item.onSelect) item.onSelect(); else void executeCommand(item.command)
                   }}
                 >
                   <span>{item.label}</span>

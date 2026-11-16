@@ -18,7 +18,7 @@ import './security-settings.css'
 const MODE_SUMMARIES: Record<SecurityMode, string> = {
   safe: '检查命令与工作区路径；高危命令拒绝，未知命令询问。',
   standard: '普通命令直接执行，命中拒绝规则或注入检测时询问。',
-  'full-access': '所有命令直接执行，跳过策略与白名单，保留审计日志。'
+  'full-access': '本会话操作确认自动通过；提问仍需回答，保留审计日志。'
 }
 const ACTION_OPTIONS = (Object.keys(ACTION_LABELS) as PolicyAction[]).map(value => ({ value, label: ACTION_LABELS[value] }))
 
@@ -184,8 +184,8 @@ function SecuritySettingsContent({ source }: { source: number }): JSX.Element {
       </div>
       <details className="resource-disclosure security-explanation"><summary>规则如何生效</summary><div>
         <p>优先级数值越小越先匹配，命中第一条规则后生效。「*」匹配所有命令，参数支持正则表达式。</p>
-        <p>安全模式按规则执行；标准模式将「询问」转为放行、「拒绝」转为询问；完全访问跳过所有规则。</p>
-        <p>对话中的授权卡片也可切换本会话模式。已批准的命令会加入会话白名单，相同参数不再重复询问。</p>
+        <p>安全模式按规则执行；标准模式将「询问」转为放行、「拒绝」转为询问；完全访问让本会话的操作确认自动通过，提问仍需你回答。</p>
+        <p>对话中的「完全访问并放行」会先切换本会话模式，再放行当前操作，不影响其他会话。单次批准的命令会加入会话白名单，相同参数不再重复询问。</p>
       </div></details>
     </section>
     {selectedDetail ? <Dialog title="规则详情" width={600} className="resource-editor security-rule-detail" onClose={() => setDetail(null)}

@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { NextTurnQueueError, type FrozenQueueSubmission, type NextTurnQueueScope } from '../shared/next-turn-queue'
+import { NextTurnQueueError, type FrozenQueueSubmission, type NextTurnQueueScope, type QueueAdmissionReceipt } from '../shared/next-turn-queue'
 
 export const SESSION_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 })
 export const CODE_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 })
 export const queueTransport = (owner: NextTurnQueueScope['owner']) => owner === 'code' ? CODE_QUEUE_TRANSPORT : SESSION_QUEUE_TRANSPORT
 export interface AdmissionOutcomeRoot {
   runId: string; version: number
+  attemptId?: string; turnId?: string
   startedAt?: number
   status: 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   workspacePaths: string[]; modelId?: string; agentId?: string
@@ -29,6 +30,8 @@ function parseAdmissionOutcomeRoot(value: unknown): AdmissionOutcomeRoot {
   if (!Array.isArray(item.workspacePaths) || item.workspacePaths.some(path => typeof path !== 'string')) fail('Root workspace is unavailable')
   if (item.startedAt !== undefined && (!Number.isSafeInteger(item.startedAt) || Number(item.startedAt) < 1)) fail('Root execution start is invalid')
   return { runId: identity(item.runId), version: version(item.version),
+    ...(item.attemptId === undefined ? {} : { attemptId: identity(item.attemptId) }),
+    ...(item.turnId === undefined ? {} : { turnId: identity(item.turnId) }),
     ...(item.startedAt === undefined ? {} : { startedAt: Number(item.startedAt) }),
     status: status as AdmissionRoot['status'], workspacePaths: [...item.workspacePaths],
     ...(item.modelId === undefined ? {} : { modelId: identity(item.modelId) }),
@@ -76,6 +79,14 @@ export function canonicalAdmissionJson(value: unknown): string {
 }
 export function freezeQueueRequest(scope: NextTurnQueueScope, body: Record<string, unknown>, entryRevision: number, anchor: FrozenQueueSubmission['anchor']): FrozenQueueSubmission {
   if (body.sessionId !== scope.taskId || body.admission !== undefined) fail('Queue request belongs to another task')
+  if (body.continuation !== undefined) {
+    const selector = continuationSelector(scope, body.continuation, anchor)
+    if (Object.keys(body).some(key => !['sessionId', 'continuation'].includes(key))) fail('Continuation cannot replay a user message or settings')
+    const bodyDigest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: queueTransport(scope.owner), body: { sessionId: scope.taskId } })).digest('hex')
+    const requestKey = randomUUID()
+    return { requestKey, bodyDigest, entryRevision, anchor,
+      wireBody: canonicalAdmissionJson({ sessionId: scope.taskId, continuation: { ...selector, requestKey, bodyDigest } }) }
+  }
   const selector = { protocolVersion: 1, namespace: scope.namespace, owner: scope.owner, predecessor: anchor }
   const bodyDigest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: queueTransport(scope.owner), body })).digest('hex')
   const requestKey = randomUUID()
@@ -83,7 +94,17 @@ export function freezeQueueRequest(scope: NextTurnQueueScope, body: Record<strin
 }
 export function assertFrozenQueueRequest(scope: NextTurnQueueScope, frozen: FrozenQueueSubmission): string {
   if (!frozen.wireBody) fail('旧队列项缺少完整请求，需人工核对；不会自动重发')
-  const body = record(JSON.parse(frozen.wireBody)), admission = record(body.admission)
+  const body = record(JSON.parse(frozen.wireBody))
+  if (body.continuation !== undefined) {
+    const continuation = record(body.continuation)
+    const { requestKey, bodyDigest, ...source } = continuation
+    const selector = continuationSelector(scope, source, frozen.anchor)
+    const digest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: queueTransport(scope.owner), body: { sessionId: scope.taskId } })).digest('hex')
+    if (Object.keys(body).some(key => !['sessionId', 'continuation'].includes(key)) || body.sessionId !== scope.taskId ||
+      requestKey !== frozen.requestKey || bodyDigest !== frozen.bodyDigest || digest !== frozen.bodyDigest) fail('Frozen continuation integrity failed')
+    return frozen.wireBody
+  }
+  const admission = record(body.admission)
   const { admission: _admission, ...request } = body
   const selector = { protocolVersion: 1, namespace: scope.namespace, owner: scope.owner, predecessor: frozen.anchor }
   const digest = createHash('sha256').update(canonicalAdmissionJson({ selector, transport: queueTransport(scope.owner), body: request })).digest('hex')
@@ -91,7 +112,40 @@ export function assertFrozenQueueRequest(scope: NextTurnQueueScope, frozen: Froz
     || digest !== frozen.bodyDigest || canonicalAdmissionJson(admission) !== canonicalAdmissionJson({ ...selector, requestKey: frozen.requestKey, bodyDigest: frozen.bodyDigest })) fail('Frozen queue request integrity failed')
   return frozen.wireBody
 }
-export type ExactAdmission = { status: 'absent' } | { status: 'accepted'; root: AdmissionOutcomeRoot; receipt: { runId: string; turnId: string; userMessageId: string; assistantMessageId: string } }
+function continuationSelector(scope: NextTurnQueueScope, value: unknown, anchor: FrozenQueueSubmission['anchor']) {
+  const item = record(value)
+  const selector = { protocolVersion: 1, namespace: scope.namespace, owner: scope.owner, predecessor: anchor, turnId: identity(item.turnId),
+    ...(item.childRunId === undefined ? {} : { childRunId: identity(item.childRunId) }) }
+  if (!anchor || canonicalAdmissionJson(selector) !== canonicalAdmissionJson(item)) fail('Continuation does not match its exact source attempt')
+  return selector
+}
+export function isFrozenContinuation(frozen: FrozenQueueSubmission): boolean {
+  return Boolean(frozen.wireBody && record(JSON.parse(frozen.wireBody)).continuation)
+}
+export type ExactAdmission = { status: 'absent' } | { status: 'accepted'; root: AdmissionOutcomeRoot; receipt: QueueAdmissionReceipt }
+export function parseExactContinuation(value: unknown, scope: NextTurnQueueScope, frozen: FrozenQueueSubmission): ExactAdmission {
+  assertFrozenQueueRequest(scope, frozen)
+  const source = record(record(JSON.parse(frozen.wireBody!)).continuation)
+  const item = record(value)
+  if (item.protocolVersion !== 1) fail('Continuation receipt protocol is unsupported')
+  if (item.status === 'absent') {
+    if (item.sessionId !== scope.taskId || item.requestKey !== frozen.requestKey || canonicalAdmissionJson(namespace(item.namespace)) !== canonicalAdmissionJson(scope.namespace)) fail('Continuation absence belongs to another scope')
+    return { status: 'absent' }
+  }
+  if (item.status !== 'accepted') fail('Continuation result is unavailable')
+  const receipt = record(item.receipt), run = record(item.run), root = parseAdmissionRoot(run)
+  for (const key of ['protocolVersion', 'namespace', 'owner', 'predecessor', 'turnId', 'requestKey', 'bodyDigest'])
+    if (canonicalAdmissionJson(receipt[key]) !== canonicalAdmissionJson(source[key])) fail('Continuation receipt does not match this exact request')
+  if (receipt.childRunId !== source.childRunId) fail('Continuation receipt targets another child')
+  if (!frozen.anchor || receipt.sessionId !== scope.taskId || run.sessionId !== scope.taskId || receipt.rootRunId !== frozen.anchor.runId ||
+    root.runId !== receipt.rootRunId || root.attemptId !== receipt.attemptId || receipt.previousAttemptId !== frozen.anchor.attemptId ||
+    receipt.attemptId === receipt.previousAttemptId || run.turnId !== source.turnId ||
+    receipt.assistantIdentityKind !== 'continuation-segment' || receipt.assistantMessageId !== run.assistantMessageId ||
+    receipt.userMessageId !== run.userMessageId || root.version < version(receipt.rootVersion)) fail('Continuation attempt/transcript identity mismatch')
+  identity(receipt.assistantAnchorId)
+  return { status: 'accepted', root, receipt: { runId: root.runId, turnId: identity(receipt.turnId),
+    userMessageId: identity(receipt.userMessageId), assistantMessageId: identity(receipt.assistantMessageId), attemptId: root.attemptId } }
+}
 export function parseExactAdmission(value: unknown, scope: NextTurnQueueScope, frozen: FrozenQueueSubmission): ExactAdmission {
   const item = record(value)
   if (item.protocolVersion !== 1) fail('Receipt protocol is unsupported')

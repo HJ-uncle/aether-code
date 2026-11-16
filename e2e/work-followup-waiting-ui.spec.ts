@@ -116,7 +116,7 @@ const server = createServer((request, response) => { void (async () => {
     const receipt = { messageId: `supplement-${supplements.length}`, rootRunId: current.runId, rootAttemptId: attempt,
       senderParticipantId: 'user', senderInvocationRunId: current.runId, recipientParticipantId: input.recipientParticipantId,
       requestKey: input.requestKey, payloadHash: createHash('sha256').update(String(input.message)).digest('hex'), payloadBytes: Buffer.byteLength(String(input.message)),
-      acceptedSeq: 1, acceptedAt: Date.now(), state: 'queued', delivery: { state: 'integrated', historyMessageId: `integrated-${supplements.length}`, integratedAt: Date.now() } }
+      acceptedSeq: 1, acceptedAt: Date.now(), state: 'queued', delivery: { state: 'pending' } }
     receipts.set(String(input.requestKey), receipt)
     response.end(envelope({ outcome: 'accepted', receipt })); return
   }
@@ -126,7 +126,7 @@ const server = createServer((request, response) => { void (async () => {
   }
   if (path === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
   if (path === '/api/v1/conversation/display') {
-    const rows = current?.sessionId === sessionId ? history : [], users = rows.filter(row => row.role === 'user')
+    const rows = current?.sessionId === sessionId ? history : [], users = rows.filter(row => row.role === 'user' && !row.metadata?.collaborationDelivery)
     response.end(envelope({ schemaVersion: 1, grouping: 'root', turns: users.map(row => ({ userMessageId: row.id,
       conversationId: row.conversationId, preview: row.content, createdAt: row.createdAt })), messages: rows,
       loadedTurnIds: users.map(row => row.id), revision: `follow-history-${rows.length}`, mutationRevision: 'stable', backend: 'jsonl', completeness: 'complete' })); return
@@ -243,6 +243,31 @@ test('审批等待禁用立即补充，恢复后草稿只发一次且使用新 a
   await expect.poll(() => supplements.length).toBe(1)
   expect(supplements[0]).toMatchObject({ input: { message: draft }, runId: 'follow-run-1', attempt: 'attempt-after-approval' })
   await expect(composer()).toHaveText('')
+  const receiptBubble = conversation().locator('.work-root-followup-receipt')
+  await expect(receiptBubble).toContainText(draft)
+  await expect(receiptBubble).toContainText('已送达，等待读取')
+  // A held tool/model iteration does not need to finish before the sent text
+  // is visible, and the normal assistant stream remains untouched.
+  appendContent('\nFOLLOW_STREAM_STILL_RUNNING')
+  await expect(conversation()).toContainText('FOLLOW_STREAM_STILL_RUNNING')
+  await expect(receiptBubble).toHaveCount(1)
+  await page.screenshot({ path: info.outputPath('supplement-awaiting-read.png') })
+  await page.evaluate(() => { document.documentElement.dataset.appearance = 'dark' })
+  await page.screenshot({ path: info.outputPath('supplement-awaiting-read-dark.png') })
+  await page.evaluate(() => { document.documentElement.dataset.appearance = 'light' })
+  const requestKey = String(supplements[0].input.requestKey), receipt = receipts.get(requestKey)!
+  receipt.delivery = { state: 'integrated', historyMessageId: 'integrated-1', integratedAt: Date.now() }
+  await expect(receiptBubble).toContainText('已加入上下文')
+  const delivered: EngineHistoryRow = { id: 'integrated-1', role: 'user', content: draft, createdAt: Number(receipt.acceptedAt),
+    conversationId: current!.turnId, metadata: { rootRunId: current!.runId, turnId: current!.turnId,
+      collaborationDelivery: { version: 1, source: 'user-controller', messageId: String(receipt.messageId), rootRunId: current!.runId, recipientInvocationRunId: current!.runId } } }
+  const previousAssistant = history.find(row => row.id === current!.assistantMessageId)!
+  previousAssistant.id = `segment:${current!.runId}:before:${delivered.id}`
+  history.push(delivered, { id: current!.assistantMessageId, role: 'assistant', content: '', createdAt: Date.now(),
+    conversationId: current!.turnId, metadata: { rootRunId: current!.runId, turnId: current!.turnId } })
+  publish({ userMessage: delivered })
+  await expect(receiptBubble).toHaveCount(0)
+  await expect(conversation().locator('.message__bubble').filter({ hasText: draft })).toHaveCount(1)
   expect(requests.filter(item => item.runStatus === 'waiting' && (item.path.endsWith('/controller-context') || item.method === 'POST' && item.path.endsWith('/messages')))).toEqual([])
 
   finishRun()

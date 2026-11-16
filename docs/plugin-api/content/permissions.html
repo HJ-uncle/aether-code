@@ -1,0 +1,105 @@
+<p>在清单中声明需要的权限，由用户在插件管理中单独或批量授权。</p>
+<pre><code class="language-json">{ &quot;permissions&quot;: { &quot;requested&quot;: [&quot;session.read&quot;, &quot;models.read&quot;, &quot;ai.run&quot;] } }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>权限</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>session.read</code></td>
+<td>读取绑定会话的消息</td>
+</tr>
+<tr>
+<td><code>models.read</code></td>
+<td>列出平台可用模型</td>
+</tr>
+<tr>
+<td><code>ai.run</code></td>
+<td>调用平台模型，包括实时输出</td>
+</tr>
+<tr>
+<td><code>skills.read</code></td>
+<td>查看技能目录和说明</td>
+</tr>
+<tr>
+<td><code>agents.read</code></td>
+<td>查看本插件的 Agent 任务和工具目录</td>
+</tr>
+<tr>
+<td><code>agents.manage</code></td>
+<td>启动、继续、流式运行和取消这些 Agent 任务；挂载能力另需对应授权</td>
+</tr>
+<tr>
+<td><code>engine.tools</code></td><td>向插件 Agent 开放文件、命令、交互与计划、搜索、子代理、Skill 六类内置工具；沿用会话安全策略和用户逐工具禁用设置</td></tr><tr>
+<td><code>workspace.read</code></td>
+<td>读取绑定工作区的目录和文本文件</td>
+</tr>
+<tr>
+<td><code>workspace.write</code></td>
+<td>创建或修改绑定工作区的文件</td>
+</tr>
+<tr>
+<td><code>knowledge.read</code></td>
+<td>查看、读取和搜索知识库</td>
+</tr>
+<tr>
+<td><code>knowledge.write</code></td>
+<td>新增或更新知识内容</td>
+</tr>
+<tr>
+<td><code>mcp.read</code></td>
+<td>查看可用 MCP 服务、工具名称和参数定义</td>
+</tr>
+<tr>
+<td><code>mcp.invoke</code></td>
+<td>调用已启用 MCP 工具</td>
+</tr>
+<tr>
+<td><code>settings.read</code></td>
+<td>读取本插件设置</td>
+</tr>
+<tr>
+<td><code>settings.write</code></td>
+<td>保存本插件设置</td>
+</tr>
+<tr>
+<td><code>ui.dialogs</code></td>
+<td>显示消息或确认对话框</td>
+</tr>
+<tr>
+<td><code>ui.notifications</code></td>
+<td>发送应用内及系统通知</td>
+</tr>
+<tr>
+<td><code>ui.clipboard</code></td>
+<td>读写文本剪贴板</td>
+</tr>
+<tr>
+<td><code>ui.editor</code></td>
+<td>获取当前代码预览和定位行列</td>
+</tr>
+<tr>
+<td><code>ui.composer</code></td>
+<td>读取、修改和提交当前输入框草稿</td>
+</tr>
+<tr>
+<td><code>events.subscribe</code></td>
+<td>订阅事件，或运行声明的 hooks</td>
+</tr>
+<tr>
+<td><code>background.run</code></td>
+<td>运行声明的后台周期任务</td>
+</tr>
+</tbody></table>
+<p>权限默认关闭。新增权限需要授权，发布新修订后需要重新授权；开发模式刷新同一个插件时，保留仍声明的已授权权限。停用、撤权和旧页面失效后，后续调用会被拒绝。</p>
+<h2 id="session-approval">会话操作确认</h2>
+<p>通过会话中的 Agent 创建、修改、测试或发布插件时，默认会先展示操作确认。点击「完全访问并放行」后，当前操作继续执行，当前会话后续的操作确认自动通过；其他会话不受影响。切回标准模式或安全模式后，新的操作恢复对应模式的审批与限制。</p>
+<p>需要补充内容或选择方案的提问仍需用户回答。完全访问不会替插件开启本页列出的权限，也不会跳过参数、角色和版本冲突检查；插件自行显示的交互对话框仍由插件决定。</p>
+<p>会话与工作区由打开插件的入口绑定，不能通过业务参数指定另一个会话。<code>context()</code>、本插件的页面导航、声明工具和服务调用不单独申请权限；其中调用的平台能力仍需授权。</p>
+<p>权限开关约束 <code>$AE</code> 平台接口。Node 工具是本机代码，开关不限制 Node 自身的系统权限；仅运行可信来源的 Node 插件。</p>
+
+<p>插件管理的「权限 → Agent 工具」可按名称搜索并禁用工具，设置立即保存，升级版本仍保留。禁用在实际执行前复核；插件通过 <code>disabledTools</code> 只能追加禁用，不能覆盖用户选择。开发模式也支持独立的用户工具禁用设置。</p>
+<p>插件 Agent 的内置范围固定为<a href="platform.html#engine-tool-catalogue">六类、33 个工具</a>。其他 <code>$AE</code> 能力供插件代码直接调用，授权后也不会自动变成 Agent 工具。开发者显式配置的 MCP 和本插件自定义工具分别按对应授权执行。</p>

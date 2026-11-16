@@ -52,6 +52,8 @@ export interface BrowserTabState {
   presentation?: BrowserTabPresentation
   /** Explicit user-selected local preview; never grants an AI context. */
   localFile?: BrowserLocalFileInfo
+  /** Renderer-owned plugin document. It never creates a native website or grants URL authority. */
+  pluginPage?: { pluginId: string; pageId: string; revision: number; development: boolean }
   error?: string
   /** Live host conditions, distinct from page loading and ownership. */
   availability?: BrowserAvailability

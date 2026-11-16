@@ -400,6 +400,10 @@ export function abortStream(streamId: string): Promise<{ ok: boolean }> {
   return bridge().engine.stream.abort(streamId)
 }
 
+export function acknowledgeStream(streamId: string, ackId: string): Promise<{ ok: boolean }> {
+  return bridge().engine.stream.ack(streamId, ackId)
+}
+
 export function onStreamEvent(listener: (event: StreamEvent) => void): () => void {
   return bridge().engine.onStreamEvent(listener)
 }

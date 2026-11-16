@@ -20,6 +20,8 @@ import { bindConversationLinkWindow, queueConversationLink, queueConversationLin
 import { CONVERSATION_LINK_SCHEME } from '../shared/conversation-link'
 import { registerOpenWithIpc } from './open-with-ipc'
 import { registerPluginUi } from './plugin-ui'
+import { registerPluginHost } from './plugin-host'
+import { attachPluginBackground } from './plugin-background'
 
 // An explicit instance profile is opt-in. It is applied before settings,
 // graphics recovery, or engine state are read so each desktop process gets an
@@ -122,6 +124,7 @@ function createWindow(): void {
   })
   if (winState.maximized) mainWindow.maximize()
   trackWindowState(mainWindow)
+  attachPluginBackground(mainWindow, icon)
   registerBrowserIpc(mainWindow)
   bindConversationLinkWindow(mainWindow)
 
@@ -182,6 +185,7 @@ if (!gotTheLock) {
     const [win] = BrowserWindow.getAllWindows()
     if (win) {
       if (win.isMinimized()) win.restore()
+      win.show()
       win.focus()
     }
   })
@@ -207,6 +211,7 @@ if (!gotTheLock) {
     registerConversationLinkIpc()
     registerOpenWithIpc()
     registerPluginUi()
+    registerPluginHost()
 
     // 用英文输出，避免在非 UTF-8 控制台（Windows 默认 GBK）下显示成乱码
     console.log(
@@ -235,6 +240,7 @@ if (!gotTheLock) {
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      else { const win = BrowserWindow.getAllWindows()[0]; win.show(); win.focus() }
     })
   })
 

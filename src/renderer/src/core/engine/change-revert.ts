@@ -1,6 +1,7 @@
 import type { EngineRequestInput } from '@shared/ipc'
 import { getEngineSource, getExpectedEngine, subscribeEngineSource } from './source'
 import { requestSessionRefresh } from '../workbench/preview-request'
+import { publishFileMutation } from '../workspace/file-mutation-events'
 
 export type RevertStatus = 'reverted' | 'already_reverted' | 'conflict' | 'unavailable' | 'failed'
 export interface RevertItem {
@@ -140,6 +141,8 @@ export async function revertChanges(request: Request, intent: RevertIntent): Pro
   }
   reports.set(intent.sessionId, report)
   for (const item of report.results) outcomes.set(item.id, item)
+  const revertedPaths = new Set([...report.results.filter(item => item.status === 'reverted').map(item => item.path), ...(report.removedDirectories ?? [])])
+  for (const path of revertedPaths) publishFileMutation({ source: getEngineSource(), sessionId: intent.sessionId, path, operation: 'revert' })
   requestSessionRefresh(getEngineSource(), intent.sessionId)
   for (const listener of listeners) listener()
   operation.assertCurrent()

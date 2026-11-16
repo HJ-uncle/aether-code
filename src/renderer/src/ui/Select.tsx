@@ -85,6 +85,10 @@ interface SelectProps {
   compactTriggerLabel?: string
   hint?: string
   onOpenChange?: (open: boolean) => void
+  /** Optional form semantics for callers that need a stable DOM id/error link. */
+  id?: string
+  ariaDescribedBy?: string
+  ariaInvalid?: boolean
 }
 
 /**
@@ -110,7 +114,10 @@ export function Select({
   triggerLabel,
   compactTriggerLabel,
   hint,
-  onOpenChange
+  onOpenChange,
+  id,
+  ariaDescribedBy,
+  ariaInvalid
 }: SelectProps): JSX.Element {
   const current = options.find((option) => option.value === value)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -244,12 +251,15 @@ export function Select({
           ref={triggerRef}
           type="button"
           className="select__trigger"
+          id={id}
           disabled={disabled}
           title={title}
           aria-label={ariaLabel ?? title}
           aria-haspopup="menu"
           aria-expanded={open && !disabled}
           aria-controls={open && !disabled ? menuId : undefined}
+          aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid || undefined}
           onKeyDown={onKeyDown}
         >
           <span className="select__value">{triggerLabel ?? current?.label ?? value}</span>

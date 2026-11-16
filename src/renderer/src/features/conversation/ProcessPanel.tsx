@@ -5,7 +5,7 @@ const positions = new Map<string, { top: number; following: boolean }>()
 
 /** Keep inspection inside its own reading area so a long run never pushes the
  * answer away. Following stops as soon as the reader interacts with the log. */
-export function ProcessPanel({ children, running, memoryKey }: { children: ReactNode; running: boolean; memoryKey: string }) {
+export function ProcessPanel({ children, running, memoryKey, nested = false }: { children: ReactNode; running: boolean; memoryKey: string; nested?: boolean }) {
   const viewport = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
   const following = useRef(positions.get(memoryKey)?.following ?? running)
@@ -39,10 +39,6 @@ export function ProcessPanel({ children, running, memoryKey }: { children: React
         if (edges) scroll.dataset.scrollEdges = edges
         else delete scroll.dataset.scrollEdges
       }
-      // Fade only the receipts; the native scrollbar remains fully visible.
-      const gutter = `${scroll.offsetWidth - scroll.clientWidth}px`
-      if (scroll.style.getPropertyValue('--work-process-scrollbar-gutter') !== gutter)
-        scroll.style.setProperty('--work-process-scrollbar-gutter', gutter)
     }
     const schedule = (): void => { if (!frame) frame = requestAnimationFrame(update) }
     const resize = new ResizeObserver(schedule)
@@ -99,7 +95,8 @@ export function ProcessPanel({ children, running, memoryKey }: { children: React
       resize.disconnect()
     }
   }, [memoryKey, running, cancelPositioning, inspect])
-  return <div ref={viewport} className="work-message__process-viewport" role="region" aria-label="执行过程" tabIndex={0}
+  return <div ref={viewport} className={nested ? 'work-process-section__viewport' : 'work-message__process-viewport'}
+    data-process-scroll role="region" aria-label={nested ? '阶段过程' : '执行过程'} tabIndex={0}
     onPointerDownCapture={inspect}
     onWheelCapture={event => { if (event.deltaY < 0) inspect(); else if (event.deltaY) cancelPositioning() }}
     onKeyDownCapture={event => {

@@ -1,0 +1,9 @@
+.work-root-followup-receipt {
+  margin-block: 14px;
+}
+.work-root-followup-receipt__status {
+  margin: 5px 0 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}

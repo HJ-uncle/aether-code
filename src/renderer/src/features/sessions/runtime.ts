@@ -46,6 +46,7 @@ import type { AgentCollaborator, SubagentRun } from '@shared/subagent'
 import { createSessionStatusDiscovery, pollSessionTaskStatuses, sessionTaskActivityFromRun, sessionTaskRunAdmitted, sessionTaskRunPatch } from './status-poller'
 import { cancelSessionTask } from './task-cancel'
 import { recoverSessionTurn } from '../conversation/turn-recovery'
+import { continuationTarget, continuationObserved } from './task-restart'
 import { restoreMessageDraft } from '../conversation/shared/message-draft-merge'
 import { replaceImageAttachmentReferences } from '../conversation/shared/image-attachment-reference'
 import { useSessionAgentIdentity } from '../agents/agent-identity'
@@ -580,12 +581,13 @@ export function useSessionController() {
   const recoveryEntries = nextTurnQueue.state?.scope.taskId === activeId
     ? nextTurnQueue.state.entries.filter(entry => entry.envelope.recovery) : []
   const restartPending = nextTurnQueue.saving || recoveryEntries.some(entry => entry.phase !== 'terminal' &&
-    (entry.phase !== 'accepted' || !messages.some(message => message.run?.runId === entry.receipt.runId)))
+    (entry.phase !== 'accepted' || !continuationObserved(entry, messages)))
   restartBlockingRef.current = restartPending
   const recoveryReceipt = recoveryEntries.findLast(entry => entry.phase === 'accepted' || entry.phase === 'terminal')
   const recoveryRunId = recoveryReceipt && (recoveryReceipt.phase === 'accepted' || recoveryReceipt.phase === 'terminal')
     ? recoveryReceipt.receipt.runId : undefined
-  const hasRecoveryRun = Boolean(recoveryRunId && messages.some(message => message.run?.runId === recoveryRunId))
+  const recoveryAttemptId = recoveryReceipt && 'receipt' in recoveryReceipt ? recoveryReceipt.receipt.attemptId : undefined
+  const hasRecoveryRun = Boolean(recoveryReceipt && continuationObserved(recoveryReceipt, messages))
   useEffect(() => {
     if (!activeId || !engineReady || !restored || !recoveryRunId || hasRecoveryRun || streaming) return
     let alive = true, timer: ReturnType<typeof setTimeout> | undefined
@@ -602,7 +604,7 @@ export function useSessionController() {
     }
     void attach()
     return () => { alive = false; if (timer) clearTimeout(timer) }
-  }, [activeId, epoch, engineReady, restored, recoveryRunId, hasRecoveryRun, streaming, resumeStream])
+  }, [activeId, epoch, engineReady, restored, recoveryRunId, recoveryAttemptId, hasRecoveryRun, streaming, resumeStream])
   useEffect(() => {
     // A retry's history mutation is over once the new stream starts. Its IPC
     // promise lasts until completion; that must not lock normal running actions.
@@ -631,9 +633,9 @@ export function useSessionController() {
   }, [activeId, messages, source, chat.commandJobs])
   const workspaceRunId = restored && chat.sessionModel?.source === epoch && chat.sessionModel.sessionId === activeId ? chat.sessionModel.runId : undefined
   const currentRun = useMemo(() => rootFollowupRun(messages, activeId, workspaceRunId), [messages, activeId, workspaceRunId])
-  // Durable unanswered requests remain in the transcript after cancellation;
-  // they are history, not actionable approvals for this or a later root.
-  const pending = useMemo(() => currentRun?.status === 'waiting'
+  // Only this latest bound root may answer its original pending request. A
+  // stopped root needs an explicit decision; ordinary continuation stays blocked.
+  const pending = useMemo(() => currentRun && ['waiting', 'cancelled'].includes(currentRun.status)
     ? currentRun.pending.filter(item => item.status === 'pending').map(item => normalizeRunPending(item, currentRun.runId))
       .filter((item): item is PendingInteraction => item !== null)
     : [], [currentRun])
@@ -1089,12 +1091,18 @@ export function useSessionController() {
     }
     const failed = messages.find(message => message.id === assistantId && message.role === 'assistant')
     const run = failed?.run
-    if (!run || run.sessionId !== taskId || !['failed', 'interrupted'].includes(run.status))
-      throw new Error('这轮任务无法重启，请重新加载会话')
-    const previousRecovery = nextTurnQueue.state?.entries.find(entry => entry.envelope.recovery?.runId === run.runId)
+    // A logical turn contains several assistant segments. The card may retain
+    // an earlier segment object after a refresh; use the latest durable root
+    // snapshot for the continuation predecessor, while preserving that card's
+    // error presentation.
+    const latestRun = run && messages.findLast(message => message.run?.runId === run.runId)?.run
+    const target = latestRun && continuationTarget(latestRun)
+    if (!run || run.sessionId !== taskId || !target)
+      throw new Error('未取得可继续的执行身份，请同步会话并确认引擎已更新')
+    const previousRecovery = nextTurnQueue.state?.entries.find(entry => entry.envelope.recovery?.runId === run.runId && entry.envelope.recovery.attemptId === run.attemptId)
     if (!previousRecovery && messages.findLast(message => message.role === 'assistant')?.id !== assistantId)
       throw new Error('任务已有新的轮次，请在最新错误处重启')
-    await nextTurnQueue.restart(run.runId)
+    await nextTurnQueue.restart(target)
     assertEngineSource(epoch)
     if (getSessionState(source).activeTaskId === taskId) await resumeStream(taskId)
   }, [activeTask, activeId, epoch, engineReady, streaming, pending.length, uploadCount, hasSessionWork, restored, isHistoryReady, source, messages, nextTurnQueue.state, nextTurnQueue.restart, resumeStream])
@@ -1215,7 +1223,7 @@ export function useSessionController() {
   }, [activeTask, engineReady, chat.streaming, abort, epoch, resumeStream, source, updateTask])
 
   const continueSubagent = useCallback(async (run: SubagentRun, instruction: string): Promise<void> => {
-    if (!activeTask || !instruction.trim()) throw new Error('请输入继续交给子代理的工作')
+    if (!activeTask) throw new Error('请先选择子代理所属任务')
     if (!engineReady || !restored || !isHistoryReady(activeTask.id) || streaming || pending.length || uploadCount > 0)
       throw new Error('请等待当前任务完成或处理待确认事项，再继续子代理')
     const current = await requestOrThrow<SubagentRun>({ method: 'GET', path: `/subagent/runs/${encodeURIComponent(run.runId)}` })
@@ -1228,8 +1236,17 @@ export function useSessionController() {
       throw new Error('当前任务正在执行或等待确认，请完成后再继续子代理')
     if (['queued', 'running', 'cancelling'].includes(current.status)) throw new Error('这个子代理仍在运行，请等待本轮结束')
     if (hasSessionWork(activeTask.id)) throw new Error('当前任务已有请求正在发送')
+    if (!instruction.trim()) {
+      const root = messages.findLast(message => message.role === 'assistant')?.run
+      const target = root && continuationTarget(root, current.runId)
+      if (!target || root?.sessionId !== activeTask.id) throw new Error('未取得主任务的继续身份，请同步会话后重试')
+      await nextTurnQueue.restart(target)
+      assertEngineSource(epoch)
+      if (getSessionState(source).activeTaskId === activeTask.id) await resumeStream(activeTask.id)
+      return
+    }
     await sendTaskRef.current(task, instruction.trim(), [], 'follow-up', [{ resumeRunId: current.runId, task: instruction.trim() }])
-  }, [activeTask, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount, epoch, source, hasSessionWork, sendTask])
+  }, [activeTask, engineReady, restored, isHistoryReady, streaming, pending.length, uploadCount, epoch, source, hasSessionWork, sendTask, messages, nextTurnQueue.restart, resumeStream])
 
   const stopTask = useCallback(async (id: string): Promise<void> => {
     const task = getSessionState(source).tasks.find((item) => item.id === id)
@@ -1838,6 +1855,7 @@ export function useSessionController() {
     artifacts,
     pending,
     assertPendingResponse,
+    waitForSourceChange: chat.waitForSourceChange,
     streaming,
     pendingInitialStart: preparing,
     launching: Boolean(engineReady && !error && !chat.historyError && activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId),

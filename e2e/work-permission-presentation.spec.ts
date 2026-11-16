@@ -60,6 +60,56 @@ test('permission normalization keeps arguments and approval response protocol un
   expect(mergePending(normalized, ask)).toEqual(normalized)
 })
 
+test('source-change approvals keep engine choices and never expose full-access', () => {
+  const pending = normalizePending({ permissionRequest: {
+    requestId: 'source-change-request', toolName: 'write_file',
+    description: '写入期间检测到外部源码变化。',
+    options: ['pause', 'recheck', 'rebuild', 'skip'], args: { path: '/workspace/app.ts' }
+  } })!
+  expect(pending.kind).toBe('permission')
+  expect(pending.sourceChange).toEqual({ choices: ['pause', 'recheck', 'rebuild', 'skip'] })
+  expect(pending.options.map(option => option.value)).toEqual(['pause', 'recheck', 'rebuild', 'skip'])
+  expect(pending.options.map(option => option.label)).toEqual(['暂停', '重新检查', '重新构建', '跳过'])
+  expect(buildToolResponse(pending, ['rebuild'])).toEqual({
+    toolCallId: 'source-change-request', name: 'write_file', output: 'rebuild'
+  })
+  const restored = normalizeRunPending({
+    requestId: 'source-change-request', kind: 'permission', toolCallId: 'source-change-request',
+    toolName: 'write_file', args: { path: '/workspace/app.ts' }, options: ['pause', 'recheck', 'rebuild', 'skip'],
+    question: '写入期间检测到外部源码变化。', status: 'pending'
+  }, 'run-source-change')!
+  expect(restored.sourceChange?.choices).toEqual(['pause', 'recheck', 'rebuild', 'skip'])
+  expect(buildToolResponse(restored, ['recheck'])).toMatchObject({
+    requestId: 'source-change-request', runId: 'run-source-change', name: 'write_file', output: 'recheck'
+  })
+  // The preliminary ask_user alias is ignored until the authoritative
+  // permission frame arrives, so it cannot submit a source choice as ask_user.
+  expect(normalizePending({ ask_user: {
+    toolCallId: 'source-change-request', question: '写入期间检测到外部源码变化。',
+    options: ['pause', 'recheck', 'rebuild', 'skip']
+  } })).toBeNull()
+})
+
+test('source-change wait status is normalized into a bounded auto-continue state', () => {
+  const wait = {
+    mode: 'external-writer', startedAt: 100, pollMs: 2_000, stableWindowMs: 1_500,
+    blockers: [{ kind: 'command', sessionId: 'other-session', runId: 'other-run', jobId: 'job-1', cwd: '/workspace', status: 'running' },
+      { kind: 'run', id: 'other-root-run', sessionId: 'other-session', runId: 'other-root-run' }]
+  }
+  const item = normalizePending({ permissionRequest: {
+    requestId: 'source-wait-request', toolName: 'execute_cmd',
+    description: '构建期间检测到源码变化。', options: ['pause', 'recheck', 'rebuild', 'skip'],
+    wait, args: { command: 'npm', args: ['run', 'build'] }
+  } })!
+  expect(item.sourceChange?.wait).toMatchObject({ ...wait, blockers: [wait.blockers[0], { ...wait.blockers[1], status: 'running' }] })
+  expect(item.sourceChange?.wait?.blockers).toHaveLength(2)
+  expect(item.sourceChange?.wait?.blockers[1]).toMatchObject({ kind: 'run', status: 'running' })
+  expect(normalizePending({ permissionRequest: {
+    requestId: 'invalid-wait', toolName: 'execute_cmd',
+    options: ['pause', 'recheck', 'rebuild', 'skip'], wait: { ...wait, blockers: [{ status: 'unknown' }] }
+  } })?.sourceChange?.wait).toBeUndefined()
+})
+
 test('durable permission restoration retains args, prepared question and request identity', () => {
   const question = preview('创建', config)
   const args = { name: config.name }
@@ -567,6 +617,46 @@ function pluginPreview(
 ): string {
   return `${pluginTitles[action]}确认\n\n${JSON.stringify({ version: 1, tenantId: 'tenant-fixture', action, input, ...extra }, null, 2)}\n\n确认后执行以上操作。`
 }
+
+test('compact plugin approval presents sealed file changes without requiring private source', () => {
+  const digest = { bytes: 20, sha256: 'a'.repeat(64) }
+  const compact = { action: 'plugin_update', id: 'compact-test', name: '对账插件', version: '2.0.0', expectedRevision: 8,
+    fileCount: 6, totalBytes: 20000, changes: { added: 1, modified: 1, deleted: 1 }, changedFileCount: 3,
+    fileListComplete: true, omittedFileChanges: 0, files: [
+      { path: 'new.mjs', change: 'added', after: digest },
+      { path: 'main.mjs', change: 'modified', before: digest, after: { bytes: 25, sha256: 'b'.repeat(64) } },
+      { path: 'old.mjs', change: 'deleted', before: digest }
+    ] }
+  const render = (value: unknown) => permissionPresentation(pending('plugin_update', `编辑插件确认\n\n${JSON.stringify(value, null, 2)}\n\n确认后执行以上操作。`, { id: 'compact-test', displaySummary: true }))
+  const result = render(compact)
+  expect(result.summary).toBe('对账插件')
+  expect(result.reason).toBe('新增 1 个、修改 1 个、删除 1 个文件。')
+  const files = result.sections.find(section => section.id === 'plugin-file-changes')!
+  expect(files.items).toEqual(['新增 · new.mjs · 20 字节', '修改 · main.mjs · 20 → 25 字节', '删除 · old.mjs · 20 字节'])
+  expect(JSON.stringify(result.sections.find(section => section.id === 'plugin-content-digests')?.tree)).toContain('修改前SHA256')
+  expect(result.sections.some(section => section.files)).toBe(false)
+  expect(render({ ...compact, files: compact.files.slice(0, 1), fileListComplete: false, omittedFileChanges: 2 })
+    .sections.find(section => section.id === 'plugin-file-changes')?.text).toContain('还有 2 个文件变更')
+  for (const bad of [
+    { ...compact, omittedFileChanges: 1 }, { ...compact, action: 'plugin_create' },
+    { ...compact, expectedRevision: 0 }, { ...compact, files: [{ ...compact.files[0], after: { bytes: 20, sha256: 'invalid' } }] }
+  ]) expect(render(bad).sections.some(section => section.id === 'plugin-file-changes')).toBe(false)
+  expect(buildToolResponse(pending('plugin_update', '确认', { id: 'compact-test' }), ['approved']))
+    .toEqual({ toolCallId: 'call-1', name: 'plugin_update', output: 'approved' })
+})
+
+test('compact publish and enable previews retain the exact operation and current revision', () => {
+  for (const [action, title, fields] of [
+    ['plugin_publish', '发布插件', { expectedRevision: 4 }],
+    ['plugin_set_enabled', '启停插件', { enabled: false, expectedRevision: 4 }]
+  ] as const) {
+    const value = { action, id: 'compact-test', name: '对账插件', version: '2', ...fields }
+    const result = permissionPresentation(pending(action, `${title}确认\n\n${JSON.stringify(value)}\n\n确认后执行以上操作。`))
+    expect(result.summary).toBe('对账插件')
+    expect(result.title).toBe(action === 'plugin_publish' ? '发布插件' : '停用插件')
+    expect(result.sections[0].facts).toContainEqual({ label: '当前修订', value: '4' })
+  }
+})
 
 test('plugin creation presents prepared manifest and complete tools and files instead of raw-call values', () => {
   const question = pluginPreview('plugin_create', pluginInput)

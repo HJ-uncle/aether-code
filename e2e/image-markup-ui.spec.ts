@@ -773,8 +773,7 @@ test.describe.serial('图片标注与真实导出', () => {
       .toEqual([{ id: original.attachmentId, path: edited.path }])
     await expect.poll(async () => (await savedDraft()).mentions.map(item => item.path)).toEqual([edited.path])
 
-    await work().getByRole('button', { name: '打开工作区', exact: true }).click()
-    await work().getByRole('button', { name: '更多工作区', exact: true }).click()
+    await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click()
     await page.getByRole('menuitem', { name: '资料', exact: true }).click()
     const source = work().locator('.work-source-row').filter({ has: page.locator(`.work-source-row__main[title="${original.path}"]`) })
     await expect(source).toHaveCount(1)

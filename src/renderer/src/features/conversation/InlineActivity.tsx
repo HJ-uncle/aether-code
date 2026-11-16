@@ -20,12 +20,13 @@ import './inline-activity.css'
 const pagePositions = new Map<string, number | null>()
 
 /** Keep paged receipts and their original diagnostics beside the conversation. */
-export function InlineActivity({ tools: receipts, fileContext, onOpenFile, onOpenChange, revealTool, expanded = false, contained = false, turnRunning, active = true, readOnly = false }: {
+export function InlineActivity({ tools: receipts, fileContext, onOpenFile, onOpenChange, revealTool, expanded = false, contained = false, groupRepeated = true, turnRunning, active = true, readOnly = false }: {
   tools: ToolActivity[]; fileContext: ChatFileContext; onOpenFile?: (path: string) => void
   onOpenChange?: (change: EngineFileChange) => void
   revealTool?: { toolId: string; revision: number } | null
   expanded?: boolean
   contained?: boolean
+  groupRepeated?: boolean
   turnRunning?: boolean
   active?: boolean
   readOnly?: boolean
@@ -47,7 +48,7 @@ export function InlineActivity({ tools: receipts, fileContext, onOpenFile, onOpe
   const summary = useMemo(() => sessionActivitySummary(tools, fileContext.workspaceRoot), [tools, fileContext.workspaceRoot])
   useLayoutEffect(() => {
     if (!contained) return
-    const viewport = activity.current?.closest('.work-message__process-viewport')
+    const viewport = activity.current?.closest('[data-process-scroll]')
     const first = (): void => setSelectedPage(0)
     const latest = (): void => setSelectedPage(null)
     viewport?.addEventListener('work-process-first', first)
@@ -74,7 +75,7 @@ export function InlineActivity({ tools: receipts, fileContext, onOpenFile, onOpe
   const defaultIndex = state === 'running' || state === 'waiting' ? tools.indexOf(tool) : tools.length - 1
   const range = sessionPageRange(tools.length, selectedPage ?? Math.floor(defaultIndex / pageSize), pageSize)
   const visible = tools.slice(range.start, range.end)
-  const groups = contained && !turnRunning ? sessionActivityGroups(visible) : visible.map(tool => [tool])
+  const groups = contained && groupRepeated && !turnRunning ? sessionActivityGroups(visible) : visible.map(tool => [tool])
   const renderTool = (item: ToolActivity): ReactNode => <ToolActivityRow key={item.id} tool={item} fileContext={fileContext}
     onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active && open} readOnly={readOnly}
     revealRevision={revealTool?.toolId === item.id ? revealTool.revision : undefined} />

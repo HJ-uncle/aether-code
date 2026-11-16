@@ -157,10 +157,9 @@ const transcript = (): Locator => panel().locator('.work-subagent-transcript')
 const scroller = (): Locator => transcript().locator('.work-subagent-transcript__scroll')
 const message = (suffix: string): Locator => transcript().locator(`[data-message-id="${childA}-${suffix}"]`)
 async function openChildren(): Promise<void> {
-  if (!(await workspace().isVisible())) await work().getByRole('button', { name: '打开工作区', exact: true }).click()
   const tab = workspace().getByRole('tab', { name: '子代理', exact: true })
   if (await tab.isVisible()) await tab.click()
-  else { await workspace().getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
+  else { await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
   await expect(panel()).toBeVisible()
 }
 async function selectChild(name: 'A' | 'B' | 'C'): Promise<void> {

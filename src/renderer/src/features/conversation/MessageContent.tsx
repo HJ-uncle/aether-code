@@ -6,6 +6,10 @@ import { finalAnswerForMessage, getMessageFinalResult } from '@renderer/core/eng
 import { getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
 import { toast } from '@renderer/core/toast'
 import { Icon } from '@renderer/ui/icons'
+import { ContextMenu } from '@renderer/ui/ContextMenu'
+import { ExtensionSlot, useExtensionMenuItems } from '../extensions'
+import { extensionIcon } from '@renderer/app/navigation'
+import { isEngineReady } from '@renderer/core/engine/source'
 import { MotionPresence } from '@renderer/ui/MotionPresence'
 import { AttachmentChip, AttachmentPreviewDialog, type AttachmentPreview } from './shared/AttachmentChip'
 import type { ChatFileContext } from './shared/chat-link'
@@ -13,9 +17,12 @@ import { Markdown } from './shared/Markdown'
 import { ThinkingRow } from './shared/ThinkingRow'
 import { UserMessageContent } from './shared/UserMessageContent'
 import { useCollapseMemory } from './shared/useCollapseMemory'
+import { useSessionThinkingVisible } from './shared/session-display-store'
 import { CollaborationSummary } from '../collaboration/CollaborationSummary'
 import { InlineActivity } from './InlineActivity'
 import { ProcessPanel } from './ProcessPanel'
+import { ProcessSection } from './ProcessSection'
+import { sessionProcessSections, type ProcessItem } from './process-sections'
 import { ToolActivity } from './ToolActivity'
 import { sessionActivityState } from './inline-activity-state'
 import { captureSessionCollaborationMembership, sessionMessageTimeline, sessionMessagePresentation, sessionTranscriptPresentation, type SessionCollaborationMembership, type SessionMessageSegment, type SessionPresentationSegment } from './message-timeline'
@@ -37,7 +44,6 @@ export interface MessageContentProps {
   turnSegments?: SessionMessageSegment[]
   processKey?: string
   defaultProcessOpen?: boolean
-  defaultThinkingOpen?: boolean
   showAllContent?: boolean
   finalAnswer?: { text: string } | false
   deliveryResult?: FinalResult
@@ -51,9 +57,14 @@ export interface MessageContentProps {
 /** Message presentation is shared; the owning conversation supplies its actions and approvals. */
 export const MessageContent = memo(function MessageContent({
   message, sessionId, fileContext, active, onFileLink, onOpenFile, onOpenChange,
-  revealTool = null, turnSegments, processKey, defaultProcessOpen, defaultThinkingOpen, showAllContent = false, finalAnswer, deliveryResult, readOnly = false,
+  revealTool = null, turnSegments, processKey, defaultProcessOpen, showAllContent = false, finalAnswer, deliveryResult, readOnly = false,
   userActions, replyActions, usage, children
 }: MessageContentProps): JSX.Element {
+  const extensionContext = { sessionId, workspacePath: fileContext.workspaceRoot, engineReady: active && isEngineReady(), messageId: message.id, messageRole: message.role }
+  const pluginActions = useExtensionMenuItems('message.actions', extensionContext)
+  const [pluginMenu, setPluginMenu] = useState<{ x: number; y: number } | null>(null)
+  useEffect(() => { setPluginMenu(null) }, [active, sessionId, message.id])
+  const pluginButton = active && !readOnly && pluginActions.length ? <button type="button" className="message__action" aria-label="消息插件操作" title="插件操作" aria-haspopup="menu" aria-expanded={Boolean(pluginMenu)} onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setPluginMenu({ x: rect.right, y: rect.bottom }) }}><Icon name="dots-horizontal" size={14} /></button> : null
   const segments = useMemo(() => turnSegments ?? sessionMessageTimeline(message), [message, turnSegments])
   const processTools = useMemo(() => segments.flatMap(segment => segment.kind === 'tools' ? segment.tools : []), [segments])
   const collaborationMembership = useRef<SessionCollaborationMembership | undefined>(undefined)
@@ -68,11 +79,11 @@ export const MessageContent = memo(function MessageContent({
     // is reading. This choice lasts only for this mounted message.
     collaborationMembership.current ??= captureSessionCollaborationMembership(presentation)
   }
-  const hasProcess = presentation.some(segment => segment.kind === 'process')
+  const [thinkingOpen] = useSessionThinkingVisible(fileContext.receiptParentSessionId ?? sessionId)
+  const hasProcess = presentation.some(segment => segment.kind === 'process' &&
+    segment.segments.some(item => item.kind !== 'thinking' || thinkingOpen))
   const hasReplyContent = presentation.some(segment => segment.kind === 'answer' || segment.kind === 'content')
   const executionSegments = presentation.flatMap(segment => segment.kind === 'process' ? segment.segments : [])
-  const thinkingCount = presentation.flatMap(segment => segment.kind === 'process' ? segment.segments : [])
-    .filter(segment => segment.kind === 'thinking').length
   const failureCount = processTools.filter(tool => ['error', 'interrupted'].includes(sessionActivityState(tool))).length
   // Live inspection must not pin the finished turn open, including completion
   // while this row is unmounted. Settled history keeps its own reading choices.
@@ -80,9 +91,6 @@ export const MessageContent = memo(function MessageContent({
   const processPhase = turnRunning ? 'running' : 'settled'
   const [processMemory, setProcessOpen] = useCollapseMemory(`work-message:${processScope}:${processPhase}`)
   const processOpen = processMemory ?? defaultProcessOpen ?? turnRunning
-  const [thinkingMemory, setThinkingOpen] = useCollapseMemory(`work-message-thinking:${processScope}:${processPhase}`)
-  // Pure reasoning replies still have useful content when their process is opened.
-  const thinkingOpen = thinkingMemory ?? defaultThinkingOpen ?? processTools.length === 0
   const processId = `work-process-${useId().replace(/:/g, '')}`
   const article = useRef<HTMLElement>(null)
   const processBar = useRef<HTMLDivElement>(null)
@@ -117,9 +125,9 @@ export const MessageContent = memo(function MessageContent({
     const timer = window.setTimeout(() => setCopied(false), 1800)
     return () => window.clearTimeout(timer)
   }, [copied])
-  const renderProcess = (segment: Extract<SessionPresentationSegment, { kind: 'process' }>): ReactNode => segment.segments.map(item => item.kind === 'tools' ? (
+  const renderProcessItem = (item: ProcessItem): ReactNode => item.kind === 'tools' ? (
     <InlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
-      revealTool={revealTool} expanded contained={!showAllContent} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
+      revealTool={revealTool} expanded contained={!showAllContent} groupRepeated={false} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
   ) : item.kind === 'tool' ? (
     <ToolActivity key={item.key} tool={item.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
       revealRevision={revealTool?.toolId === item.tool.id ? revealTool.revision : undefined} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
@@ -130,14 +138,18 @@ export const MessageContent = memo(function MessageContent({
       <ThinkingRow text={item.text} autoOpen={false} memoryKey={`work-thinking:${getEngineSource()}:${sessionId}:${processKey ?? message.id}:${item.key}`} />
     </MotionPresence>
   ) : item.kind === 'followup' ? (
-    <div key={item.key} className="work-message--user work-message__followup" role="group" aria-label="用户消息" data-message-id={item.message.id}>
-      <SessionUserMessageBody message={item.message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext} />
-    </div>
+    <FollowupMessage key={item.key} message={item.message} sessionId={sessionId} fileContext={fileContext} active={active && processOpen} readOnly={readOnly} />
   ) : (
     <div key={item.key} className={showAllContent ? undefined : 'work-message__process-note'}>
       <SessionAssistantContent text={item.text} streaming={message.status === 'streaming'} fileContext={fileContext} renderImages={showAllContent} />
     </div>
-  ))
+  )
+  const renderProcess = (segment: Extract<SessionPresentationSegment, { kind: 'process' }>): ReactNode => sessionProcessSections(segment.segments).map(item => item.kind === 'section' ? (
+    <ProcessSection key={item.key} section={item} memoryKey={`${processScope}:${item.key}`} running={turnRunning}
+      showThinking={thinkingOpen} revealTool={revealTool}>
+      {item.segments.map(renderProcessItem)}
+    </ProcessSection>
+  ) : renderProcessItem(item))
   return (
     <article
       ref={article}
@@ -150,7 +162,7 @@ export const MessageContent = memo(function MessageContent({
     >
       {message.role === 'user' ? (
         <SessionUserMessageBody message={message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext}>
-          {readOnly ? null : userActions}
+          {readOnly || !userActions && !pluginButton ? null : <div className="work-message__user-controls">{userActions}{pluginButton ? <div className="work-message__actions">{pluginButton}</div> : null}</div>}
         </SessionUserMessageBody>
       ) : (
         <>
@@ -167,15 +179,6 @@ export const MessageContent = memo(function MessageContent({
             {failureCount ? <small className="work-message__process-failures">{failureCount} 步未通过</small> : null}
             <Icon className="work-message__process-chevron" name="chevron-right" size={12} />
           </button>
-            {/* Retain the control only for its exit animation; the reading choice survives collapse. */}
-            <MotionPresence show={processOpen && thinkingCount > 0} asChild axis="x">
-              <button type="button" className="work-message__thinking-toggle"
-                aria-label={thinkingOpen ? '隐藏思考' : '显示思考'} aria-pressed={thinkingOpen}
-                title={`${thinkingOpen ? '隐藏' : '显示'} ${thinkingCount} 段思考`}
-                onClick={() => setThinkingOpen(!thinkingOpen)}>
-                <Icon name="brain" size={13} /><span>思考</span>
-              </button>
-            </MotionPresence>
             {processOpen && !showAllContent ? <div className="work-message__process-navigation" role="group" aria-label="过程导航">
               {(['first', 'latest'] as const).map(direction => <button key={direction} type="button" className="work-message__process-jump"
                 aria-label={direction === 'first' ? '查看最早步骤' : '查看最新步骤'} title={direction === 'first' ? '查看最早步骤' : '查看最新步骤'}
@@ -211,19 +214,37 @@ export const MessageContent = memo(function MessageContent({
         </>
       )}
       {children}
-      {message.role === 'assistant' && (usage || canCopy || replyActions) ? <div className="work-message__reply-actions">
+      {active ? <ExtensionSlot location="message.inline" context={extensionContext} /> : null}
+      {message.role === 'assistant' && (usage || canCopy || replyActions || pluginButton) ? <div className="work-message__reply-actions">
         {usage}
-        {canCopy || replyActions ? <div className="work-message__reply-controls" role="group" aria-label="回复操作">
+        {canCopy || replyActions || pluginButton ? <div className="work-message__reply-controls" role="group" aria-label="回复操作">
           {canCopy ? <button type="button" className="message__action" aria-label={copied ? '已复制回复' : '复制回复'} title={copied ? '已复制' : '复制回复'}
             onClick={() => { void navigator.clipboard.writeText(answerText).then(() => setCopied(true), error => toast.error(error instanceof Error ? error.message : String(error))) }}>
             <Icon name={copied ? 'check' : 'copy'} size={14} />
           </button> : null}
           {readOnly ? null : replyActions}
+          {pluginButton}
         </div> : null}
       </div> : null}
+      {active && pluginMenu ? <ContextMenu x={pluginMenu.x} y={pluginMenu.y} anchor={article.current} items={pluginActions.map(item => ({ ...item, icon: item.icon ? <Icon name={extensionIcon(item.icon)} size={14} /> : undefined }))} onClose={() => setPluginMenu(null)} /> : null}
     </article>
   )
 })
+
+function FollowupMessage({ message, sessionId, fileContext, active, readOnly }: Pick<MessageContentProps, 'message' | 'sessionId' | 'fileContext' | 'active' | 'readOnly'>): JSX.Element {
+  const context = { sessionId, workspacePath: fileContext.workspaceRoot, engineReady: active && isEngineReady(), messageId: message.id, messageRole: message.role }
+  const actions = useExtensionMenuItems('message.actions', context)
+  const [menu, setMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null)
+  useEffect(() => { setMenu(null) }, [active, sessionId, message.id])
+  return <div className="work-message--user work-message__followup" role="group" aria-label="用户消息" data-message-id={message.id}>
+    <SessionUserMessageBody message={message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext}>
+      {active && !readOnly && actions.length ? <div className="work-message__actions"><button type="button" className="message__action" aria-label="消息插件操作" title="插件操作" aria-haspopup="menu" aria-expanded={Boolean(menu)}
+        onClick={event => { const anchor = event.currentTarget, rect = anchor.getBoundingClientRect(); setMenu({ x: rect.right, y: rect.bottom, anchor }) }}><Icon name="dots-horizontal" size={14} /></button></div> : null}
+    </SessionUserMessageBody>
+    {active ? <ExtensionSlot location="message.inline" context={context} /> : null}
+    {active && menu ? <ContextMenu {...menu} items={actions.map(item => ({ ...item, icon: item.icon ? <Icon name={extensionIcon(item.icon)} size={14} /> : undefined }))} onClose={() => setMenu(null)} /> : null}
+  </div>
+}
 
 function SessionAttachment({ file, root, group, fileContext }: {
   file: ChatAttachment

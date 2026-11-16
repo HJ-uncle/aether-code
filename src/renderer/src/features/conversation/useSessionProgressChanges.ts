@@ -8,6 +8,7 @@ import { getRevertReport, subscribeReverts } from '@renderer/core/engine/change-
 import { useWorkbenchVisible } from '@renderer/core/platform/workbench-visibility'
 import { sessionProgressChanges, sessionProgressRetryDelay, type SessionProgressChange } from './progress-state'
 import { sessionTurnProgressChanges, type SessionTurnProgressGroup } from './turn-progress'
+import { publishExtensionEvent } from '../extensions'
 
 export interface SessionProgressSyncState {
   syncError: boolean
@@ -29,6 +30,21 @@ export function useSessionProgressChanges(sessionId: string, tools: ToolActivity
   const streamed = useMemo(() => sessionProgressChanges(sessionId, tools, [], workspacePath), [sessionId, tools, workspacePath])
   // Text tokens and output chunks do not change the set of file receipts.
   const revision = JSON.stringify(streamed.flatMap(file => file.records.map(change => [change.id, change.status])))
+  const receiptEvents = useRef({ key, startedAt: Date.now(), seen: new Map<string, string>() })
+  useEffect(() => {
+    if (receiptEvents.current.key !== key) receiptEvents.current = { key, startedAt: Date.now(), seen: new Map() }
+    if (!enabled) return
+    const observed = receiptEvents.current
+    // Only actual tool change receipts enter this path. Directory reads and
+    // ledger polling do not invent file changes; old replayed receipts stay quiet.
+    for (const file of streamed) for (const change of file.records) {
+      const previous = observed.seen.get(change.id)
+      observed.seen.set(change.id, change.status)
+      if (previous === change.status || previous === undefined && change.createdAt < observed.startedAt || previous !== undefined && change.status !== 'reverted') continue
+      publishExtensionEvent('file.changed', { sessionId, workspacePath, engineReady: true, filePath: change.path }, { changeId: change.id, status: change.status, origin: 'agent' })
+    }
+    while (observed.seen.size > 2000) observed.seen.delete(observed.seen.keys().next().value!)
+  }, [enabled, key, revision, sessionId, workspacePath, streamed])
   const groupsRef = useRef(groups)
   groupsRef.current = groups
   // A restored or newly settled turn may have durable edits without tool

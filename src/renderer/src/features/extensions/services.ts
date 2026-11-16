@@ -3,7 +3,7 @@ import { extensionRegistry, extensionVisible } from './registry'
 import { extensionId, type ExtensionContext, type ExtensionIdentity, type ExtensionRegistration, type PluginServiceContribution, type PluginServiceSnapshot, type PluginServiceStatus } from './types'
 import { requestExtensionPage } from './navigation'
 
-type Invoke = (registration: ExtensionRegistration, tool: string, args: Record<string, unknown>) => Promise<PluginInvocation>
+type Invoke = (registration: ExtensionRegistration, tool: string, args: Record<string, unknown>, context?: ExtensionContext) => Promise<PluginInvocation>
 interface ServiceEntry { identity: ExtensionIdentity; declaration: PluginServiceContribution; registration: ExtensionRegistration; context: ExtensionContext; snapshot: PluginServiceSnapshot; timer?: ReturnType<typeof setTimeout>; operation: number; activity: number }
 const statuses = new Set<PluginServiceStatus>(['idle', 'running', 'waiting', 'completed', 'stopped', 'error'])
 const retainedInactiveServices = 64
@@ -21,6 +21,17 @@ export class ExtensionServices {
     private readonly registrationFor = (pluginId: string) => extensionRegistry.getRegistration(pluginId)) {}
   readonly subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   readonly getSnapshot = (): readonly PluginServiceSnapshot[] => this.snapshot
+  notify(registration: ExtensionRegistration, context: ExtensionContext, title: string, detail: string): void {
+    const id = extensionId(registration.identity.pluginId, `notification-${crypto.randomUUID()}`)
+    const entry: ServiceEntry = { identity: registration.identity, declaration: { id, title, tool: '' }, registration, context: { ...context }, operation: 0, activity: ++this.activity,
+      snapshot: { id, pluginId: registration.identity.pluginId, instanceId: registration.identity.instanceId, revision: registration.identity.revision, label: title.slice(0, 120), detail: detail.slice(0, 2000), notification: true, status: 'completed', updatedAt: Date.now() } }
+    const prior = [...this.entries.values()].filter(value => value.declaration.tool === '')
+    for (const value of prior.slice(0, Math.max(0, prior.length - 63))) this.entries.delete(value.snapshot.id)
+    // Notifications are app-level activity. The command that emitted one may
+    // belong to a session, but the summary must remain visible after switching
+    // sessions. Service contributions keep their session scope.
+    this.entries.set(id, entry); this.publish()
+  }
   ensure(registration: ExtensionRegistration, context: ExtensionContext): void {
     this.context = { ...context }
     let changed = this.prune()
@@ -66,7 +77,7 @@ export class ExtensionServices {
     clearTimeout(entry.timer)
     this.update(entry, { status: action === 'start' ? 'waiting' : entry.snapshot.status, detail: action === 'start' ? '正在启动…' : entry.snapshot.detail })
     try {
-      const result = await this.invoke(entry.registration, tool, { ...entry.declaration.args, ...args })
+      const result = await this.invoke(entry.registration, tool, { ...entry.declaration.args, ...args }, entry.context)
       if (operation !== entry.operation || !this.current(entry.identity) || this.entries.get(entry.snapshot.id) !== entry) return
       const value = object(result.result) ? result.result : {}
       const status = typeof value.status === 'string' && statuses.has(value.status as PluginServiceStatus) ? value.status as PluginServiceStatus : action === 'stop' ? 'stopped' : 'completed'

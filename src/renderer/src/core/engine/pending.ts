@@ -27,6 +27,49 @@ export interface PendingOption {
   description?: string
 }
 
+/** Choices emitted by the engine when a source version changed during a
+ * build/write. They are protocol values, never free-form model text. */
+export const SOURCE_CHANGE_CHOICES = ['pause', 'recheck', 'rebuild', 'skip'] as const
+export type SourceChangeChoice = typeof SOURCE_CHANGE_CHOICES[number]
+const sourceChangeLabels: Record<SourceChangeChoice, { label: string; description: string }> = {
+  pause: { label: '暂停', description: '保留当前状态，等待你确认后再继续。' },
+  recheck: { label: '重新检查', description: '重新读取当前版本并停止本次写入。' },
+  rebuild: { label: '重新构建', description: '以当前源码版本重新生成候选结果。' },
+  skip: { label: '跳过', description: '跳过本次版本冲突检查；仅在引擎明确提供此选项时可用。' }
+}
+
+/** Public, bounded status for a source guard that is waiting for another
+ * execution owner to finish. It intentionally contains identifiers and paths
+ * only; command text and output stay in the durable run. */
+export interface SourceChangeWaitBlocker {
+  kind?: 'command' | 'run'
+  id?: string
+  sessionId?: string
+  ownerSessionId?: string
+  runId?: string
+  ownerRunId?: string
+  jobId?: string
+  cwd?: string
+  status: 'running' | 'cancelling'
+}
+
+export interface SourceChangeWait {
+  mode: 'external-writer'
+  startedAt: number
+  pollMs: number
+  stableWindowMs: number
+  blockers: SourceChangeWaitBlocker[]
+}
+
+export interface SourceChangeWaitStatus {
+  ready: boolean
+  reason: 'external-writer' | 'source-changing' | 'stable-window' | 'ready'
+  observedAt: number
+  stableSince?: number
+  stableWindowMs: number
+  blockers: SourceChangeWaitBlocker[]
+}
+
 /**
  * 提问卡片里的一个「问题分组」（对齐 wuzu AskUserQuestion 的 tab + question 结构）。
  *
@@ -62,6 +105,8 @@ export interface PendingInteraction {
   multiSelect: boolean
   /** 问题分组（提问场景可能多组；授权场景恒为一组） */
   groups: PendingQuestionGroup[]
+  /** Present only when the engine explicitly parked a source-change choice. */
+  sourceChange?: { choices: SourceChangeChoice[]; wait?: SourceChangeWait }
 }
 
 /** 授权场景的固定选项：值必须与引擎严格匹配 */
@@ -106,6 +151,68 @@ function normalizeOptions(raw: unknown): PendingOption[] {
   return options
 }
 
+function sourceChangeOptions(raw: unknown): PendingOption[] | null {
+  const options = normalizeOptions(raw)
+  if (!options.length) return null
+  const values = options.map(option => option.value)
+  if (new Set(values).size !== values.length || !values.every((value): value is SourceChangeChoice =>
+    (SOURCE_CHANGE_CHOICES as readonly string[]).includes(value))) return null
+  return values.map(value => ({ value, ...sourceChangeLabels[value] }))
+}
+
+function sourceChangeWait(raw: unknown): SourceChangeWait | undefined {
+  const value = asRecord(raw)
+  if (!value || value.mode !== 'external-writer' || typeof value.startedAt !== 'number' || !Number.isFinite(value.startedAt) ||
+    typeof value.pollMs !== 'number' || !Number.isFinite(value.pollMs) || value.pollMs <= 0 || typeof value.stableWindowMs !== 'number' || !Number.isFinite(value.stableWindowMs) ||
+    value.stableWindowMs < 0 || !Array.isArray(value.blockers) || value.blockers.length > 16) return undefined
+  const blockers: SourceChangeWaitBlocker[] = []
+  for (const item of value.blockers) {
+    const blocker = asRecord(item)
+    if (!blocker || (blocker.kind !== undefined && blocker.kind !== 'command' && blocker.kind !== 'run')) return undefined
+    // Durable root-run blockers do not have a command-job status. They are
+    // active by definition; normalize them to running for the compact UI.
+    const status = blocker.status === undefined && blocker.kind === 'run' ? 'running' : blocker.status
+    if (status !== 'running' && status !== 'cancelling') return undefined
+    const result: SourceChangeWaitBlocker = { status, ...(blocker.kind ? { kind: blocker.kind } : {}) }
+    for (const key of ['id', 'sessionId', 'ownerSessionId', 'runId', 'ownerRunId', 'jobId', 'cwd'] as const) {
+      const entry = blocker[key]
+      if (typeof entry === 'string' && entry.length <= 512) result[key] = entry
+    }
+    blockers.push(result)
+  }
+  return { mode: 'external-writer', startedAt: value.startedAt, pollMs: value.pollMs,
+    stableWindowMs: value.stableWindowMs, blockers }
+}
+
+export function normalizeSourceChangeWaitStatus(raw: unknown): SourceChangeWaitStatus | null {
+  const value = asRecord(raw)
+  if (!value || typeof value.ready !== 'boolean' ||
+    !['external-writer', 'source-changing', 'stable-window', 'ready'].includes(String(value.reason)) ||
+    typeof value.observedAt !== 'number' || !Number.isFinite(value.observedAt) ||
+    (value.stableSince !== undefined && (typeof value.stableSince !== 'number' || !Number.isFinite(value.stableSince))) ||
+    typeof value.stableWindowMs !== 'number' || !Number.isFinite(value.stableWindowMs) || value.stableWindowMs < 0 ||
+    !Array.isArray(value.blockers) || value.blockers.length > 16) return null
+  const blockers: SourceChangeWaitBlocker[] = []
+  for (const item of value.blockers) {
+    const blocker = asRecord(item)
+    if (!blocker || (blocker.status !== undefined && blocker.status !== 'running' && blocker.status !== 'cancelling')) return null
+    blockers.push({
+      ...(typeof blocker.sessionId === 'string' ? { sessionId: blocker.sessionId } : {}),
+      ...(typeof blocker.runId === 'string' ? { runId: blocker.runId } : {}),
+      ...(typeof blocker.jobId === 'string' ? { jobId: blocker.jobId } : {}),
+      ...(blocker.status ? { status: blocker.status } : { status: 'running' })
+    })
+  }
+  return { ready: value.ready, reason: value.reason as SourceChangeWaitStatus['reason'], observedAt: value.observedAt,
+    ...(value.stableSince !== undefined ? { stableSince: value.stableSince } : {}), stableWindowMs: value.stableWindowMs, blockers }
+}
+
+function sourceChangeWaitFrom(source: Record<string, unknown>): SourceChangeWait | undefined {
+  const nested = asRecord(source.sourceChange)
+  return sourceChangeWait(source.wait) ?? sourceChangeWait(source.sourceChangeWait) ??
+    sourceChangeWait(nested?.wait) ?? sourceChangeWait(asRecord(source.pendingAction)?.wait)
+}
+
 /**
  * 归一化一个 SSE 帧。
  *
@@ -129,18 +236,20 @@ export function normalizePending(payload: ChatSsePayload): PendingInteraction | 
     const description = readString(permission, 'description', 'question', 'message')
     const question = description || `安全策略拦截了 ${toolDisplayName(toolName)}，是否允许执行？`
     const args = Array.isArray(permission.args) ? null : asRecord(permission.args)
+    const sourceOptions = sourceChangeOptions(permission.options)
+    const wait = sourceOptions ? sourceChangeWaitFrom(permission) : undefined
+    const options = sourceOptions ?? PERMISSION_OPTIONS
     return {
       kind: 'permission',
       question,
-      options: PERMISSION_OPTIONS,
+      options,
       toolCallId,
       // 关键：授权回传必须用被拦截的真实工具名
       toolName,
       ...(args ? { args } : {}),
       multiSelect: false,
-      groups: [
-        { tab: '', question, options: PERMISSION_OPTIONS, multiSelect: false, allowInput: false }
-      ]
+      groups: [{ tab: '', question, options, multiSelect: false, allowInput: false }],
+      ...(sourceOptions ? { sourceChange: { choices: sourceOptions.map(option => option.value as SourceChangeChoice), ...(wait ? { wait } : {}) } } : {})
     }
   }
 
@@ -148,6 +257,9 @@ export function normalizePending(payload: ChatSsePayload): PendingInteraction | 
   if (ask) {
     const toolCallId = readString(ask, 'toolCallId', 'tool_call_id', 'id')
     if (!toolCallId) return null
+    // The stream sends an ask_user alias before the authoritative permission
+    // frame. Source-change values must never become an ask_user response.
+    if (sourceChangeOptions(ask.options)) return null
     return askInteraction(toolCallId, ask)
   }
 
@@ -241,5 +353,8 @@ export function normalizeRunPending(item: RootPending, runId: string): PendingIn
   const parsed = item.kind === 'ask'
     ? askInteraction(item.toolCallId, { ...item.args, ...(item.question ? { question: item.question } : {}), ...(item.options ? { options: item.options } : {}) })
     : normalizePending({ permissionRequest: { ...item, requestId: item.toolCallId } })
-  return parsed ? { ...parsed, requestId: item.requestId, runId, status: item.status, output: item.output } : null
+  if (!parsed) return null
+  const wait = sourceChangeWaitFrom(item as unknown as Record<string, unknown>)
+  return { ...parsed, requestId: item.requestId, runId, status: item.status, output: item.output,
+    ...(wait && parsed.sourceChange ? { sourceChange: { ...parsed.sourceChange, wait } } : {}) }
 }

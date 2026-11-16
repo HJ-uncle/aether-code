@@ -1,0 +1,189 @@
+<p>在 <code>aether-plugin.json</code> 的 <code>contributes</code> 中声明。以下位置均已开放；发布并启用插件后生效。开发模式可先预览页面和测试工具。</p>
+<h2 id="common-fields">通用字段</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>id</code></td>
+<td>必填，局部 ID；小写字母开头，允许数字和连字符，最多 48 字符；同类内唯一</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>必填，显示名称，1–120 字符</td>
+</tr>
+<tr>
+<td><code>scope</code></td>
+<td><code>global</code>（默认）或 <code>session</code>；后者需要绑定会话</td>
+</tr>
+<tr>
+<td><code>when</code></td>
+<td><code>{ session?, workspace?, engineReady? }</code>，每项为布尔值，条件同时满足才显示</td>
+</tr>
+<tr>
+<td><code>order</code></td>
+<td>−1000 至 1000 的整数；控制同类插件条目的排序</td>
+</tr>
+</tbody></table>
+<p>页面、工具、命令引用均填写本插件的局部 ID。<code>scope: &quot;global&quot;</code> 不代表可读取所有会话。</p>
+<h2 id="pages">pages</h2>
+<p>定义页面。页面定义本身不增加导航入口。</p>
+<table>
+<thead>
+<tr>
+<th><code>kind</code></th>
+<th>必要字段</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tool</code></td>
+<td><code>id, title, kind</code>；可选 <code>tool</code></td>
+<td>自动生成工具参数表单</td>
+</tr>
+<tr>
+<td><code>webview</code></td>
+<td><code>id, title, kind, entry, tools</code></td>
+<td>自包含 HTML 界面</td>
+</tr>
+<tr>
+<td><code>native</code></td>
+<td><code>id, title, kind, entry</code>；可选 <code>tools</code>，默认 <code>[]</code></td>
+<td><a href="native.html">JSON 原生组件</a></td>
+</tr>
+</tbody></table>
+<pre><code class="language-json">{ &quot;pages&quot;: [{ &quot;id&quot;: &quot;main&quot;, &quot;title&quot;: &quot;质量检查&quot;, &quot;kind&quot;: &quot;webview&quot;, &quot;entry&quot;: &quot;ui/main.html&quot;, &quot;tools&quot;: [&quot;review&quot;] }] }
+</code></pre>
+<p><code>entry</code> 为包内 <code>.html</code> 或 <code>.json</code> 路径；<code>tools</code> 为该页面可直接调用的工具白名单。使用平台 API 另需对应权限。</p>
+<h2 id="navigation">navigation</h2>
+<p>在左侧主导航添加页面入口。必要字段：<code>id, title, page</code>；可选 <code>icon</code>。</p>
+<pre><code class="language-json">{ &quot;navigation&quot;: [{ &quot;id&quot;: &quot;quality&quot;, &quot;title&quot;: &quot;质量检查&quot;, &quot;page&quot;: &quot;main&quot;, &quot;icon&quot;: &quot;puzzle&quot; }] }
+</code></pre>
+<h2 id="workspace-tabs">workspaceTabs</h2>
+<p>在右侧工作区添加可关闭页签，通过会话标题栏的「更多工作区」菜单打开。收起工作区会保留当前会话已打开的页签及顺序，仍可从该菜单选择插件页签并重新展开；点击页签的关闭按钮才会移除该页签。字段同 <code>navigation</code>。</p>
+<pre><code class="language-json">{ &quot;workspaceTabs&quot;: [{ &quot;id&quot;: &quot;quality&quot;, &quot;title&quot;: &quot;质量检查&quot;, &quot;page&quot;: &quot;main&quot;, &quot;scope&quot;: &quot;session&quot; }] }
+</code></pre>
+<h2 id="commands">commands</h2>
+<p>注册可从命令面板、菜单或快捷键执行的操作。必要字段：<code>id, title</code>，并在 <code>tool</code>、<code>page</code> 中二选一。可选 <code>args, shortcut</code>。</p>
+<pre><code class="language-json">{
+  &quot;commands&quot;: [
+    { &quot;id&quot;: &quot;review&quot;, &quot;title&quot;: &quot;检查当前目标&quot;, &quot;tool&quot;: &quot;review&quot;, &quot;shortcut&quot;: &quot;Mod+Shift+Y&quot; },
+    { &quot;id&quot;: &quot;open&quot;, &quot;title&quot;: &quot;打开检查页面&quot;, &quot;page&quot;: &quot;main&quot; }
+  ]
+}
+</code></pre>
+<p>快捷键仅在应用窗口活动时生效；<code>Mod</code> 对应 macOS 的 Command、其他平台的 Control。保留菜单入口，避免快捷键冲突。</p>
+<h2 id="menus">menus</h2>
+<p>将命令放到指定操作区域。必要字段：<code>id, title, location, command</code>。</p>
+<pre><code class="language-json">{ &quot;menus&quot;: [{ &quot;id&quot;: &quot;review-message&quot;, &quot;title&quot;: &quot;检查这条消息&quot;, &quot;location&quot;: &quot;message.actions&quot;, &quot;command&quot;: &quot;review&quot;, &quot;scope&quot;: &quot;session&quot; }] }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>location</code></th>
+<th>位置</th>
+<th>提供的目标上下文</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>message.actions</code></td>
+<td>会话消息操作菜单，包括补充消息</td>
+<td>消息 ID、角色、所属会话；只读转录不显示此菜单</td>
+</tr>
+<tr>
+<td><code>session.context</code></td>
+<td>左侧会话列表右键菜单</td>
+<td>被点击的会话；当前不包含顶部会话菜单和项目页会话菜单</td>
+</tr>
+<tr>
+<td><code>file.context</code></td>
+<td>工作区文件树右键菜单</td>
+<td>单个文件/目录路径；不传多选路径列表</td>
+</tr>
+<tr>
+<td><code>editor.context</code></td>
+<td>已接入的代码预览右键菜单</td>
+<td>文件路径、打开菜单时的选择文本</td>
+</tr>
+<tr>
+<td><code>editor.toolbar</code></td>
+<td>该代码预览工具栏</td>
+<td>文件路径、选择文本</td>
+</tr>
+<tr>
+<td><code>app.menu</code></td>
+<td>顶部应用菜单的插件操作</td>
+<td>当前会话、工作区</td>
+</tr>
+<tr>
+<td><code>service.context</code></td>
+<td>会话标题栏服务，以及底部活动、历史条目的右键菜单</td>
+<td>当前显示区域的上下文；仍有实时实例的条目提供目标 ID</td>
+</tr>
+<tr>
+<td><code>composer.toolbar</code></td>
+<td>输入框工具栏</td>
+<td>当前输入目标、会话</td>
+</tr>
+</tbody></table>
+<p>工具内通过 <code>$AE.context()</code> 读取目标。不同预览器拥有不同能力；<code>editor.*</code> 当前不覆盖成果文本、图片、PDF、Office 文档等所有预览。</p>
+<p><code>service.context</code> 也可出现在通知与持久历史摘要的菜单中。这些摘要不保证提供 <code>targetId</code> 或来源会话；不要把菜单的当前会话当作条目的来源会话。</p>
+<h2 id="views">views</h2>
+<p>把页面嵌入现有区域。必要字段：<code>id, title, location, page</code>；可选 <code>height</code>（40–1200，默认 280）。</p>
+<pre><code class="language-json">{ &quot;views&quot;: [{ &quot;id&quot;: &quot;review-card&quot;, &quot;title&quot;: &quot;消息检查&quot;, &quot;location&quot;: &quot;message.inline&quot;, &quot;page&quot;: &quot;main&quot;, &quot;scope&quot;: &quot;session&quot;, &quot;height&quot;: 240 }] }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>location</code></th>
+<th>位置</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>message.inline</code></td>
+<td>消息内部，可收起的扩展区域</td>
+</tr>
+<tr>
+<td><code>composer.panel</code></td>
+<td>输入框扩展区域</td>
+</tr>
+<tr>
+<td><code>workspace.panel</code></td>
+<td>工作区附加面板</td>
+</tr>
+</tbody></table>
+<p>默认收起，展开才加载；可同时展开多个，收起后释放页面。子代理转录也会复用消息内嵌区域，但当前没有专门的子代理运行 ID 上下文。</p>
+<h2 id="status-bar">statusBar</h2>
+<p>在底部状态栏添加命令入口。必要字段：<code>id, title, command</code>；可选 <code>icon</code>。</p>
+<pre><code class="language-json">{ &quot;statusBar&quot;: [{ &quot;id&quot;: &quot;review&quot;, &quot;title&quot;: &quot;质量检查&quot;, &quot;command&quot;: &quot;open&quot;, &quot;icon&quot;: &quot;puzzle&quot; }] }
+</code></pre>
+<h2 id="settings">settings</h2>
+<p>在全局设置中添加插件页面，支持按页面名称搜索。必要字段：<code>id, title, page</code>。</p>
+<pre><code class="language-json">{ &quot;settings&quot;: [{ &quot;id&quot;: &quot;preferences&quot;, &quot;title&quot;: &quot;质量检查设置&quot;, &quot;page&quot;: &quot;preferences&quot; }] }
+</code></pre>
+<p>设置数据使用 <a href="platform.html#settings"><code>$AE.settings</code></a> 保存；当前不是自动生成设置字段的 Schema。</p>
+<h2 id="editor-decorations">editorDecorations</h2>
+<p>在已接入的代码预览显示内容标记及提示。必要字段：<code>id, title, text</code>；可选 <code>pattern, tooltip, severity</code>。</p>
+<pre><code class="language-json">{ &quot;editorDecorations&quot;: [{ &quot;id&quot;: &quot;todo&quot;, &quot;title&quot;: &quot;待办&quot;, &quot;pattern&quot;: &quot;TODO&quot;, &quot;text&quot;: &quot;文件包含待办项&quot;, &quot;severity&quot;: &quot;info&quot; }] }
+</code></pre>
+<p><code>pattern</code> 为最长 200 字符的内容字面子串，<strong>不是文件 glob 或正则</strong>；每项最多标记 100 处。省略时只显示状态提示。<code>severity</code> 为 <code>info</code>、<code>warning</code> 或 <code>error</code>。</p>
+<h2 id="services">services</h2>
+<p>声明插件服务条目。必要字段：<code>id, title, tool</code>；可选 <code>stopTool, statusTool, page, args</code>。</p>
+<p>会话作用域中运行或等待处理的服务显示在当前会话标题栏的「服务」中；完成、停止或失败的记录在同一弹层的「服务历史」中查看，按会话区分。未运行的 <code>idle</code> 服务不显示在这两个列表中，仍可通过 SDK 读取和启动。全局服务通过插件页面和 SDK 管理。底部「活动」与「历史」承载通知，不汇总服务记录；服务状态变化不会自动产生通知，通知使用 <a href="page.html#notify"><code>$AE.ui.notify</code></a> 发送。</p>
+<pre><code class="language-json">{ &quot;services&quot;: [{ &quot;id&quot;: &quot;timer&quot;, &quot;title&quot;: &quot;计时器&quot;, &quot;tool&quot;: &quot;start_timer&quot;, &quot;stopTool&quot;: &quot;stop_timer&quot;, &quot;statusTool&quot;: &quot;timer_status&quot;, &quot;page&quot;: &quot;main&quot;, &quot;scope&quot;: &quot;session&quot; }] }
+</code></pre>
+<p>页面通过 <a href="page.html#services"><code>$AE.services</code></a> 启动、停止和刷新。工具返回：</p>
+<pre><code class="language-json">{ &quot;result&quot;: { &quot;status&quot;: &quot;running&quot;, &quot;detail&quot;: &quot;等待完成&quot;, &quot;completesAt&quot;: 1893456000000 } }
+</code></pre>
+<p><code>status</code> 为 <code>idle/running/waiting/completed/stopped/error</code>；<code>detail</code> 为说明。可选 <code>completesAt</code> 是毫秒时间戳，实际使用时设置为未来 7 天内；到期后显示完成。服务状态不是持久调度，跨重启任务使用 <a href="events.html#background"><code>background</code></a>。</p>
+<h2 id="hooks">hooks</h2>
+<p>用事件触发工具。定义与示例见 <a href="events.html#hooks">事件 hooks</a>。</p>
+<h2 id="background">background</h2>
+<p>声明可恢复的周期任务。定义与示例见 <a href="events.html#background">后台任务</a>。</p>
+<h2 id="icons">图标</h2>
+<p><code>navigation</code>、<code>workspaceTabs</code>、<code>statusBar</code> 支持 <code>puzzle</code>、<code>clock</code>、<code>clock-outline</code>、<code>activity</code>、<code>terminal</code>、<code>folder</code>、<code>file</code>、<code>bell</code>、<code>settings</code>、<code>globe</code>、<code>users</code>。未识别名称显示默认拼图图标。</p>
+<h2 id="unsupported-regions">尚不能直接声明的区域</h2>
+<p>当前没有专用的对话多选、附件处理、工具结果渲染、子代理运行详情、项目详情、成果预览、浏览器网页工具栏、终端工具栏挂载声明。不要在 <code>location</code> 中填写自行命名的位置；未支持字段会被拒绝。</p>

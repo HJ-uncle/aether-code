@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="{{description}}">
+  <title>{{title}} · Aether</title>
+  <script>
+    (() => {
+      let mode = 'system';
+      try { const saved = localStorage.getItem('aether-plugin-docs-theme'); if (['light', 'dark', 'system'].includes(saved)) mode = saved; } catch {}
+      document.documentElement.dataset.themeMode = mode;
+      document.documentElement.dataset.appearance = mode === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode;
+    })();
+  </script>
+  <link rel="stylesheet" href="assets/tokens.css">
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="assets/app.js" defer></script>
+</head>
+<body data-page="{{pageId}}">
+  <a class="skip-link" href="#main-content">跳到正文</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <button id="navigation-open" class="icon-button navigation-toggle" type="button" aria-label="打开文档导航" aria-haspopup="dialog" aria-controls="navigation-dialog" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+      </button>
+      <a class="brand" href="index.html" aria-label="Aether 插件 API 首页"><span class="brand-name">Aether</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">插件 API</span></a>
+      <div class="header-actions">
+        <button id="search-open" class="search-trigger" type="button" aria-label="搜索文档" aria-haspopup="dialog" aria-controls="search-dialog" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg>
+          <span>搜索文档</span><kbd data-search-shortcut>Ctrl K</kbd>
+        </button>
+        <div class="theme-control">
+          <button id="theme-toggle" class="icon-button" type="button" aria-label="选择外观" title="选择外观" aria-haspopup="menu" aria-expanded="false" aria-controls="theme-menu" hidden>
+            <svg data-theme-icon="system" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
+            <svg data-theme-icon="light" viewBox="0 0 24 24" aria-hidden="true" hidden><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5" /></svg>
+            <svg data-theme-icon="dark" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M20 14.7A8.5 8.5 0 0 1 9.3 4a8.5 8.5 0 1 0 10.7 10.7Z" /></svg>
+          </button>
+          <div id="theme-menu" class="theme-menu" role="menu" aria-label="外观" hidden>
+            <button type="button" role="menuitemradio" aria-checked="true" data-theme="system">跟随系统<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg></button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-theme="light">浅色<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg></button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-theme="dark">深色<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+  <div class="documentation-layout">
+    <aside id="desktop-navigation" class="site-navigation">
+      <div class="sidebar-heading">开发者文档<span class="version-label">API v1</span></div>
+      {{navigation}}
+      <div class="sidebar-footer">Aether 插件开发</div>
+    </aside>
+    <main id="main-content" class="document-main" tabindex="-1">
+      <div class="page-heading">
+        <p class="eyebrow">AETHER · PLUGINS</p>
+        <h1>{{title}}</h1>
+        <p class="page-description">{{description}}</p>
+      </div>
+      <article class="prose">
+        {{content}}
+      </article>
+      <nav class="pagination" aria-label="相邻文档">{{pagination}}</nav>
+      <footer class="document-footer"><a href="index.html">Aether 插件 API</a><span>基于平台能力，自由构建。</span></footer>
+    </main>
+    <aside class="page-outline">{{toc}}</aside>
+  </div>
+  <dialog id="navigation-dialog" class="navigation-dialog" aria-labelledby="navigation-title">
+    <div class="dialog-heading"><h2 id="navigation-title">文档导航</h2><button type="button" class="icon-button" data-close-navigation aria-label="关闭文档导航"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button></div>
+    <div id="mobile-navigation-content"></div>
+  </dialog>
+  <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title">
+    <h2 id="search-title" class="visually-hidden">搜索文档</h2>
+    <form id="search-form" class="search-form" role="search">
+      <svg class="search-input-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg>
+      <label for="search-input" class="visually-hidden">搜索全部文档</label>
+      <input id="search-input" type="search" placeholder="搜索 API、能力或关键词…" autocomplete="off" autocapitalize="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="search-results" aria-describedby="search-status">
+      <button type="button" class="search-close" data-close-search aria-label="关闭搜索"><kbd>Esc</kbd></button>
+    </form>
+    <div class="search-results-heading"><span id="search-status" role="status" aria-live="polite"></span><span class="search-scope">全部文档</span></div>
+    <ul id="search-results" class="search-results" role="listbox" aria-label="搜索结果"></ul>
+    <p id="search-empty" class="search-empty" hidden>没有找到相关内容。试试能力名称，例如 AI、工作区或权限。</p>
+    <div class="search-footer"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> 关闭</span></div>
+  </dialog>
+  <div id="feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script type="application/json" id="search-index">{{searchIndex}}</script>
+</body>
+</html>

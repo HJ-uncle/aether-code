@@ -32,6 +32,7 @@ import { cancelRemoteAttachmentUpload, uploadRemoteAttachment } from './engine/u
 import { saveWorkspaceFile } from './engine/save-workspace-file'
 import { readWorkspaceAttachment } from './engine/read-workspace-attachment'
 import { engineHost } from './engine/host'
+import { StreamAcknowledgement } from './engine/stream-acknowledgement'
 import { getEngineResourceSnapshot, getEngineStorageSnapshot } from './engine/diagnostics'
 import type { EngineDiagnostics } from '../shared/engine-diagnostics'
 import { onEngineLog } from './engine/logger'
@@ -65,14 +66,16 @@ import { importLocalRuntime } from './engine/import-local-runtime'
 import { getActiveRuntimeId, listLocalRuntimes, removeLocalRuntime, setActiveRuntimeId } from './engine/local-runtime-store'
 import type { EngineImportProgress, EngineRuntimeCatalog } from '../shared/engine-import'
 import { assertTrustedRenderer } from './ipc-security'
-import { engineIdentityOf } from './engine/protocol'
+import { engineIdentityOf, engineTargetError, normalizeEnginePath } from './engine/protocol'
 
 interface OwnedEngineStream {
   controller: AbortController
   sender: WebContents
   streamId: string
   routeId: string
+  catalogue?: boolean
   rejection?: StreamStartResult['rejection']
+  acknowledgement?: StreamAcknowledgement
 }
 /** Renderer stream names are local to a window, never global cancellation keys. */
 const activeStreams = new Map<string, OwnedEngineStream>()
@@ -91,6 +94,7 @@ function cleanupStreamSenderDestroyHandler(senderId: number): void {
   const owned = streamSenderDestroyHandlers.get(senderId)
   if (!owned) return
   owned.sender.removeListener('destroyed', owned.listener)
+  owned.sender.removeListener('render-process-gone', owned.listener)
   streamSenderDestroyHandlers.delete(senderId)
 }
 
@@ -103,10 +107,13 @@ function ensureStreamSenderDestroyHandler(sender: WebContents): void {
       owner.controller.abort()
       activeStreams.delete(key)
     }
+    sender.removeListener('destroyed', listener)
+    sender.removeListener('render-process-gone', listener)
     streamSenderDestroyHandlers.delete(sender.id)
   }
   streamSenderDestroyHandlers.set(sender.id, { sender, listener })
   sender.once('destroyed', listener)
+  sender.once('render-process-gone', listener)
 }
 
 function ensureNotActivatingRuntime(): void {
@@ -380,7 +387,15 @@ export function registerIpcHandlers(): void {
     assertTrustedRenderer(event, '引擎流式请求')
     if (typeof input.streamId !== 'string' || !input.streamId.trim() || input.streamId.length > 256)
       throw new Error('无效的引擎流标识')
+    if (input.flowControl !== undefined && input.flowControl !== 'ack') throw new Error('无效的流量控制协议')
     const boundInput = input.expectedEngine ? input : { ...input, expectedEngine: engineIdentityOf(engineHost.getSnapshot()) }
+    const catalogue = boundInput.method === 'GET' && normalizeEnginePath(boundInput.path).split('?')[0] === '/api/v1/plugins/runtime/changes'
+    // A reloaded/crashed renderer may not release its app-lifetime subscription.
+    // Each window owns one catalogue feed; chat streams keep their independent IDs.
+    if (catalogue && !engineTargetError(engineHost.getSnapshot(), boundInput.expectedEngine)) for (const [oldKey, owner] of activeStreams) {
+      if (!owner.catalogue || owner.sender.id !== event.sender.id) continue
+      streamRoutes.delete(owner.routeId); owner.controller.abort(); activeStreams.delete(oldKey)
+    }
     const key = engineStreamKey(event.sender.id, boundInput.streamId)
     const previous = activeStreams.get(key)
     if (previous) {
@@ -390,14 +405,19 @@ export function registerIpcHandlers(): void {
 
     const controller = new AbortController()
     const routeId = JSON.stringify([event.sender.id, boundInput.streamId, ++streamGeneration])
-    const owner: OwnedEngineStream = { controller, sender: event.sender, streamId: boundInput.streamId, routeId }
+    const owner: OwnedEngineStream = { controller, sender: event.sender, streamId: boundInput.streamId, routeId, catalogue,
+      ...(boundInput.flowControl === 'ack' ? { acknowledgement: new StreamAcknowledgement() } : {}) }
     activeStreams.set(key, owner)
     streamRoutes.set(routeId, owner)
     streamResults.set(routeId, owner)
     ensureStreamSenderDestroyHandler(event.sender)
 
     try {
-      await engineHost.stream(routeId, boundInput.path, boundInput.body, controller.signal, boundInput.method, boundInput.query, boundInput.expectedEngine, boundInput.toolProfile, boundInput.subagentProtocol)
+      await engineHost.stream(routeId, boundInput.path, boundInput.body, controller.signal, boundInput.method, boundInput.query, boundInput.expectedEngine, boundInput.toolProfile, boundInput.subagentProtocol,
+        owner.acknowledgement ? (payload, signal) => owner.acknowledgement!.deliver(ackId => {
+          if (owner.sender.isDestroyed()) { controller.abort(); return }
+          owner.sender.send(IPC.event.streamEvent, { ...payload, streamId: owner.streamId, ackId })
+        }, signal) : undefined)
     } finally {
       streamRoutes.delete(routeId)
       streamResults.delete(routeId)
@@ -406,6 +426,13 @@ export function registerIpcHandlers(): void {
       cleanupStreamSenderDestroyHandler(event.sender.id)
     }
     return owner.rejection ? { ok: false, rejection: owner.rejection } : { ok: true }
+  })
+
+  ipcMain.handle(IPC.invoke.engineStreamAck, (event, streamId: unknown, ackId: unknown) => {
+    assertTrustedRenderer(event, '引擎流式消费确认')
+    if (typeof streamId !== 'string' || typeof ackId !== 'string') return { ok: false }
+    const owner = activeStreams.get(engineStreamKey(event.sender.id, streamId))
+    return { ok: owner?.acknowledgement?.acknowledge(ackId) ?? false }
   })
 
   ipcMain.handle(IPC.invoke.engineStreamAbort, (event, streamId: string) => {

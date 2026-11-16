@@ -1,6 +1,6 @@
 import { emptyServiceNotifications, type ServiceNotificationState } from './service-model'
 
-/** Rail and sidebar instances share read state while one of them is kept alive. */
+/** Read state survives page changes while notices retain their session scope. */
 export class ServiceNotificationMemory {
   private value = emptyServiceNotifications
   private readonly listeners = new Set<() => void>()

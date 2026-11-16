@@ -81,14 +81,16 @@ const commandScript = 'const reports = [];\n' + Array.from({ length: 60 }, (_, i
   '\nconsole.log(JSON.stringify({ reports, note: "原样保留分号 ; 和空格" }));\n// COMMAND_ARGV_END_完整脚本末尾'
 const commandArgvArgs = { command: 'node', args: ['-e', commandScript], cwd: 'mcp-test-server', timeoutMs: 120000,
   options: { keepOriginal: true, limits: { retries: 0, label: null }, destinations: ['第一处', '第二处'] } }
-type Scenario = 'create' | 'update' | 'delete' | 'command' | 'command-argv' | 'questions' | 'single-question' | 'long-multi-question' | 'plugin-create' | 'plugin-update' | 'plugin-delete' | 'knowledge-create' | 'knowledge-import' | 'skill-create' | 'cron-create' | 'mcp-create'
+type Scenario = 'create' | 'update' | 'delete' | 'command' | 'command-argv' | 'source-change' | 'source-change-wait' | 'questions' | 'single-question' | 'long-multi-question' | 'plugin-create' | 'plugin-update' | 'plugin-compact-update' | 'plugin-delete' | 'knowledge-create' | 'knowledge-import' | 'skill-create' | 'cron-create' | 'mcp-create'
 type Decision = 'approved' | 'rejected'
 const errors: string[] = [], forbidden: string[] = [], history: EngineHistoryRow[] = [], projection: ChatSsePayload[] = []
 const chats: Record<string, unknown>[] = [], decisions: Array<{ sessionId: string; runId: string; toolResponse: Record<string, unknown> }> = []
 const securityWrites: Array<{ sessionId: string; mode: string }> = [], audit: string[] = []
+const securityModes = new Map<string, string>()
 const admissions = new Map<string, { admission: Record<string, unknown>; run: RootRun }>()
 let current: RootRun | undefined, activeStream: ServerResponse | undefined, ordinal = 0, scenario: Scenario = 'create'
-let expectedDecision: string | null = null, allowFullAccess = false, securityMode = 'safe'
+let expectedDecision: string | null = null, allowFullAccess = false, failNextSecurityWrite = false
+let securityWriteGate: Promise<void> | undefined, releaseSecurityWrite: (() => void) | undefined
 let app: ElectronApplication | undefined, page: Page, fixture = ''
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
@@ -96,6 +98,32 @@ const attempt = (): string => `permission-attempt-${current?.runId ?? 'none'}-${
 
 function pendingFor(kind: Scenario, sequence: number): RootPending {
   const common = { requestId: `permission-request-${sequence}`, toolCallId: `permission-tool-call-${sequence}`, kind: 'permission' as const, status: 'pending' as const }
+  if (kind === 'source-change' || kind === 'source-change-wait') {
+    const choices = ['pause', 'recheck', 'rebuild', 'skip'] as const
+    const root = `${workspaceRoot}/src`
+    const wait = kind === 'source-change-wait' ? {
+      mode: 'external-writer' as const, startedAt: 100, pollMs: 2_000, stableWindowMs: 1_500,
+      blockers: [{ sessionId: 'other-session', runId: 'other-run', jobId: 'other-job', cwd: root, status: 'running' as const }]
+    } : undefined
+    return { ...common, toolName: 'write_file', args: { path: `${root}/app.ts`, expectedHash: 'sha256:before' },
+      description: '写入期间检测到外部源码变化，候选结果尚未写入。', options: [...choices],
+      pendingAction: { type: 'source_change', protocolVersion: 1, phase: 'write', operation: 'write_file', root,
+        before: { protocolVersion: 1, kind: 'files', root, files: [{ path: `${root}/app.ts`, hash: 'sha256:before', byteLength: 12 }], capturedAt: 1 },
+        after: { protocolVersion: 1, kind: 'files', root, files: [{ path: `${root}/app.ts`, hash: 'sha256:after', byteLength: 18 }], capturedAt: 2 },
+        changes: [{ path: `${root}/app.ts`, before: { path: `${root}/app.ts`, hash: 'sha256:before', byteLength: 12 }, after: { path: `${root}/app.ts`, hash: 'sha256:after', byteLength: 18 }, kind: 'modified' }],
+        choices: [...choices], defaultChoice: 'pause', reason: '写入期间检测到外部源码变化，未静默覆盖外部编辑。', risk: 'external-source-change', ...(wait ? { wait } : {}) } }
+  }
+  if (kind === 'plugin-compact-update') {
+    const digest = { bytes: 123, sha256: 'a'.repeat(64) }
+    const preview = { action: 'plugin_update', id: pluginManifest.id, name: pluginManifest.name, version: '1.1.0', expectedRevision: 3,
+      fileCount: 6, totalBytes: 10000, changes: { added: 1, modified: 1, deleted: 1 }, changedFileCount: 3,
+      fileListComplete: false, omittedFileChanges: 1, files: [
+        { path: 'main.mjs', change: 'modified', before: digest, after: { bytes: 135, sha256: 'b'.repeat(64) } },
+        { path: 'old.mjs', change: 'deleted', before: digest }
+      ] }
+    return { ...common, toolName: 'plugin_update', args: { id: pluginManifest.id, expectedRevision: 3 },
+      description: `编辑插件确认\n\n${JSON.stringify(preview, null, 2)}\n\n确认后执行以上操作。` }
+  }
   if (kind === 'questions') return { ...common, kind: 'ask', toolName: 'ask_user', args: { questions: questionGroups } }
   if (kind === 'single-question') return { ...common, kind: 'ask', toolName: 'ask_user', args: { question: singleQuestion, options: [] }, question: singleQuestion }
   if (kind === 'long-multi-question') return { ...common, kind: 'ask', toolName: 'ask_user', args: { questions: [longMultiQuestion] } }
@@ -181,7 +209,7 @@ function requestPermission(): void {
   const pending = pendingFor(scenario, current.seq)
   if (pending.kind === 'ask') publish({ ask_user: { toolCallId: pending.toolCallId, ...pending.args } })
   else {
-    publish({ ask_user: { toolCallId: pending.toolCallId, question: pending.description, options: ['approved', 'rejected'] } })
+    publish({ ask_user: { toolCallId: pending.toolCallId, question: pending.description, options: pending.options ?? ['approved', 'rejected'] } })
     publish({ permissionRequest: { ...pending, requestId: pending.toolCallId } })
   }
   publish({ run: updateRun({ status: 'waiting', pending: [pending] }) })
@@ -254,7 +282,14 @@ const server = createServer((request, response) => { void (async () => {
     if (!current || current.status !== 'waiting' || !allowFullAccess || input.sessionId !== current.sessionId || input.mode !== 'full-access')
       throw new Error(`Unexpected security write: ${JSON.stringify(input)}`)
     securityWrites.push({ sessionId: current.sessionId, mode: input.mode }); audit.push('security')
-    securityMode = input.mode; response.end(envelope({ sessionId: current.sessionId, mode: securityMode })); return
+    if (failNextSecurityWrite) {
+      failNextSecurityWrite = false
+      response.writeHead(503).end(JSON.stringify({ code: 503, message: '测试权限写入失败', data: null })); return
+    }
+    const ownerSessionId = current.sessionId
+    await securityWriteGate
+    securityModes.set(ownerSessionId, input.mode)
+    response.end(envelope({ sessionId: ownerSessionId, mode: input.mode })); return
   }
   if (path === '/api/v1/workspace/bind' && request.method === 'POST') {
     if (typeof input.sessionId !== 'string' || input.workspaceRoot !== workspaceRoot) throw new Error('Unexpected workspace binding')
@@ -287,7 +322,7 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/subagent/capabilities' ? { schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true }
     : path === '/api/v1/collaboration/capabilities' ? { protocolVersion: 1, userControllerMutation: false, rootUserControllerMutation: false }
     : /\/sessions\/[^/]+\/binding$/.test(path) ? { started: Boolean(matching), agentId: null, metadata: null, agent: null }
-    : path === '/api/v1/security/mode' ? { mode: securityMode, sessionId }
+    : path === '/api/v1/security/mode' ? { mode: securityModes.get(sessionId) ?? 'safe', sessionId }
     : path === '/api/v1/memory/settings' ? { memoryScope: 'session', effectiveScope: 'session', enabled: false, sessionId }
     : path === '/api/v1/workspace/directory' ? { root: workspaceRoot, bindingEpoch: 'one', entries: [] }
     : path === '/api/v1/settings' ? {} : []
@@ -315,7 +350,8 @@ async function shot(name: string): Promise<void> {
   const path = test.info().outputPath(`${name}.png`); await page.screenshot({ path }); await test.info().attach(name, { path, contentType: 'image/png' })
 }
 async function start(kind: Scenario, appearance: 'light' | 'dark' = 'light', width = 1440): Promise<RootPending> {
-  scenario = kind; expectedDecision = null; allowFullAccess = false; securityMode = 'safe'
+  scenario = kind; expectedDecision = null; allowFullAccess = false; failNextSecurityWrite = false
+  releaseSecurityWrite?.(); releaseSecurityWrite = undefined; securityWriteGate = undefined
   chats.length = 0; decisions.length = 0; securityWrites.length = 0; audit.length = 0
   await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
@@ -337,7 +373,8 @@ async function start(kind: Scenario, appearance: 'light' | 'dark' = 'light', wid
     await expect(submit).toBeDisabled()
   } else {
     await expect(card()).toHaveCount(1)
-    await expect(card().getByRole('button', { name: '拒绝', exact: true })).toBeEnabled()
+    if (kind === 'source-change-wait') await expect(card().getByRole('status')).toHaveText('正在等待 其他会话 结束，完成后自动复核并继续。')
+    else await expect(card().getByRole('button', { name: kind === 'source-change' ? '重新检查' : '拒绝', exact: true })).toBeEnabled()
   }
   return current!.pending[0]
 }
@@ -409,6 +446,7 @@ test.beforeAll(async () => {
   await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
 })
 test.afterEach(async ({}, info) => {
+  releaseSecurityWrite?.(); releaseSecurityWrite = undefined; securityWriteGate = undefined
   if (page && !page.isClosed()) await shot('permission-card-final')
   await info.attach('permission-side-effects', { body: JSON.stringify({ chats, decisions, securityWrites, audit, errors, forbidden }, null, 2), contentType: 'application/json' })
   expect(errors).toEqual([]); expect(forbidden).toEqual([])
@@ -533,17 +571,90 @@ for (const output of ['approved', 'rejected'] as const) test(`普通命令显示
   await decide(pending, output, card().getByRole('button', { name: output === 'approved' ? '允许执行' : '拒绝', exact: true }))
 })
 
+test('源码版本冲突只显示引擎提供的恢复选择，不能改为完全访问', async () => {
+  const pending = await start('source-change', 'light', 760)
+  expect(pending.options).toEqual(['pause', 'recheck', 'rebuild', 'skip'])
+  for (const label of ['暂停', '重新检查', '重新构建', '跳过']) {
+    await expect(card().getByRole('button', { name: label, exact: true })).toBeVisible()
+  }
+  await expect(card().getByRole('button', { name: '允许执行', exact: true })).toHaveCount(0)
+  await expect(card().getByRole('button', { name: '拒绝', exact: true })).toHaveCount(0)
+  await expect(card().getByRole('button', { name: '本会话改为完全访问并放行', exact: true })).toHaveCount(0)
+  await decide(pending, 'recheck', card().getByRole('button', { name: '重新检查', exact: true }))
+})
+
+test('源码占用时保留弹窗并只提示等待，结束后由引擎自动复核继续', async () => {
+  await start('source-change-wait')
+  await expect(card().getByRole('status')).toHaveText('正在等待 其他会话 结束，完成后自动复核并继续。')
+  await expect(card().getByRole('button', { name: '暂停', exact: true })).toHaveCount(0)
+  await expect(card().getByRole('button', { name: '重新检查', exact: true })).toHaveCount(0)
+  await expect(card().getByRole('button', { name: '重新构建', exact: true })).toHaveCount(0)
+  await expect(card().getByRole('button', { name: '跳过', exact: true })).toHaveCount(0)
+  await expect(card().getByRole('button', { name: '本会话改为完全访问并放行', exact: true })).toHaveCount(0)
+  expectUntouched()
+})
+
 test('完全访问仅在明确点击后写当前会话权限，再放行原始请求', async () => {
   const pending = await start('command')
   const sessionId = current!.sessionId
+  const otherSessionId = `other-session-${sessionId}`
+  securityModes.set(otherSessionId, 'standard')
   await expect(body()).toHaveCount(0)
   await expect(card().locator('.work-permission__raw')).toHaveCount(0)
   const raw = await openDetail('完整参数')
   expect(await raw.locator('.work-permission__raw').textContent()).toContain(JSON.stringify(pending.args, null, 2))
   await repeatCurrentDetail('完整参数'); expectUntouched()
-  await decide(pending, 'approved', card().getByRole('button', { name: '本会话改为完全访问并放行', exact: true }), true)
+  const fullAccess = card().getByRole('button', { name: '本会话改为完全访问并放行', exact: true })
+  await expect(fullAccess).toHaveAttribute('title', /仅对本会话生效.*后续操作确认自动通过.*提问仍需回答/)
+  await decide(pending, 'approved', fullAccess, true)
   expect(securityWrites).toEqual([{ sessionId, mode: 'full-access' }])
+  expect(securityModes.get(sessionId)).toBe('full-access')
+  expect(securityModes.get(otherSessionId)).toBe('standard')
   expect(audit).toEqual(['security', 'decision'])
+})
+
+test('完全访问写入失败保留原审批，不放行；明确重试成功后才提交', async () => {
+  const pending = await start('command')
+  const sessionId = current!.sessionId
+  allowFullAccess = true; expectedDecision = 'approved'; failNextSecurityWrite = true
+  const fullAccess = card().getByRole('button', { name: '本会话改为完全访问并放行', exact: true })
+  await fullAccess.click()
+  await expect(card().getByRole('alert')).toContainText('切换完全访问失败，尚未提交放行')
+  await expect(fullAccess).toBeEnabled()
+  expect(securityWrites).toEqual([{ sessionId, mode: 'full-access' }])
+  expect(securityModes.get(sessionId) ?? 'safe').toBe('safe')
+  expect(decisions).toEqual([])
+  expect(chats.filter(item => record(item.toolResponse))).toEqual([])
+  expect(current?.pending[0]).toMatchObject({ requestId: pending.requestId, status: 'pending' })
+  await decide(pending, 'approved', fullAccess, true)
+  expect(securityWrites).toEqual([{ sessionId, mode: 'full-access' }, { sessionId, mode: 'full-access' }])
+  expect(audit).toEqual(['security', 'security', 'decision'])
+})
+
+test('完全访问写入未返回时重复点击只写一次，成功后仅放行同一原请求一次', async () => {
+  const pending = await start('command')
+  const owned = current!
+  allowFullAccess = true; expectedDecision = 'approved'
+  securityWriteGate = new Promise<void>(resolve => { releaseSecurityWrite = resolve })
+  const fullAccess = card().getByRole('button', { name: '本会话改为完全访问并放行', exact: true })
+  try {
+    // Same-tick clicks exercise the synchronous lock before React can disable the button.
+    await fullAccess.evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click() })
+    await expect.poll(() => securityWrites.length).toBe(1)
+    await expect(fullAccess).toBeDisabled()
+    await expect(card()).toHaveAttribute('aria-busy', 'true')
+    expect(decisions).toEqual([])
+    expect(chats.filter(item => record(item.toolResponse))).toEqual([])
+    releaseSecurityWrite!()
+    await expect.poll(() => decisions).toEqual([{ sessionId: owned.sessionId, runId: owned.runId,
+      toolResponse: { requestId: pending.requestId, runId: owned.runId, toolCallId: pending.toolCallId, name: pending.toolName, output: 'approved' } }])
+    await expect(conversation()).toContainText(`PERMISSION_FINISHED_${owned.seq}`)
+    await expect(card()).toHaveCount(0)
+    expect(securityWrites).toEqual([{ sessionId: owned.sessionId, mode: 'full-access' }])
+    expect(audit).toEqual(['security', 'decision'])
+  } finally {
+    releaseSecurityWrite?.(); releaseSecurityWrite = undefined; securityWriteGate = undefined
+  }
 })
 
 for (const [appearance, width] of [['light', 1440], ['dark', 760]] as const) {
@@ -629,6 +740,24 @@ test('编辑插件展示新清单及精确源码，原始版本约束完整保�
   await expectDecisionsVisible('编辑插件'); expectUntouched(); await shot('plugin-update-preview')
   await decide(pending, 'approved', card().getByRole('button', { name: '编辑插件', exact: true }))
   expect(decisions[0].toolResponse.name).toBe('plugin_update'); expect(audit).toEqual(['decision'])
+})
+
+test('插件增量审批展示变更和省略提示，不需要私有源码且批准身份不变', async () => {
+  const pending = await start('plugin-compact-update', 'dark', 760)
+  expect(pending).not.toHaveProperty('pendingAction')
+  await expect(card().getByRole('heading', { name: '编辑插件', exact: true })).toBeVisible()
+  await expect(card().locator('.work-permission__summary')).toHaveText(pluginManifest.name)
+  await expectSinglePanel('文件变更')
+  const changes = body().getByRole('region', { name: '文件变更', exact: true })
+  await expect(changes).toContainText('还有 1 个文件变更未在此摘要展开')
+  await expect(changes).toContainText('main.mjs')
+  await expect(changes).toContainText('old.mjs')
+  await expect(card().locator('pre:visible')).toHaveCount(0)
+  await expectDecisionsVisible('编辑插件'); expectUntouched()
+  await shot('plugin-compact-update')
+  await decide(pending, 'approved', card().getByRole('button', { name: '编辑插件', exact: true }))
+  expect(decisions[0].toolResponse.name).toBe('plugin_update')
+  expect(audit).toEqual(['decision'])
 })
 
 test('创建知识库显示名称用途与结构化信息，确认保留原始请求标识', async () => {

@@ -3,7 +3,8 @@
 .work-plugin-app__canvas > form { min-width: 0; }
 .work-plugin-app__tool { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .work-plugin-app__tool > label { color: var(--fg-muted); font-size: 12px; }
-.work-plugin-app__tool > select { flex: 1; min-width: 0; }
+.work-plugin-app__tool > .select { flex: 1; min-width: 0; }
+.work-plugin-app__tool > .select .select__trigger { width: 100%; justify-content: space-between; }
 .work-plugin-app__tool > span { color: var(--fg-faint); font-size: 11px; }
 .work-plugin-app__description { color: var(--fg-muted); font-size: 12px; line-height: 1.6; margin: 0 0 24px; }
 .work-plugin-app__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px; }
@@ -11,9 +12,10 @@
 .work-plugin-app__field > label { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 12px; }
 .work-plugin-app__required { margin-left: auto; color: var(--fg-faint); font-size: 10px; font-weight: 400; }
 .work-plugin-app__field .ui-input { width: 100%; }
+.work-plugin-app__field > .select { display: flex; width: 100%; min-width: 0; }
+.work-plugin-app__field > .select .select__trigger { width: 100%; min-width: 0; }
 .work-plugin-app__field > p { margin: 0; color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
 .work-plugin-app__field--boolean { display: grid; grid-template-columns: 1fr auto; align-content: start; }
-.work-plugin-app__field--boolean > input { accent-color: var(--accent); }
 .work-plugin-app__field--boolean > p { grid-column: 1 / -1; }
 .work-plugin-app .work-plugin-app__field-error, .work-plugin-app__error { color: var(--danger-fg); font-size: 12px; line-height: 1.6; }
 .work-plugin-app__field [aria-invalid='true'] { border-color: var(--danger); }

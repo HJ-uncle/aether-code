@@ -7,6 +7,7 @@ import type { RootRun } from '../src/shared/root-run'
 import { finalAnswerForMessage } from '../src/renderer/src/core/engine/final-result'
 import { captureSessionCollaborationMembership, sessionMessagePresentation, sessionMessageTimeline, sessionTranscriptPresentation, type SessionPresentationSegment } from '../src/renderer/src/features/conversation/message-timeline'
 import { sessionMessageRunning } from '../src/renderer/src/features/conversation/tool-presentation'
+import { sessionProcessSections, type ProcessItem } from '../src/renderer/src/features/conversation/process-sections'
 
 function command(status: CommandJobStatus, id: string = status): ToolActivity {
   return { id, name: 'execute_command', args: '{"command":"npm test"}', result: `Full ${status} output`,
@@ -30,6 +31,44 @@ function processTools(presentation: SessionPresentationSegment[]): ToolActivity[
   return presentation.flatMap(segment => segment.kind === 'process'
     ? segment.segments.flatMap(item => item.kind === 'tools' || item.kind === 'collaboration' ? item.tools : item.kind === 'tool' ? [item.tool] : []) : [])
 }
+
+test('process sections preserve prose and follow-up boundaries without moving or losing reasoning', () => {
+  const followup: ChatMessage = { ...message('done', []), id: 'followup', role: 'user', content: '继续核对下一组。' }
+  const tools = Array.from({ length: 7 }, (_, index) => command('succeeded', `section-tool-${index}`))
+  const items: ProcessItem[] = [
+    { kind: 'thinking', key: 'leading-thought', text: '先确认原始边界。' },
+    { kind: 'content', key: 'prose-one', text: '先处理三个步骤。' },
+    { kind: 'tools', key: 'tools-one', tools: tools.slice(0, 3) },
+    { kind: 'content', key: 'prose-two', text: '继续处理四个步骤。' },
+    { kind: 'thinking', key: 'section-thought', text: '这段思考属于后面的工具组。' },
+    { kind: 'tools', key: 'tools-two', tools: tools.slice(3) },
+    { kind: 'followup', key: 'followup', message: followup },
+    { kind: 'thinking', key: 'trailing-thought', text: '保留最后一段思考。' }
+  ]
+  const original = structuredClone(items), result = sessionProcessSections(items)
+  expect(result.map(item => item.kind)).toEqual(['section', 'content', 'section', 'content', 'section', 'followup', 'section'])
+  const sections = result.filter(item => item.kind === 'section')
+  expect(sections.map(item => [item.key, item.toolCount, item.thinkingCount])).toEqual([
+    ['leading-thought', 0, 1], ['tools-one', 3, 0], ['section-thought', 4, 1], ['trailing-thought', 0, 1]
+  ])
+  expect(result.flatMap(item => item.kind === 'section' ? item.segments : [item])).toEqual(original)
+  expect(items).toEqual(original)
+})
+
+test('streaming from three to four tools keeps the same section key and includes standalone/collaboration receipts', () => {
+  const tools = Array.from({ length: 4 }, (_, index) => command('succeeded', `growing-${index}`))
+  const initial: ProcessItem[] = [{ kind: 'tools', key: 'first-receipt', tools: tools.slice(0, 3) }]
+  const before = sessionProcessSections(initial)
+  const after = sessionProcessSections([...initial, { kind: 'tool', key: 'fourth-receipt', tool: tools[3] }])
+  expect(before).toMatchObject([{ kind: 'section', key: 'first-receipt', toolCount: 3, thinkingCount: 0 }])
+  expect(after).toMatchObject([{ kind: 'section', key: 'first-receipt', toolCount: 4, thinkingCount: 0 }])
+  const collaboration = sessionProcessSections([
+    { kind: 'thinking', key: 'reasoning', text: ' ' },
+    { kind: 'collaboration', key: 'collaboration', tools: tools.slice(0, 3) },
+    { kind: 'tool', key: 'standalone', tool: tools[3] }
+  ])
+  expect(collaboration).toMatchObject([{ kind: 'section', key: 'reasoning', toolCount: 4, thinkingCount: 0 }])
+})
 
 test('child full transcript keeps every prose segment in order and folds even live command output', () => {
   const tool = command('running')

@@ -36,19 +36,20 @@ import { QuestionCard } from '../interactions/QuestionCard'
 import { sessionMessageRunning } from './tool-presentation'
 import { buildSessionInlineFileResolver } from './inline-file-references'
 import { MessageContent } from './MessageContent'
+import { useExtensionMessageEvents } from './useExtensionMessageEvents'
 import { serializeMessages, buildMessageExportDocument } from './shared/message-export'
 import { sessionMessageRange, SESSION_MESSAGE_PAGE_SIZE } from '../sessions/view-performance'
 import { sessionConversationAwayFromBottom } from './conversation-scroll'
 import { useSessionConversationScrollIntent } from './useSessionConversationScrollIntent'
 import { ErrorNotice } from './ErrorNotice'
 import { recoverSessionTurn } from './turn-recovery'
-import { sessionTaskRestart, type SessionTaskRestartPresentation } from '../sessions/task-restart'
+import { sessionTaskRestart, continuationTarget, type SessionTaskRestartPresentation } from '../sessions/task-restart'
 import { SessionRegenerateReplyButton, UserMessageActions } from '../sessions/UserMessageActions'
 import { getSessionState } from '../sessions/state'
 import { findSessionArtifact } from '../artifacts/artifact-utils'
-import { ServiceTray } from '@renderer/features/services/ServiceTray'
 import { type SessionController, type ActivitySelection, type ArtifactNavigation, EmptyState } from '../sessions/session-presentation'
 import { SessionTurnFeedback, SessionRunStatus } from './SessionFeedback'
+import { RootFollowupReceipt, useRootFollowupReceipts } from './RootFollowupReceipts'
 
 const conversationPositions = new Map<string, { top: number; follow: boolean; firstId?: string | null; expanded?: boolean }>()
 
@@ -124,7 +125,6 @@ export function Conversation({
   openChange,
   onOpenArtifacts,
   onOpenFinalItem,
-  onOpenTerminal,
   selectionToggleRef,
   onSelectionModeChange
 }: {
@@ -137,12 +137,12 @@ export function Conversation({
   openChange: (change: EngineFileChange) => void
   onOpenArtifacts: (request: ArtifactNavigation) => void
   onOpenFinalItem: (result: FinalResult, item: FinalResultItem) => void
-  onOpenTerminal: (jobId?: string) => void
   selectionToggleRef: MutableRefObject<(() => void) | null>
   onSelectionModeChange: (active: boolean) => void
 }): JSX.Element {
   const { engine } = useApp()
   const task = controller.activeTask!
+  useExtensionMessageEvents(task.id, task.workspacePath, controller.messages, controller.ready && controller.historyReady, active)
   const taskRunning = controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)
   const positionKey = `${getEngineSource()}:${task.id}`
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -212,8 +212,8 @@ export function Conversation({
   const restartPresentations = useMemo(() => {
     const queue = controller.nextTurnQueue
     const read = queue.state ? { state: queue.state, dispatchError: queue.error || controller.historyError || undefined } : null
-    return new Map(controller.messages.filter(message => message.run && message.error).map(message =>
-      [message.id, sessionTaskRestart(task.id, message.run!.runId, read, controller.messages)]))
+    return new Map(controller.messages.filter(message => message.run).map(message =>
+      [message.id, sessionTaskRestart(task.id, message.run!, read, controller.messages)]))
   }, [controller.messages, controller.nextTurnQueue.state, controller.nextTurnQueue.error, controller.historyError, task.id])
   const restartableMessageId = !controller.streaming && !controller.launching && !controller.pending.length
     ? controller.messages.findLast(message => message.role === 'assistant')?.id : undefined
@@ -261,6 +261,7 @@ export function Conversation({
   const showPinnedFeedback = showLatest && !inlineFeedbackVisible
   const conversationDate = useSessionConversationDate(active)
   const conversationGroups = useMemo(() => sessionConversationGroups(controller.messages), [controller.messages])
+  const followupReceipts = useRootFollowupReceipts(task.id, controller.messages)
   const turnTodos = useMemo(() => controller.assignTodos(conversationGroups.map(group => ({
     id: group.id, identity: group.identity,
     owners: group.messages.flatMap(message => [message.conversationId ? `conversation:${message.conversationId}` : '', message.runId ? `run:${message.runId}` : '']).filter(Boolean)
@@ -334,7 +335,7 @@ export function Conversation({
     const inspectedViewports = new WeakSet<HTMLElement>()
     const reveal = (): boolean => {
       const node = Array.from(container.querySelectorAll<HTMLElement>('[data-work-tool-id]'))
-        .find(element => element.dataset.sessionToolId === activitySelection.toolId)
+        .find(element => element.dataset.workToolId === activitySelection.toolId)
       if (!node || !node.getClientRects().length) return false
       const animations: Animation[] = []
       for (let parent: HTMLElement | null = node; parent && parent !== container; parent = parent.parentElement) {
@@ -351,8 +352,11 @@ export function Conversation({
         }
         return false
       }
-      const processViewport = node.closest<HTMLElement>('.work-message__process-viewport')
-      if (processViewport && container.contains(processViewport)) {
+      // A disclosed stage can scroll inside the overall process. Bring the
+      // receipt into each clipping viewport, starting with the innermost one.
+      for (let processViewport = node.closest<HTMLElement>('[data-process-scroll]');
+        processViewport && container.contains(processViewport);
+        processViewport = processViewport.parentElement?.closest<HTMLElement>('[data-process-scroll]') ?? null) {
         if (!inspectedViewports.has(processViewport)) {
           // An explicit jump is reading intent, even though no wheel or pointer
           // event reaches the inner process panel to stop its live following.
@@ -660,7 +664,6 @@ export function Conversation({
         </div>
       ) : null}
       <div className="work-conversation__body">
-        <ServiceTray sessionId={task.id} jobs={controller.commandJobs} active={active} placement="rail" onOpenTerminal={onOpenTerminal} />
         <MessageNav sessionKey={positionKey} messages={controller.messages} groups={conversationGroups}
           historyIndex={displayTurns} loadedTurnIds={controller.displayLoadedTurnIds} onLoadTurn={(id) => {
             lastDisplayRequest.current = id
@@ -746,11 +749,12 @@ export function Conversation({
                     onFileLink={onFileLink}
                     openFile={openActivityFile}
                     respond={respond}
+                    waitForSourceChange={controller.waitForSourceChange}
                     actionablePending={controller.pending}
                     assertPendingResponse={controller.assertPendingResponse}
                     restartFailedTask={restartFailedTask}
                     restart={restartPresentations.get(message.id)}
-                    canRestart={message.id === restartableMessageId && Boolean(message.run && ['failed', 'interrupted'].includes(message.run.status))}
+                    canRestart={message.id === restartableMessageId && Boolean(message.run && continuationTarget(message.run))}
                     editSettledTurn={editSettledTurn}
                     userMessageAction={userMessageAction}
                     regenerateMessageId={message === finalMessage && !sessionMessageRunning(message) ? originalMessage?.id : undefined}
@@ -767,6 +771,8 @@ export function Conversation({
                       : message.tools.some(tool => tool.id === activitySelection.toolId)) ? activitySelection : null}
                   />
                 ))}
+                {followupReceipts.filter(item => group.messages.some(message => message.runId === item.rootRunId)).map(item =>
+                  <RootFollowupReceipt key={item.requestKey} item={item} fileContext={fileContext} onFileLink={onFileLink} />)}
                 {!turnRunning && finalResult?.items.length ? <FinalDeliverables result={finalResult} active={active} onOpenItem={onOpenFinalItem} /> : null}
                 {turnRunning && turnTodos.has(group.id) ? <TodoProgress todos={turnTodos.get(group.id)!} running={turnRunning} /> : null}
                 {!turnRunning && turnChanges.get(group.id)?.length ? <ProgressPanel sessionId={task.id} turnKey={group.id}
@@ -822,6 +828,7 @@ const SessionMessage = memo(function SessionMessage({
   onFileLink,
   openFile,
   respond,
+  waitForSourceChange,
   actionablePending,
   assertPendingResponse,
   restartFailedTask,
@@ -850,6 +857,7 @@ const SessionMessage = memo(function SessionMessage({
   onFileLink: (event: MouseEvent<HTMLElement>) => void
   openFile: (path: string) => void
   respond: SessionController['respond']
+  waitForSourceChange: SessionController['waitForSourceChange']
   actionablePending: readonly PendingInteraction[]
   assertPendingResponse: SessionController['assertPendingResponse']
   restartFailedTask: SessionController['restartFailedTask']
@@ -891,13 +899,13 @@ const SessionMessage = memo(function SessionMessage({
       userActions={showUserActions ? <UserMessageActions taskId={taskId} messageId={message.id} content={message.content}
         canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
     >
-      {message.error ? <ErrorNotice error={message.error} context={message.run} compact
+      {message.error || canRestart || restart?.busy ? <ErrorNotice error={message.error || '任务已停止'} context={message.run} compact
         resolved={restart?.resolved} busy={restart?.busy} busyLabel={restart?.label}
         recoveryError={restart?.error}
         onRetry={canRetry && (canRestart || restart?.status === 'unconfirmed') ? () => restartFailedTask(taskId, message.id) : undefined}
-        retryLabel={restart?.status === 'unconfirmed' ? '核对并重启' : '重启任务'}
+        retryLabel={restart?.status === 'unconfirmed' ? '核对并继续' : '继续'}
         onEdit={canRecover ? () => editSettledTurn(taskId, message.id) : undefined} /> : null}
-      {canRecover && !message.error ? <div className="work-message__recovery">
+      {canRecover && !message.error && !canRestart && !restart?.busy ? <div className="work-message__recovery">
         <button type="button" className="btn btn--sm" onClick={() => editSettledTurn(taskId, message.id)}
           title="将原指令与附件带回输入框，保留已有草稿">
           <Icon name="pencil" size={13} />{message.status === 'error' ? '编辑后重试' : '编辑后继续'}
@@ -910,6 +918,7 @@ const SessionMessage = memo(function SessionMessage({
           sessionId={taskId}
           disabled={!active || !canRespond}
           respond={respond}
+          waitForSourceChange={waitForSourceChange}
           assertPendingResponse={assertPendingResponse}
         />
       ))}
@@ -923,12 +932,14 @@ function SessionPending({
   sessionId,
   disabled,
   respond,
+  waitForSourceChange,
   assertPendingResponse
 }: {
   pending: PendingInteraction
   sessionId: string
   disabled: boolean
   respond: SessionController['respond']
+  waitForSourceChange: SessionController['waitForSourceChange']
   assertPendingResponse: SessionController['assertPendingResponse']
 }): JSX.Element {
   const source = getEngineSource()
@@ -961,7 +972,9 @@ function SessionPending({
     const isCurrent = (): boolean => Boolean(operation?.current && !disabled &&
       source === getEngineSource() && isEngineReady() && getSessionState(getEngineStorageKey()).activeTaskId === sessionId)
     const requestId = pending.requestId, runId = pending.runId
-    if (busy.current || !isCurrent() || !requestId || !runId || (fullAccess && !isPermission)) return
+    // Source-version conflicts are never authorizable through the session
+    // full-access switch; only the engine-provided conflict choices may resume.
+    if (busy.current || !isCurrent() || !requestId || !runId || (fullAccess && (!isPermission || pending.sourceChange))) return
     const assertCurrent = (): void => {
       if (!isCurrent()) throw new Error('当前确认请求已结束或变化')
       assertPendingResponse(requestId, runId)
@@ -982,7 +995,7 @@ function SessionPending({
       assertCurrent()
       await respond(requestId, replyValues)
     } catch (reason) {
-      if (isCurrent()) {
+      if (isCurrent() && !pending.sourceChange?.wait) {
         const detail = reason instanceof Error ? reason.message : String(reason)
         setError(fullAccess
           ? `${modeChanged ? '完全访问已开启，但本次操作未能放行' : '切换完全访问失败，尚未提交放行'}：${detail}`
@@ -993,6 +1006,32 @@ function SessionPending({
       if (scope.current?.current) setSubmitting(null)
     }
   }
+  useEffect(() => {
+    const wait = pending.sourceChange?.wait
+    const requestId = pending.requestId
+    const runId = pending.runId
+    if (!wait || !requestId || !runId || disabled) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async (): Promise<void> => {
+      try {
+        const status = await waitForSourceChange({ sessionId, runId, requestId })
+        if (status.ready) {
+          if (!stopped) await reply(['recheck'])
+          return
+        }
+      } catch {
+        // The durable engine continuation may already have won the race, or
+        // the engine may be restarting. Keep the card and let the next poll
+        // re-read the authoritative pending identity.
+      }
+      if (!stopped) {
+        timer = setTimeout(() => { void poll() }, Math.max(750, wait.pollMs))
+      }
+    }
+    void poll()
+    return () => { stopped = true; if (timer) clearTimeout(timer) }
+  }, [key, disabled, pending.sourceChange?.wait, pending.requestId, pending.runId, sessionId, waitForSourceChange, reply])
   const submit = (): void => {
     if (isPermission || answers.some(answer => !answer)) return
     void reply(answers)

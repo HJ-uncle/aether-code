@@ -8,6 +8,7 @@ import type { ConversationLink } from '../shared/conversation-link'
 import { SESSION_QUEUE_IPC, type SessionNextTurnApi, type SessionQueueInvokeResult } from '../shared/session-next-turn-api'
 import type { GraphicsSnapshot } from '../shared/graphics'
 import { PLUGIN_UI_IPC, type PluginUiApi } from '../shared/plugin-ui'
+import { PLUGIN_HOST_IPC, type PluginHostApi } from '../shared/plugin-host'
 import { BROWSER_IPC, type BrowserApi, type BrowserConnectionState } from '../shared/browser-api'
 import type { BrowserEvent } from '../shared/browser'
 import type { AccountApi, AccountState } from '../shared/account'
@@ -145,9 +146,15 @@ const browserApi: BrowserApi = {
 }
 
 const api = {
+  pluginHost: {
+    dialog: (identity, input) => ipcRenderer.invoke(PLUGIN_HOST_IPC.dialog, identity, input),
+    notify: (identity, input) => ipcRenderer.invoke(PLUGIN_HOST_IPC.notify, identity, input),
+    clipboard: (identity, input) => ipcRenderer.invoke(PLUGIN_HOST_IPC.clipboard, identity, input)
+  } satisfies PluginHostApi,
   pluginUi: {
     create: html => ipcRenderer.invoke(PLUGIN_UI_IPC.create, html),
-    release: url => ipcRenderer.invoke(PLUGIN_UI_IPC.release, url)
+    release: url => ipcRenderer.invoke(PLUGIN_UI_IPC.release, url),
+    download: (url, input) => ipcRenderer.invoke(PLUGIN_UI_IPC.download, url, input)
   } satisfies PluginUiApi,
   office: { renderPage: (input: OfficePageRenderInput): Promise<OfficePageRenderResult> => ipcRenderer.invoke(OFFICE_RENDER_IPC, input) },
   system: {
@@ -218,7 +225,9 @@ const api = {
       start: (input: StreamStartInput): Promise<StreamStartResult> =>
         ipcRenderer.invoke(IPC.invoke.engineStreamStart, input),
       abort: (streamId: string): Promise<{ ok: boolean }> =>
-        ipcRenderer.invoke(IPC.invoke.engineStreamAbort, streamId)
+        ipcRenderer.invoke(IPC.invoke.engineStreamAbort, streamId),
+      ack: (streamId: string, ackId: string): Promise<{ ok: boolean }> =>
+        ipcRenderer.invoke(IPC.invoke.engineStreamAck, streamId, ackId)
     },
 
     /** 订阅状态变更，返回取消订阅函数 */

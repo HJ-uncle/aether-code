@@ -263,8 +263,8 @@ test('partial rollback removes assets immediately; compact results disclose safe
   await expect(workspace.getByText(content, { exact: true })).toBeVisible()
   const openTab = async (name: string): Promise<void> => {
     const tab = workspace.getByRole('tab', { name, exact: true })
-    if (await tab.count()) await tab.click()
-    else { await workspace.getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name, exact: true }).click() }
+    if (await tab.isVisible()) await tab.click()
+    else { await work.locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name, exact: true }).click() }
   }
   await openTab('工作区')
   const tree = workspace.getByRole('region', { name: '工作区文件', exact: true })
