@@ -1,23 +1,31 @@
-import { useEffect, useRef, useState, type JSX, type RefObject } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { Spinner } from '@renderer/ui/ui-primitives'
 import { Icon } from '@renderer/ui/icons'
 import { Select } from '@renderer/ui/Select'
-import { documentPreviewNotice, type DocumentKind } from './document-kind'
+
+// Undefined keeps standalone previews usable; null reserves a host toolbar
+// while it mounts or while its retained file tab is inactive.
+export const PreviewHeaderTargets = createContext<{ toolbar: HTMLElement | null; title: HTMLElement | null } | undefined>(undefined)
+
+export function PreviewToolbar({ children }: { children: ReactNode }): JSX.Element | null {
+  const targets = useContext(PreviewHeaderTargets)
+  if (targets) return targets.toolbar ? createPortal(children, targets.toolbar) : null
+  return <div className="document-preview__header">{children}</div>
+}
+
+export function PreviewPageCount({ pages }: { pages: number }): JSX.Element | null {
+  const targets = useContext(PreviewHeaderTargets)
+  const label = <span className="document-preview__page-label">{pages} 页</span>
+  if (targets) return targets.title ? createPortal(label, targets.title) : null
+  return label
+}
 
 export function PreviewMessage({ error, onRetry }: { error?: string; onRetry?: () => void }): JSX.Element {
   return <div className="document-preview__message" role={error ? 'alert' : 'status'}>
     {error ? <Icon name="alert-circle" size={22} /> : <Spinner size={18} />}
     <span>{error || '正在准备文档预览…'}</span>
     {error && onRetry ? <button type="button" onClick={onRetry}>重试预览</button> : null}
-  </div>
-}
-
-/** Keep the product boundary visible on every Office/PDF surface. The
- * renderer can be useful for reading while still differing from the native
- * application's pagination, calculation, or annotation behavior. */
-export function PreviewCapabilityNotice({ kind }: { kind: DocumentKind }): JSX.Element {
-  return <div className="document-preview__format-note" role="note" data-document-capability={kind}>
-    {documentPreviewNotice(kind)}
   </div>
 }
 

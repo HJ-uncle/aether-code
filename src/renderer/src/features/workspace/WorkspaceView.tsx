@@ -1,4 +1,4 @@
-import { memo, type JSX, useRef, useState, useCallback, useEffect, type KeyboardEvent, useLayoutEffect, type DragEvent, type CSSProperties, useMemo, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react'
+import { memo, type JSX, useRef, useState, useCallback, useEffect, type KeyboardEvent, useLayoutEffect, type DragEvent, type CSSProperties, useMemo, useSyncExternalStore, type Dispatch, type SetStateAction, type FormEvent } from 'react'
 import type { ChatAttachment } from '@renderer/core/engine/useChat'
 import { toast } from '@renderer/core/toast'
 import { getEngineSource, getEngineStorageKey } from '@renderer/core/engine/source'
@@ -23,7 +23,7 @@ import { ArtifactsWorkspace } from '../artifacts/ArtifactsWorkspace'
 import type { SessionArtifactSelection } from '../artifacts/session-artifacts'
 import { useMotionPresence } from '@renderer/ui/MotionPresence'
 import { getSessionState, type SessionArtifact } from '../sessions/state'
-import { useBrowserState, selectBrowserTab, browserAction, closeBrowserTab } from '../browser/browser-store'
+import { useBrowserState, selectBrowserTab, browserAction, closeBrowserTab, openBrowser } from '../browser/browser-store'
 import { workspaceSurfaceTabs } from './workspace-tabs'
 import './resource-tabs.css'
 import { useSessionResources, sessionResourceBrowserTabs, resolvedSessionResourceId, selectSessionResource, closeSessionResource, openExternalSessionFileResource } from './resource-store'
@@ -35,6 +35,7 @@ import { type WorkspaceTab, type WorkspaceEntry } from '../../app/navigation'
 import { SessionPanelDivider } from '../../ui/PaneDivider'
 import { ExtensionPage, ExtensionSlot, getExtensionHostSnapshot, subscribeExtensionHost, useExtensionContributions } from '@renderer/features/extensions'
 import { isExtensionDestination } from '../../app/navigation'
+import { useWorkspaceActivity, type WorkspaceActivityItem } from '../services/workspace-activity'
 
 const StableSessionSubagentsPanel = memo(SubagentsPanel)
 
@@ -49,6 +50,7 @@ export function Workspace({
   openEntries,
   setOpenEntries,
   onClose,
+  onOpenHome,
   selectedArtifact,
   fileRevealRequest,
   onDidReveal,
@@ -67,6 +69,7 @@ export function Workspace({
   openEntries: WorkspaceEntry[]
   setOpenEntries: Dispatch<SetStateAction<WorkspaceEntry[]>>
   onClose: () => void
+  onOpenHome: () => void
   selectedArtifact: string | null
   fileRevealRequest: SessionFileRevealRequest | null
   onDidReveal: (request: SessionFileRevealRequest) => void
@@ -78,6 +81,7 @@ export function Workspace({
   onOpenArtifacts: (request: ArtifactNavigation) => void
 }): JSX.Element {
   const sessionId = controller.activeTask!.id
+  const workspaceActivity = useWorkspaceActivity(sessionId)
   const extensionContext = useMemo(() => ({ sessionId, workspacePath: controller.activeTask?.workspacePath, engineReady: controller.ready }), [sessionId, controller.activeTask?.workspacePath, controller.ready])
   const extensions = useExtensionContributions(extensionContext)
   const extensionHost = useSyncExternalStore(subscribeExtensionHost, getExtensionHostSnapshot)
@@ -142,7 +146,10 @@ export function Workspace({
     // workspace destination. Keep it mounted when needed, but expose the
     // actual web/file tabs in the same strip as Code instead of a dead
     // "资源" placeholder tab.
-    if (entry.kind === 'surface') return entry.id !== 'browser'
+    // The landing surface is the pane itself, not a document tab. Keeping it
+    // out of the strip avoids a redundant “首页” tab while the home stays a
+    // stable return point after closing another surface.
+    if (entry.kind === 'surface') return entry.id !== 'browser' && entry.id !== 'home'
     return resourceById.has(entry.id)
   })
   const activateResource = useCallback((id: string): void => {
@@ -170,7 +177,7 @@ export function Workspace({
       // Browser is only a host for resource tabs. Reopening a closed, empty
       // workspace should return to a real surface rather than an empty host.
       setTab('files')
-      onClose()
+      onOpenHome()
     }
     else if (tab === 'browser' && selectedResource === id) {
       if (fallback.kind === 'resource') activateResource(fallback.id)
@@ -186,19 +193,20 @@ export function Workspace({
       if (source !== getEngineSource() || getSessionState(getEngineStorageKey()).activeTaskId !== sessionId) return
       if (resources.selected === id) closeSessionResource(sessionId, id)
     })
-  }, [activateResource, browserAction, getEngineStorageKey, onClose, orderedResources, resourceById, resources.selected, selectedResource, sessionId, setTab, tab, visibleEntries])
+  }, [activateResource, browserAction, getEngineStorageKey, onOpenHome, orderedResources, resourceById, resources.selected, selectedResource, sessionId, setTab, tab, visibleEntries])
   const closeTab = useCallback((closed: WorkspaceTab): void => {
+    if (closed === 'home') return
     const index = visibleEntries.findIndex(entry => entry.kind === 'surface' && entry.id === closed)
     const remaining = openEntries.filter(entry => !(entry.kind === 'surface' && entry.id === closed))
     const remainingVisible = visibleEntries.filter(entry => !(entry.kind === 'surface' && entry.id === closed))
     setOpenEntries(remaining)
-    if (!remainingVisible.length) { onClose(); return }
+    if (!remainingVisible.length) { onOpenHome(); return }
     if (tab !== closed) return
     const fallback = remainingVisible[Math.max(0, Math.min(index - 1, remainingVisible.length - 1))]
     if (!fallback) return
     if (fallback.kind === 'resource') activateResource(fallback.id)
     else setTab(fallback.id)
-  }, [activateResource, onClose, openEntries, setTab, tab, visibleEntries])
+  }, [activateResource, onOpenHome, openEntries, setTab, tab, visibleEntries])
   const onTabKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>): void => {
     if (event.key === 'Delete' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'w')) {
       event.preventDefault(); event.stopPropagation()
@@ -258,7 +266,7 @@ export function Workspace({
           <IconButton icon="layout-panel" label="收起工作区" onClick={onClose} />
         </div>
         <div ref={tabsRef} className="work-workspace__tabs" data-scroll-axis="x" role="tablist" aria-label="已打开的工作区">
-          {visibleEntries.map((entry) => {
+          {visibleEntries.filter(entry => !(entry.kind === 'surface' && entry.id === 'home')).map((entry) => {
             if (entry.kind === 'surface') {
               const active = tab === entry.id
               return <div className={`work-workspace__tab${active ? ' is-active' : ''}`} key={`surface:${entry.id}`}>
@@ -266,7 +274,7 @@ export function Workspace({
                   <Icon name={iconFor(entry.id)} size={16} />
                   <span className="work-workspace__tab-label">{labelFor(entry.id)}</span>
                 </button>
-                <button type="button" className="work-workspace__tab-close" aria-label={`关闭${labelFor(entry.id)}`} onClick={() => closeTab(entry.id)}><Icon name="close" size={12} /></button>
+                {entry.id !== 'home' ? <button type="button" className="work-workspace__tab-close" aria-label={`关闭${labelFor(entry.id)}`} onClick={() => closeTab(entry.id)}><Icon name="close" size={12} /></button> : null}
               </div>
             }
             const resource = resourceById.get(entry.id)
@@ -282,12 +290,24 @@ export function Workspace({
             </div>
           })}
         </div>
+        {tab !== 'home' ? <button type="button" className="work-workspace__new-tab" aria-label="新建首页标签" title="新建首页标签" onClick={() => activateTab('home')}>
+          <Icon name="plus" size={15} />
+        </button> : null}
       </div>
       <div className="work-workspace__panes">
         {openEntries.filter((entry): entry is { kind: 'surface'; id: WorkspaceTab } => entry.kind === 'surface').map(({ id }) => isExtensionDestination(id) ? (
           tab === id && extensionTabs.some(item => item.id === id) ? <div key={id} className="work-workspace__body" role="tabpanel" id={`work-panel-${id}`} aria-labelledby={`work-tab-${id}`}>
             <ExtensionPage contributionId={extensionTabs.find(item => item.id === id)!.page} context={extensionContext} />
           </div> : null
+        ) : id === 'home' ? (
+          <WorkspaceHomePane
+            key="home"
+            controller={controller}
+            active={active && tab === 'home'}
+            tabs={tabs}
+            activities={workspaceActivity.activities}
+            openTab={activateTab}
+          />
         ) : (
           <WorkspacePane
             key={id}
@@ -312,6 +332,96 @@ export function Workspace({
       {active ? <ExtensionSlot location="workspace.panel" context={extensionContext} /> : null}
     </section>
   )
+}
+
+function WorkspaceHomePane({ controller, active, tabs, activities, openTab }: {
+  controller: SessionController
+  active: boolean
+  tabs: Array<[WorkspaceTab, string, IconName]>
+  activities: readonly WorkspaceActivityItem[]
+  openTab: (tab: WorkspaceTab) => void
+}): JSX.Element {
+  const [address, setAddress] = useState('')
+  const destinations = tabs.filter(([id]) => id !== 'home' && id !== 'browser')
+  const workspaceDestinations = destinations.filter(([id]) => {
+    if (id.startsWith('plugin:') || ['subagents', 'terminal', 'git'].includes(id)) return false
+    if (id === 'files') return controller.artifacts.length > 0
+    if (id === 'sources') return (controller.activeTask?.sources.length ?? 0) > 0
+    return true
+  })
+  const pluginDestinations = destinations.filter(([id]) => id.startsWith('plugin:'))
+  // Keep one compact row per live category so a busy session cannot hide Git
+  // or terminal behind a "latest three" cutoff. The destination still opens
+  // the full list for that category.
+  const activityLabels: Record<'subagent' | 'terminal' | 'git' | 'service', { label: string; icon: IconName }> = {
+    subagent: { label: '子代理', icon: 'users' },
+    terminal: { label: '终端', icon: 'terminal' },
+    git: { label: 'Git', icon: 'git' },
+    service: { label: '插件', icon: 'plug' }
+  }
+  const activityGroups = (['subagent', 'terminal', 'git', 'service'] as const).flatMap(kind => {
+    const entries = activities.filter(item => item.kind === kind)
+    const entry = entries[0]
+    return entry ? [{ kind, ...activityLabels[kind], count: entries.length, entry }] : []
+  })
+  const liveActivityKinds = new Set(activityGroups.map(group => group.kind))
+  const runningDestinations = destinations.filter(([id]) => {
+    if (!['subagents', 'terminal', 'git'].includes(id)) return false
+    const kind = id === 'subagents' ? 'subagent' : id as 'terminal' | 'git'
+    if (liveActivityKinds.has(kind)) return false
+    // Terminal is also the entry point for creating a fresh shell, so it must
+    // remain discoverable even before the first command has been run.
+    if (id === 'terminal') return true
+    if (id === 'subagents') return controller.publishedFixedChildren
+    return false
+  })
+  const submitAddress = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    const value = address.trim()
+    const url = value && /^[a-z][a-z\d+.-]*:\/\//i.test(value)
+      ? value
+      : value ? `https://www.google.com/search?q=${encodeURIComponent(value)}` : undefined
+    void openBrowser(url).then(() => openTab('browser')).catch(reportError)
+  }
+  const renderDestinationGroup = (label: string, entries: Array<[WorkspaceTab, string, IconName]>): JSX.Element | null => {
+    if (!entries.length) return null
+    return <section className="work-workspace-home__group" aria-label={label}>
+      <div className="work-workspace-home__section-title"><span>{label}</span><small>{entries.length} 个入口</small></div>
+      <div className="work-workspace-home__grid">{entries.map(([id, itemLabel, icon]) => <button key={id} type="button" onClick={() => openTab(id)}>
+        <span className="work-workspace-home__icon"><Icon name={icon} size={18} /></span>
+        <span><strong>{itemLabel}</strong><small>{id.startsWith('plugin:') ? '插件工具' : '打开工作区'}</small></span>
+        <Icon name="chevron-right" size={14} />
+      </button>)}</div>
+    </section>
+  }
+  return <div className="work-workspace-home" role="tabpanel" aria-label="工作区首页" hidden={!active}>
+    <div className="work-workspace-home__inner">
+      <header className="work-workspace-home__heading">
+        <span className="work-workspace-home__eyebrow">当前工作区</span>
+        <h2>{controller.activeTask?.title ?? '工作区'}</h2>
+        <p>{controller.activeTask?.workspacePath ?? '从这里继续查看成果、资料和运行中的工作。'}</p>
+      </header>
+      <form className="work-workspace-home__browser" onSubmit={submitAddress} role="search">
+        <Icon name="globe" size={17} />
+        <input value={address} onChange={event => setAddress(event.target.value)} placeholder="搜索文件或输入网址" aria-label="搜索文件或输入网址" />
+        <button type="submit" aria-label="打开浏览器"><Icon name="chevron-right" size={15} /></button>
+      </form>
+      {activityGroups.length ? <section className="work-workspace-home__activity work-workspace-home__group" aria-label="运行中">
+        <div className="work-workspace-home__section-title"><span>运行中</span><small>{activities.length} 项</small></div>
+        <div className="work-workspace-home__activity-list">{activityGroups.map(({ kind, label, icon, count, entry }) => {
+          const content = <><Icon name={icon} size={16} /><span><strong>{kind === 'git' ? entry.label : label}</strong><small>{entry.detail}</small></span><em>{kind === 'git' ? entry.statusLabel : `${count} 项进行中`}</em>{entry.open ? <Icon name="chevron-right" size={14} /> : null}</>
+          return entry.open
+            ? <button key={kind} type="button" onClick={() => { void entry.open?.() }}>{content}</button>
+            : <div key={kind} className="work-workspace-home__activity-summary">{content}</div>
+        })}</div>
+      </section> : null}
+      <section className="work-workspace-home__destinations" aria-label="工作区入口">
+        {renderDestinationGroup('运行区域', runningDestinations)}
+        {renderDestinationGroup('工作区', workspaceDestinations)}
+        {renderDestinationGroup('插件', pluginDestinations)}
+      </section>
+    </div>
+  </div>
 }
 
 /** Visited panes retain local drafts and selection, but hidden panes do not

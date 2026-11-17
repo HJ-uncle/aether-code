@@ -1,5 +1,6 @@
 import type { CommandJobSnapshot } from '@shared/command-job'
 import { commandJobActive, commandJobDisplayLabel, commandJobInvocation, mergeCommandJob } from '../../core/engine/command-job-state'
+import type { IconName } from '@renderer/ui/icons'
 
 /** Runtime callbacks belong to the contribution owner and are withdrawn on unload. */
 export interface ServiceContribution {
@@ -31,6 +32,10 @@ export interface ServiceItem {
   revision: number
   job?: CommandJobSnapshot
   contribution?: ServiceContribution
+  /** Optional native icon for live activity rows (subagents/Git). */
+  icon?: IconName
+  /** Live activity rows open their destination on the first click. */
+  openDirect?: boolean
 }
 
 /** Services tab only exposes entries that still have a live action. */

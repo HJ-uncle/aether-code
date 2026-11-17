@@ -24,7 +24,6 @@ import { ProcessPanel } from './ProcessPanel'
 import { ProcessSection } from './ProcessSection'
 import { sessionProcessSections, type ProcessItem } from './process-sections'
 import { ToolActivity } from './ToolActivity'
-import { sessionActivityState } from './inline-activity-state'
 import { captureSessionCollaborationMembership, sessionMessageTimeline, sessionMessagePresentation, sessionTranscriptPresentation, type SessionCollaborationMembership, type SessionMessageSegment, type SessionPresentationSegment } from './message-timeline'
 import { sessionMessageRunning } from './tool-presentation'
 import { sessionDeliveryProse } from './delivery-prose'
@@ -84,7 +83,6 @@ export const MessageContent = memo(function MessageContent({
     segment.segments.some(item => item.kind !== 'thinking' || thinkingOpen))
   const hasReplyContent = presentation.some(segment => segment.kind === 'answer' || segment.kind === 'content')
   const executionSegments = presentation.flatMap(segment => segment.kind === 'process' ? segment.segments : [])
-  const failureCount = processTools.filter(tool => ['error', 'interrupted'].includes(sessionActivityState(tool))).length
   // Live inspection must not pin the finished turn open, including completion
   // while this row is unmounted. Settled history keeps its own reading choices.
   const processScope = `${getEngineSource()}:${sessionId}:${processKey ?? message.id}`
@@ -125,17 +123,20 @@ export const MessageContent = memo(function MessageContent({
     const timer = window.setTimeout(() => setCopied(false), 1800)
     return () => window.clearTimeout(timer)
   }, [copied])
-  const renderProcessItem = (item: ProcessItem): ReactNode => item.kind === 'tools' ? (
+  const renderProcessItem = (item: ProcessItem, latestSection = false, latestItemKey?: string, latestToolId?: string): ReactNode => item.kind === 'tools' ? (
     <InlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
-      revealTool={revealTool} expanded contained={!showAllContent} groupRepeated={false} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
+      revealTool={revealTool} defaultToolId={latestToolId} expanded contained={!showAllContent} groupRepeated={false}
+      turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
   ) : item.kind === 'tool' ? (
     <ToolActivity key={item.key} tool={item.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
+      defaultOpen={latestSection && latestItemKey === item.key ? true : undefined}
       revealRevision={revealTool?.toolId === item.tool.id ? revealTool.revision : undefined} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
   ) : item.kind === 'collaboration' ? (
-    <CollaborationSummary key={item.key} tools={item.tools} fileContext={fileContext} revealTool={revealTool} active={active && processOpen} readOnly={readOnly} />
+    <CollaborationSummary key={item.key} tools={item.tools} fileContext={fileContext} revealTool={revealTool} defaultToolId={latestToolId}
+      turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
   ) : item.kind === 'thinking' ? (
     <MotionPresence key={item.key} className="work-message__thinking" show={thinkingOpen}>
-      <ThinkingRow text={item.text} autoOpen={false} memoryKey={`work-thinking:${getEngineSource()}:${sessionId}:${processKey ?? message.id}:${item.key}`} />
+      <ThinkingRow text={item.text} autoOpen={latestSection && latestItemKey === item.key} memoryKey={`work-thinking:${getEngineSource()}:${sessionId}:${processKey ?? message.id}:${item.key}`} />
     </MotionPresence>
   ) : item.kind === 'followup' ? (
     <FollowupMessage key={item.key} message={item.message} sessionId={sessionId} fileContext={fileContext} active={active && processOpen} readOnly={readOnly} />
@@ -144,12 +145,28 @@ export const MessageContent = memo(function MessageContent({
       <SessionAssistantContent text={item.text} streaming={message.status === 'streaming'} fileContext={fileContext} renderImages={showAllContent} />
     </div>
   )
-  const renderProcess = (segment: Extract<SessionPresentationSegment, { kind: 'process' }>): ReactNode => sessionProcessSections(segment.segments).map(item => item.kind === 'section' ? (
-    <ProcessSection key={item.key} section={item} memoryKey={`${processScope}:${item.key}`} running={turnRunning}
-      showThinking={thinkingOpen} revealTool={revealTool}>
-      {item.segments.map(renderProcessItem)}
-    </ProcessSection>
-  ) : renderProcessItem(item))
+  const renderProcess = (segment: Extract<SessionPresentationSegment, { kind: 'process' }>): ReactNode => {
+    const sections = sessionProcessSections(segment.segments, fileContext.sessionId, fileContext.receiptParentSessionId)
+    // New prose ends the previous stage, even before the next tool arrives.
+    // Hidden reasoning must not take over the visible stage's disclosure.
+    const latest = sections.findLast(item => item.kind !== 'section' || item.toolCount > 0 || thinkingOpen && item.thinkingCount > 0)
+    const latestSection = latest?.kind === 'section' ? latest : undefined
+    const latestSectionKey = latestSection?.key
+    const latestItem = latestSection?.segments.findLast(item => {
+      if (item.kind === 'thinking') return thinkingOpen && Boolean(item.text.trim())
+      return item.kind === 'tool' || item.kind === 'tools' || item.kind === 'collaboration'
+    })
+    const latestItemKey = latestItem?.key
+    const latestToolId = latestItem?.kind === 'tool' ? latestItem.tool.id
+      : latestItem?.kind === 'tools' || latestItem?.kind === 'collaboration' ? latestItem.tools.at(-1)?.id : undefined
+    return sections.map(item => item.kind === 'section' ? (
+      <ProcessSection key={item.key} section={item} memoryKey={`${processScope}:${item.key}`} running={turnRunning}
+        isLatest={item.key === latestSectionKey}
+        showThinking={thinkingOpen} revealTool={revealTool}>
+        {item.segments.map(child => renderProcessItem(child, item.key === latestSectionKey, latestItemKey, latestToolId))}
+      </ProcessSection>
+    ) : renderProcessItem(item, false, latestItemKey, latestToolId))
+  }
   return (
     <article
       ref={article}
@@ -176,7 +193,6 @@ export const MessageContent = memo(function MessageContent({
           >
             <span>过程</span>
             {processTools.length ? <small>{processTools.length} 步</small> : null}
-            {failureCount ? <small className="work-message__process-failures">{failureCount} 步未通过</small> : null}
             <Icon className="work-message__process-chevron" name="chevron-right" size={12} />
           </button>
             {processOpen && !showAllContent ? <div className="work-message__process-navigation" role="group" aria-label="过程导航">

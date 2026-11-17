@@ -39,9 +39,7 @@ function ScopedArtifactsWorkspace({ finalSelection, ...props }: ArtifactsWorkspa
   const item = result?.items.find(candidate => candidate.id === selectedItemId) ?? result?.items[0]
   const reviewing = !requested && selection?.sessionId === sessionId && reviewKey !== dismissedReview
   if (reviewing) return <div className="work-artifacts-workspace work-artifacts-workspace--review">
-    <div className="work-artifacts-workspace__review-header"><button type="button" className="work-quiet-button" disabled={!active}
-      onClick={() => setDismissedReview(reviewKey)}><Icon name="chevron-left" size={14} />返回成果</button><span>过程文件</span></div>
-    <SessionArtifacts {...props} />
+    <SessionArtifacts {...props} onBackToResults={() => setDismissedReview(reviewKey)} />
   </div>
   // A session can contain real file changes even when the model did not
   // publish a `deliver_files` manifest (for example an interrupted run or a
@@ -60,6 +58,7 @@ function ScopedArtifactsWorkspace({ finalSelection, ...props }: ArtifactsWorkspa
   const selectRun = (runId: string): void => setChoice({ requestKey, deliveryKey: catalog.deliveryKey, runId: runId || defaultResult?.runId || '' })
   return <section className="work-artifacts-workspace" aria-label="本会话成果" data-final-result-session={sessionId}>
     <header className="work-artifacts-workspace__toolbar">
+      <span className="work-artifacts-workspace__mode">交付成果</span>
       <Select ariaLabel="选择交付轮次" value={result?.runId === defaultResult?.runId ? '' : result?.runId ?? ''} options={options} onChange={selectRun} disabled={!active} />
       <span>{result?.items.length ?? 0} 个交付物</span>
     </header>

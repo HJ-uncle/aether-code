@@ -3,7 +3,7 @@ import { type IconName } from '@renderer/ui/icons'
 export type ExtensionDestination = `plugin:${string}`
 export type Page = 'home' | 'projects' | 'browser' | 'automations' | 'agents' | 'plugins' | 'monitor' | ExtensionDestination
 
-export type WorkspaceTab = 'files' | 'workspace' | 'sources' | 'browser' | 'subagents' | 'git' | 'terminal' | ExtensionDestination
+export type WorkspaceTab = 'home' | 'files' | 'workspace' | 'sources' | 'browser' | 'subagents' | 'git' | 'terminal' | ExtensionDestination
 
 export function isExtensionDestination(value: string): value is ExtensionDestination { return value.startsWith('plugin:') }
 
@@ -31,7 +31,6 @@ export const NAVIGATION: Array<{ id: Page; label: string; icon: IconName }> = [
   { id: 'projects', label: '项目', icon: 'folder-outline' },
   { id: 'agents', label: 'Agent', icon: 'account-outline' },
   { id: 'plugins', label: '插件', icon: 'puzzle' },
-  { id: 'browser', label: '浏览器', icon: 'globe' },
   { id: 'automations', label: '自动化', icon: 'clock-outline' },
   { id: 'monitor', label: '引擎监控', icon: 'activity' }
 ]
@@ -59,14 +58,14 @@ export function initialView(): ViewState {
     const ratio = storedRatio === 44 ? 56 : storedRatio
     const workspace = record.workspace === true
     return {
-      page: NAVIGATION.some((item) => item.id === record.page) ? (record.page as Page) : 'home',
+      page: record.page === 'browser' || NAVIGATION.some((item) => item.id === record.page) ? (record.page as Page) : 'home',
       collapsed: record.collapsed === true,
       workspace,
       tab: (() => {
         const stored = String(record.tab)
         // Saved destinations must follow their replacement after navigation merges.
         if (stored === 'artifacts' || stored === 'activity' || stored === 'changes') return 'files'
-        return ['files', 'workspace', 'sources', 'browser', 'subagents', 'git', 'terminal'].includes(stored)
+        return ['home', 'files', 'workspace', 'sources', 'browser', 'subagents', 'git', 'terminal'].includes(stored)
           ? (stored as WorkspaceTab)
           : 'files'
       })(),

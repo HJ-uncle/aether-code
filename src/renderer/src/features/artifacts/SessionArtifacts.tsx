@@ -14,6 +14,7 @@ import { Popover } from '@renderer/ui/Popover'
 import { FileTreeRow } from '../explorer/FileTreeRow'
 import { FileGlyph } from '../explorer/FileGlyph'
 import { FileChangeCard } from '../conversation/shared/FileChangeCard'
+import { DIFF_APPROXIMATION_HINT } from '../conversation/shared/diff'
 import { ChangeReviewActions } from './ChangeReviewActions'
 import { ArtifactPanel, type ArtifactPanelProps } from './ArtifactPanel'
 import { sessionProgressRetryDelay } from '../conversation/progress-state'
@@ -21,6 +22,7 @@ import { sessionFileChangeCode, sessionFilePrefersPreview } from './file-change-
 import { sessionChangePathKey } from './file-changes'
 import {
   ARTIFACT_PROJECTION_NOTICES, artifactChangeStats, artifactChangeStatus, artifactFileIsDeleted, artifactSelectionAvailable, artifactToolRevision,
+  artifactViews,
   artifactChangeTurnScope, artifactTurnScopeKey, buildArtifactTurnOptions,
   buildSessionArtifactFiles, buildSessionArtifactTree, currentArtifactForFile, defaultArtifactView, ownedArtifactChanges, resolveArtifactChoice,
   filterSessionArtifactFiles, reconcileArtifactChanges, scopeArtifactChanges, searchArtifactFiles,
@@ -40,6 +42,7 @@ export interface SessionArtifactsProps {
   tools: ToolActivity[]
   messages: ChatMessage[]
   selection: SessionArtifactSelection | null
+  onBackToResults?: () => void
   onOpenCurrentFile: (path: string) => void
   onAddToConversation?: ArtifactPanelProps['onAddToConversation']
 }
@@ -58,10 +61,10 @@ function selectionKey(selection: SessionArtifactSelection | null): string {
 function ChangeCount({ view }: { view: SessionArtifactView | null }): JSX.Element {
   if (!view) return <></>
   const stats = view.change.kind === 'delete' ? null : artifactChangeStats(view.change)
-  const scopeLabel = view?.scope === 'net' ? '待确认改动的当前片段' : '该次修改'
+  const scopeLabel = view.scope === 'turn' ? '本轮改动' : view.scope === 'net' ? '待确认改动的当前片段' : '该次修改'
   const code = sessionFileChangeCode(view.change)
   const statusLabel = code === 'U' ? '新增' : code === 'D' ? '删除' : '修改'
-  return stats ? <span className="work-session-artifacts__count" title={scopeLabel} aria-label={`${scopeLabel}：${stats.approximate ? '估算' : ''}增加 ${stats.added} 行，删除 ${stats.removed} 行`}>
+  return stats ? <span className="work-session-artifacts__count" title={`${scopeLabel}${stats.approximate ? ` · ${DIFF_APPROXIMATION_HINT}` : ''}`} aria-label={`${scopeLabel}：${stats.approximate ? '估算' : ''}增加 ${stats.added} 行，删除 ${stats.removed} 行`}>
     <b>{stats.approximate ? '≈' : ''}+{stats.added}</b><i>{stats.approximate ? '≈' : ''}−{stats.removed}</i>
   </span> : <span className="work-session-artifacts__file-status" data-file-status={code} title={`${scopeLabel}：${statusLabel}`} aria-label={`${scopeLabel}：${statusLabel}`}>{code}</span>
 }
@@ -138,7 +141,7 @@ const ArtifactTree = memo(function ArtifactTree({ rows, collapsed, selectedFile,
   </div>
 })
 
-function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, streaming, active = true, tools, messages, selection, onOpenCurrentFile, onAddToConversation, source }: SessionArtifactsProps & { source: number }): JSX.Element {
+function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready, streaming, active = true, tools, messages, selection, onBackToResults, onOpenCurrentFile, onAddToConversation, source }: SessionArtifactsProps & { source: number }): JSX.Element {
   const visible = useWorkbenchVisible()
   const enabled = Boolean(sessionId && ready && active && visible)
   const [records, setRecords] = useState<EngineFileChange[]>([])
@@ -255,11 +258,11 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
   const scopedChanges = useMemo(() => scopeArtifactChanges(sessionId, records, net, turnScope), [sessionId, records, net, turnScope])
   const scopedFiles = useMemo(() => {
     if (!workspacePath) return []
-    const files = buildSessionArtifactFiles(sessionId, scopedChanges.records, scopedChanges.net, workspacePath)
+    const files = buildSessionArtifactFiles(sessionId, scopedChanges.records, scopedChanges.net, workspacePath, turnScope.kind === 'turn' ? turnScope.turnId : undefined)
     const preserveKey = requested?.path && (requested.changeId || requested.view === 'operation')
       ? sessionChangePathKey(requested.path, workspacePath) : undefined
     return filterSessionArtifactFiles(files, preserveKey)
-  }, [sessionId, scopedChanges, workspacePath, requested])
+  }, [sessionId, scopedChanges, workspacePath, requested, turnScope])
   const files = useMemo(() => searchArtifactFiles(scopedFiles, query), [scopedFiles, query])
   const batchRecords = useMemo(() => files.flatMap(file => file.operations), [files])
   const uncombinedIds = useMemo(() => new Set(scopedChanges.uncombinedChangeIds), [scopedChanges])
@@ -267,7 +270,19 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
   const selected = useMemo(() => resolveArtifactChoice(files, sessionId, choice, workspacePath), [files, sessionId, choice, workspacePath])
   const rows = useMemo(() => {
     const result: SessionArtifactTreeNode[] = []
-    const visit = (nodes: SessionArtifactTreeNode[]): void => { for (const node of nodes) { result.push(node); if (!collapsed.has(node.key)) visit(node.children) } }
+    // A single-child folder chain adds indentation without offering a choice.
+    // Compact its label so real file names retain the sidebar's reading width.
+    const visit = (nodes: SessionArtifactTreeNode[], depth = 0): void => { for (const node of nodes) {
+      let tail = node
+      const names = [node.name]
+      while (!tail.file && tail.children.length === 1 && !tail.children[0].file) {
+        tail = tail.children[0]
+        names.push(tail.name)
+      }
+      const row = { ...node, name: names.join('/'), depth, children: tail.children }
+      result.push(row)
+      if (!collapsed.has(row.key)) visit(row.children, depth + 1)
+    } }
     visit(tree)
     return result
   }, [tree, collapsed])
@@ -276,20 +291,21 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
   const prefersPreview = Boolean(selectedFile && sessionFilePrefersPreview(selectedFile.path))
   // A turn's files may have later edits. Its default must use that turn's
   // operation snapshot, even when a cross-turn net segment was excluded.
-  const displayedView = detailView ?? (prefersPreview ? 'current' : turnScope.kind === 'turn' ? 'operation'
+  const displayedView = detailView ?? (turnScope.kind === 'turn' ? 'turn' : prefersPreview ? 'current'
     : !selectedFile?.net.length ? 'current' : 'net')
   const selectedView = displayedView === 'current' || requested?.changeId && !selected?.view ? null : selected?.view?.scope === displayedView ? selected.view
-    : selectedFile?.[displayedView === 'net' ? 'net' : 'operations'][0]
-      ? { scope: displayedView, change: selectedFile[displayedView === 'net' ? 'net' : 'operations'][0] } : null
+    : selectedFile && artifactViews(selectedFile, displayedView)[0]
+      ? { scope: displayedView, change: artifactViews(selectedFile, displayedView)[0] } : null
   const actionsDisabled = !enabled || Boolean(error) || !loaded || !workspacePath || workspacePending
   const missingRequested = Boolean(requested && (!selectedFile || requested.changeId && !selected?.view))
   const requestNotice = requestWaiting || !loaded ? '正在同步请求的文件与修改记录…' : '未找到请求的文件或修改记录。可刷新重试，或从文件树选择其他记录。'
   const batchLabel = `${turnScope.kind === 'session' ? '整个会话' : turnScope.kind === 'turn' ? '当前轮次' : '未关联轮次'}${query.trim() ? ' · 当前筛选' : ''}`
   const uncombinedCount = selectedFile?.operations.filter(change => uncombinedIds.has(change.id)).length ?? 0
   const selectedTurn = turnOptions.find(option => option.key === artifactTurnScopeKey(turnScope))
-  const selectedVersions = selectedFile && selectedView ? selectedFile[selectedView.scope === 'net' ? 'net' : 'operations'] : []
+  const selectedVersions = selectedFile && selectedView ? artifactViews(selectedFile, selectedView.scope) : []
   const selectedVersionIndex = selectedView ? selectedVersions.findIndex(change => change.id === selectedView.change.id) : -1
   const viewDescription = displayedView === 'current' ? '显示当前文件内容；轮次范围仅筛选涉及文件。'
+    : displayedView === 'turn' ? '比较本轮第一次修改前与最后一次修改后的快照；后续轮次不会覆盖这里。'
     : uncombinedCount ? '跨轮次的净变化仅在“整个会话”查看。'
       : !selectedFile?.net.length ? '当前范围暂无待确认净变化，可查看修改记录。'
         : displayedView === 'net' ? '仅显示待确认的连续修改，不代表整个会话的累计差异。' : '查看所选修改发生时的前后内容。'
@@ -307,6 +323,11 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
     // Completion retains the reviewed version only while that same context is
     // still visible. Switching files, filters or views owns the newer choice.
     if (currentReviewContext.current === reviewContext && selectedFile && selectedView) {
+      if (selectedView.scope === 'turn') {
+        setDetailView('turn')
+        refresh()
+        return
+      }
       const operation = selectedView.scope === 'operation' ? selectedView.change : selectedFile.operations.find(change =>
         change.id === selectedView.change.changeIds?.at(-1)) ?? selectedFile.operations[0]
       if (operation) {
@@ -342,13 +363,14 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
   const setScope = (scope: SessionArtifactDetailView): void => {
     if (!selectedFile) return
     setDetailView(scope)
-    const change = scope === 'current' ? undefined : selectedFile[scope === 'net' ? 'net' : 'operations'][0]
+    const change = scope === 'current' ? undefined : artifactViews(selectedFile, scope)[0]
     setChoice(change && scope !== 'current' ? choiceFor(selectedFile, { scope, change }) : choiceFor(selectedFile))
   }
 
   return <section className="work-session-artifacts" aria-label="本会话成果与改动" data-session-id={sessionId} aria-busy={syncing || workspacePending}>
     <div className="work-session-artifacts__toolbar" aria-label="文件改动范围与搜索">
       <div className="work-session-artifacts__controls">
+        {onBackToResults ? <button type="button" className="work-session-artifacts__back" aria-label="返回成果" title="返回成果" onClick={onBackToResults}><Icon name="chevron-left" size={16} /></button> : null}
         <div className="work-session-artifacts__turn" data-turn-scope={artifactTurnScopeKey(turnScope)}>
           <Select ariaLabel="文件改动轮次" value={artifactTurnScopeKey(turnScope)} title={selectedTurn ? turnOptionLabel(selectedTurn) : '查看文件范围'}
             triggerLabel={selectedTurn?.summary} width={360} panelClassName="work-artifact-picker work-session-artifacts__popover"
@@ -356,50 +378,58 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
               description: option.createdAt ? `${option.timeSource === 'change' ? '首次修改' : '请求时间'} · ${new Date(option.createdAt).toLocaleString()}` : undefined }))}
             onChange={changeTurnScope} />
         </div>
-        <label className="work-session-artifacts__search" title="搜索当前范围的全部文件"><span className="work-session-artifacts__control-label">搜索文件</span><Icon name="search" size={13} />
-          <input className="ui-input ui-input--compact" type="search" aria-label="搜索当前范围文件" placeholder="搜索文件或路径" value={query} onChange={event => {
-            const value = event.currentTarget.value
-            const matching = searchArtifactFiles(scopedFiles, value)
-            const next = resolveArtifactChoice(matching, sessionId, choice, workspacePath)?.file ?? matching[0]
-            setQuery(value)
-            // Filtering a still-visible file must retain its chosen historical
-            // operation; only a newly selected file owns a fresh default view.
-            if (next?.key !== selectedFile?.key) {
-              setChoice(next ? choiceFor(next) : null)
-              setDetailView(null)
-            }
-            setCollapsed(new Set())
-          }} />
-        </label>
-        <button type="button" className="work-session-artifacts__refresh" aria-label="刷新" title="刷新文件记录与当前内容" disabled={!enabled || syncing} onClick={refreshSelectedFile}>
-          {syncing ? <Spinner size={13} /> : <Icon name="refresh" size={13} />}
-        </button>
+        <header className="work-session-artifacts__header" title={`${batchLabel}${selectedTurn?.createdAt ? ` · ${turnOptionLabel(selectedTurn)}` : ''}${turnScope.kind === 'unassociated' ? ' · 这些记录未携带可靠的轮次标识，已单独列出。' : ''}`}>
+          <span className="work-session-artifacts__mode">文件改动</span>
+          <span aria-label={`${query.trim() ? `${files.length} / ${scopedFiles.length}` : files.length} 个涉及文件`}>{query.trim() ? `${files.length} / ${scopedFiles.length}` : files.length} 个文件</span>
+          {streaming && batchRecords.length ? <span className="work-session-artifacts__activity" role="status" title="任务正在运行，请结束后重新确认文件改动">运行中</span> : null}
+        </header>
       </div>
+      <div className="work-session-artifacts__batch" aria-label={`${batchLabel}的文件改动操作`}>
+        <ChangeReviewActions sessionId={sessionId} workspacePath={workspacePath} changes={batchRecords} streaming={streaming} disabled={actionsDisabled}
+          refreshing={syncing} onChanged={refreshReview} presentation="menu" compact showBlockedHint={false} />
+      </div>
+      <button type="button" className="work-session-artifacts__refresh" aria-label="刷新" title="刷新文件记录与当前内容" disabled={!enabled || syncing} onClick={refreshSelectedFile}>
+        {syncing ? <Spinner size={13} /> : <Icon name="refresh" size={14} />}
+      </button>
     </div>
     {error ? <div className="work-session-artifacts__error" role="alert"><span>改动同步失败，已保留上次记录。</span>
       <button type="button" disabled={!enabled || syncing} onClick={refreshSelectedFile}>重试</button><details><summary>查看原因</summary>{error}</details>
     </div> : null}
-    <div className="work-session-artifacts__batch" aria-label={`${batchLabel}的文件改动操作`}>
-      <header className="work-session-artifacts__header" title={`${batchLabel}${selectedTurn?.createdAt ? ` · ${turnOptionLabel(selectedTurn)}` : ''}${turnScope.kind === 'unassociated' ? ' · 这些记录未携带可靠的轮次标识，已单独列出。' : ''}`}>
-        <span aria-label={`${query.trim() ? `${files.length} / ${scopedFiles.length}` : files.length} 个涉及文件`}>{query.trim() ? `${files.length} / ${scopedFiles.length}` : files.length} 个文件</span>
-        {streaming && batchRecords.length ? <span className="work-session-artifacts__activity" role="status" title="任务正在运行，请结束后重新确认文件改动">任务运行中</span> : null}
-      </header>
-      <ChangeReviewActions sessionId={sessionId} workspacePath={workspacePath} changes={batchRecords} streaming={streaming} disabled={actionsDisabled}
-        refreshing={syncing} onChanged={refreshReview} presentation="menu" compact showBlockedHint={false} />
-    </div>
-    {files.length ? <div className="work-session-artifacts__split">
-      <ArtifactTree rows={rows} collapsed={collapsed} selectedFile={selectedFile} selectedView={selectedView ?? selected?.view ?? null} active={active}
-        selectionRevision={selection?.revision} onSelect={selectFile} onToggle={toggleDirectory} />
+    {scopedFiles.length ? <div className="work-session-artifacts__split">
+      <aside className="work-session-artifacts__navigation" aria-label="成果文件导航">
+        <div className="work-session-artifacts__navigation-head">
+          <label className="work-session-artifacts__search" title="搜索当前范围的全部文件"><span className="work-session-artifacts__control-label">搜索文件</span><Icon name="search" size={14} />
+            <input className="ui-input ui-input--compact" type="search" aria-label="搜索当前范围文件" placeholder="筛选文件…" value={query} onChange={event => {
+              const value = event.currentTarget.value
+              const matching = searchArtifactFiles(scopedFiles, value)
+              const next = resolveArtifactChoice(matching, sessionId, choice, workspacePath)?.file ?? matching[0]
+              setQuery(value)
+              // Filtering a retained file keeps its selected historical record.
+              if (next?.key !== selectedFile?.key) {
+                setChoice(next ? choiceFor(next) : null)
+                setDetailView(null)
+              }
+              setCollapsed(new Set())
+            }} />
+          </label>
+        </div>
+        <ArtifactTree rows={rows} collapsed={collapsed} selectedFile={selectedFile} selectedView={selectedView ?? selected?.view ?? null} active={active}
+          selectionRevision={selection?.revision} onSelect={selectFile} onToggle={toggleDirectory} />
+      </aside>
       <div className="work-session-artifacts__detail">
-        {selectedFile ? <header className="work-session-artifacts__file-header">
-          <strong title={selectedFile.path}>{selectedFile.name}</strong>
-          {!missingRequested ? <Select className="work-session-artifacts__view-select" ariaLabel="差异范围" title={viewDescription} value={displayedView} width={240} panelClassName="work-session-artifacts__popover"
+        {selectedFile ? <div className="work-session-artifacts__file-chrome"><header className="work-session-artifacts__file-header">
+          <div className="work-session-artifacts__identity">
+            <FileGlyph name={selectedFile.name} size={16} />
+            <strong title={selectedFile.path}>{selectedFile.name}</strong>
+            <ChangeCount view={selectedView ?? defaultArtifactView(selectedFile)} />
+          </div>
+          {!missingRequested ? <Select className="work-session-artifacts__view-select" ariaLabel="差异范围" title={viewDescription} triggerIcon={displayedView === 'current' ? 'file' : displayedView === 'operation' ? 'clock-outline' : 'git'} value={displayedView} width={240} panelClassName="work-session-artifacts__popover"
             options={[
+              ...(turnScope.kind === 'turn' ? [{ value: 'turn', label: '本轮改动', description: '本轮开始至结束的历史差异' }] : []),
               { value: 'current', label: '当前内容', description: '读取当前文件，可预览、引用和保存' },
               { value: 'net', label: '待确认改动', description: '当前范围内仍待确认的连续修改' },
               { value: 'operation', label: '修改记录', description: '查看每次写入前后的历史内容' }
-            ]} onChange={value => { if (value === 'current' || value === 'net' || value === 'operation') setScope(value) }} /> : null}
-          <ChangeCount view={selectedView ?? defaultArtifactView(selectedFile)} />
+            ]} onChange={value => { if (value === 'current' || value === 'turn' || value === 'net' || value === 'operation') setScope(value) }} /> : null}
           <Popover key={reviewContext} label="文件改动信息" className="work-session-artifacts__info" panelClassName="work-session-artifacts__popover work-session-artifacts__info-panel" align="end" width={320}
             trigger={({ open }) => <button type="button" className="work-session-artifacts__info-trigger" aria-label="文件改动信息" aria-expanded={open} title="文件路径、修改时间与范围说明"><Icon name="info" size={14} /></button>}>
             <dl>
@@ -410,25 +440,30 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
             </dl>
             <p>{viewDescription}</p>
             {turnScope.kind === 'unassociated' ? <p>这些记录未携带可靠的轮次标识，已单独列出。</p> : null}
+            {!currentDeleted ? <button type="button" className="work-quiet-button work-session-artifacts__open-in-info" disabled={!enabled} onClick={() => onOpenCurrentFile(selectedFile.path)}><Icon name="file" size={15} />在工作区打开当前文件</button> : null}
           </Popover>
-          {!currentDeleted ? <button type="button" aria-label="打开当前文件" title="打开当前文件" disabled={!enabled} onClick={() => onOpenCurrentFile(selectedFile.path)}><Icon name="file" size={15} /></button> : null}
-        </header> : null}
-        {missingRequested ? <p className="work-session-artifacts__empty" role="status">{requestNotice}</p> : selectedFile ? <>
-          {selectedView ? <div className="work-session-artifacts__scope">
+          {!currentDeleted ? <button type="button" className="work-session-artifacts__open-file" aria-label="打开当前文件" title="打开当前文件" disabled={!enabled} onClick={() => onOpenCurrentFile(selectedFile.path)}><Icon name="file" size={15} /></button> : null}
+        </header>
+          {!missingRequested && selectedView ? <div className="work-session-artifacts__scope">
             {selectedView && selectedVersions.length > 1 ? <Select className="work-session-artifacts__versions"
-              ariaLabel={selectedView.scope === 'net' ? '选择净变化片段' : '选择单次修改'} value={selectedView.change.id} width={280}
+              ariaLabel={selectedView.scope !== 'operation' ? '选择净变化片段' : '选择单次修改'} value={selectedView.change.id} width={280}
               panelClassName="work-session-artifacts__popover" title={`${new Date(selectedView.change.createdAt).toLocaleString()} · ${artifactChangeStatus(selectedView.change.status)}`}
-              triggerLabel={selectedView.scope === 'net' ? `片段 ${selectedVersionIndex + 1} / ${selectedVersions.length}` : `记录 ${selectedVersions.length - selectedVersionIndex} / ${selectedVersions.length}`}
+              triggerLabel={selectedView.scope !== 'operation' ? `片段 ${selectedVersionIndex + 1} / ${selectedVersions.length}` : `记录 ${selectedVersions.length - selectedVersionIndex} / ${selectedVersions.length}`}
+              compactTriggerLabel={`${selectedView.scope !== 'operation' ? selectedVersionIndex + 1 : selectedVersions.length - selectedVersionIndex}/${selectedVersions.length}`}
               options={selectedVersions.map((change, index) => ({ value: change.id,
-                label: selectedView.scope === 'net' ? `片段 ${index + 1} · ${change.changeIds?.length ?? 1} 次修改` : new Date(change.createdAt).toLocaleString(),
+                label: selectedView.scope !== 'operation' ? `片段 ${index + 1} · ${change.changeIds?.length ?? 1} 次修改` : new Date(change.createdAt).toLocaleString(),
                 description: artifactChangeStatus(change.status) }))}
               onChange={value => {
                 const change = selectedVersions.find(item => item.id === value)
                 if (change) setChoice(choiceFor(selectedFile, { scope: selectedView.scope, change }))
             }} /> : selectedView?.scope === 'operation' && selectedView.change.status !== 'pending' ? <span className="work-session-artifacts__version-status" title={`${new Date(selectedView.change.createdAt).toLocaleString()} · ${artifactChangeStatus(selectedView.change.status)}`}>{artifactChangeStatus(selectedView.change.status)}</span> : null}
-            {selectedView ? <ChangeReviewActions sessionId={sessionId} workspacePath={workspacePath} changes={[selectedView.change]} streaming={streaming} disabled={actionsDisabled}
-              refreshing={syncing} onChanged={refreshReview} mode="single" compact showBlockedHint={false} /> : null}
+            {selectedView ? <ChangeReviewActions sessionId={sessionId} workspacePath={workspacePath}
+              changes={selectedView.scope === 'turn' ? selectedFile.operations.filter(change => selectedView.change.changeIds?.includes(change.id)) : [selectedView.change]}
+              streaming={streaming} disabled={actionsDisabled}
+              refreshing={syncing} onChanged={refreshReview} mode="single" compact iconOnly showBlockedHint={false} /> : null}
           </div> : null}
+        </div> : null}
+        {missingRequested ? <p className="work-session-artifacts__empty" role="status">{requestNotice}</p> : selectedFile ? <>
           {displayedView === 'current' ? currentDeleted ? <DeletedArtifact path={selectedFile.path} /> : <>
             <div className="work-session-artifacts__preview" data-artifact-view="current">
               <ArtifactPanel artifact={currentArtifact} sessionId={sessionId} workspaceRoot={workspacePath} active={active}
@@ -436,21 +471,14 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
             </div>
           </> : <>
           {selectedView?.change.projectionIssue ? <p className="work-session-artifacts__notice" role="note">{ARTIFACT_PROJECTION_NOTICES[selectedView.change.projectionIssue]}</p> : null}
-          {prefersPreview ? currentDeleted ? <DeletedArtifact path={selectedFile.path} /> : <>
-            <p className="work-session-artifacts__notice" role="note">{selectedView?.change.kind === 'delete'
-              ? '此记录删除了文件。下方读取当前路径；若文件已重新创建，显示重新创建后的内容。'
-              : '此类文件不显示文本差异。下方预览当前文件，不代表所选历史版本。'}</p>
-            <div className="work-session-artifacts__preview" data-artifact-view="current" data-preview-context="history">
-              <ArtifactPanel artifact={currentArtifact} sessionId={sessionId} workspaceRoot={workspacePath} active={active}
-                inResourceTab onAddToConversation={onAddToConversation} />
-            </div>
-          </> : selectedView ? <div className="work-session-artifacts__diff" data-change-id={selectedView.change.id} data-diff-scope={selectedView.scope}>
+          {prefersPreview ? <p className="work-session-artifacts__notice" role="note">此类文件的历史内容无法在修改记录中预览。可查看该轮发布的交付物；选择“当前内容”会读取工作区最新文件。</p>
+          : selectedView ? <div className="work-session-artifacts__diff" data-change-id={selectedView.change.id} data-diff-scope={selectedView.scope}>
             <FileChangeCard key={`${selectedView.scope}:${selectedView.change.id}`} change={selectedView.change} state="done" defaultOpen embedded
               memoryKey={`work-artifacts:${source}:${sessionId}:${selectedView.scope}:${selectedView.change.id}`}
               fileContext={{ sessionId, workspaceRoot: workspacePath }} onOpenFile={onOpenCurrentFile} />
           </div> : <p className="work-session-artifacts__empty" role="status">{displayedView === 'net' ? '此文件在当前范围没有待确认改动。' : '此文件在当前范围没有修改记录。'}</p>}
           </>}
-        </> : null}
+        </> : <p className="work-session-artifacts__empty" role="status">当前范围没有匹配的文件。</p>}
       </div>
     </div> : <p className="work-session-artifacts__empty" role="status">{!ready ? '连接引擎后查看本会话的文件改动。' : workspacePending || syncing && !loaded ? '正在读取本会话的文件记录…' : error ? '文件记录暂未同步，请重试。'
       : missingRequested ? requestNotice

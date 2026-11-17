@@ -7,6 +7,7 @@ import { Spinner } from '@renderer/ui/ui-primitives'
 import { Select } from '@renderer/ui/Select'
 import { confirmDialog } from '@renderer/ui/ConfirmDialog'
 import { openAppSettings } from './app-settings-navigation'
+import { useAccount } from '../account/account-store'
 import {
   SettingsContent,
   SettingsDisclosure,
@@ -40,7 +41,7 @@ const INITIAL_IMPORT_PROGRESS: EngineImportProgress = {
   message: ''
 }
 
-const EMPTY_REMOTE_AUTH: RemoteAuthStatus = { configured: false, type: null, source: 'none' }
+const EMPTY_REMOTE_AUTH: RemoteAuthStatus = { configured: false, type: null, source: 'none', effective: 'none' }
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -68,6 +69,7 @@ function shortBuildId(buildId: string): string {
 export function EngineSettingsView(): JSX.Element {
   const { engine, settings, updateSettings } = useApp()
   const { snapshot } = engine
+  const { account } = useAccount()
 
   const [mode, setMode] = useState<EngineMode>(settings.engineMode)
   const [port, setPort] = useState(String(settings.preferredPort))
@@ -159,7 +161,7 @@ export function EngineSettingsView(): JSX.Element {
       alive = false
       window.clearTimeout(timer)
     }
-  }, [mode, remoteUrl])
+  }, [mode, remoteUrl, account.status, account.user?.id, account.serviceUrl, snapshot.accountId])
 
   useEffect(() => {
     let alive = true
@@ -355,6 +357,13 @@ export function EngineSettingsView(): JSX.Element {
     selectedRuntime !== null &&
     selectedRuntime.id !== (runtimeCatalog?.activeId ?? null)
   const runtimeSource = snapshot.runtimeSource
+  const advancedAuthDescription = remoteAuthStatus.effective === 'account'
+    ? '当前使用个人账号。若要改用 API Key 或 JWT，请先退出账号，再输入凭据并保存；账号过期时也不会自动切换。'
+    : remoteAuthStatus.effective === 'signed-out'
+      ? '当前已退出账号，旧的高级凭据未启用。需要使用时，请重新输入凭据并保存。'
+      : remoteAuthStatus.effective === 'advanced'
+        ? `当前使用 ${remoteAuthStatus.type === 'bearer' ? 'JWT' : 'API Key'}，仅对下方服务地址生效。`
+        : '仅在服务管理员提供 API Key 或 JWT 时使用。'
 
   return (
     <div className="settings-view settings-view--engine">
@@ -631,15 +640,15 @@ export function EngineSettingsView(): JSX.Element {
                 </div>
               </SettingsContent>
             ) : null}
-            <SettingsRow label="个人账号" description="一键登录、完善个人资料，并管理第三方绑定和恢复凭证。">
+            <SettingsRow label="个人账号" description="登录或创建账号，保存恢复凭证并管理登录方式。">
               <button className="btn" type="button" disabled={saving} onClick={() => openAppSettings('account')}>管理个人账号</button>
             </SettingsRow>
-            <SettingsDisclosure title="高级用户认证" description="管理员 API Key / JWT 兼容配置。个人账号登录后优先使用账号会话。">
+            <SettingsDisclosure title="高级用户认证" description={advancedAuthDescription}>
             <SettingsRow
               label="认证方式"
               description={remoteAuthStatus.configured
                 ? `当前已保存：${remoteAuthStatus.type === 'bearer' ? 'JWT' : 'API Key'}。下方选择仅用于新输入的凭据，填写并保存后替换。`
-                : '选择新凭据的类型，填写并保存后生效。'}
+                : '选择新凭据的类型。未登录个人账号时，填写并保存后启用。'}
             >
               <Select
                 value={remoteAuthType}

@@ -1,4 +1,7 @@
-/** Real Electron PPTX notes regression: real archive/IPC/iframe rendering, small wheel input and consecutive animation-frame geometry. Fixture engine only; no generated model calls or production configuration. */
+/** Real Electron PPTX notes regression: historical scopes never read current
+ * bytes; explicit current preview covers real archive/IPC/iframe rendering,
+ * small wheel input and consecutive animation-frame geometry. Fixture engine
+ * only; no generated model calls or production configuration. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page, type Locator, type TestInfo } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -69,7 +72,9 @@ const detail = () => page.locator('.work-session-artifacts__detail:visible')
 const scope = () => detail().getByRole('button', { name: '差异范围', exact: true })
 const zoom = () => detail().getByRole('button', { name: '缩放', exact: true })
 async function choose(control: Locator, label: string): Promise<void> {
-  await control.click(); await page.getByRole('menuitem', { name: label, exact: true }).click()
+  await control.click()
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  await page.getByRole('menuitem', { name: new RegExp(`^${escaped}(?:\\s|$)`) }).click()
   await expect(control).toContainText(label)
 }
 async function expectDocument(): Promise<void> {
@@ -108,7 +113,15 @@ test.beforeAll(async () => {
   }, { key: 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin })), sessionId, title, modelId, now })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   await page.locator('.work-progress-panel__review-summary').click()
-  await expect(scope()).toContainText('当前内容'); await expectDocument()
+  for (const label of ['本轮改动', '待确认改动', '修改记录']) {
+    if (label !== '本轮改动') await choose(scope(), label)
+    await expect(scope()).toContainText(label)
+    await expect(detail().locator('.work-session-artifacts__notice')).toContainText('此类文件的历史内容无法在修改记录中预览')
+    await expect(detail().locator('[data-artifact-view="current"]')).toHaveCount(0)
+    await expect(detail().locator('iframe.document-preview__frame')).toHaveCount(0)
+    expect(reads, `${label} must not read the current workspace file`).toEqual([])
+  }
+  await choose(scope(), '当前内容'); await expectDocument()
 })
 test.afterEach(async ({}, info) => {
   if (page && !page.isClosed()) await page.screenshot({ path: info.outputPath(`${info.status}.png`), animations: 'allow' })

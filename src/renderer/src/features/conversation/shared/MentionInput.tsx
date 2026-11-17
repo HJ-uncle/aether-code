@@ -7,8 +7,7 @@
  *   - 文件、源码位置、终端、协作 Agent、网页与会话共享同一套引用协议
  *   - 组件是非受控 DOM + 受控文本镜像：内部维护真实 DOM，每次输入后序列化成
  *    「带 @路径 占位符的纯文本 + mention 列表」抛给父组件
- *   - 外部把 value 改成一个与当前序列化结果不同的字符串时（回填草稿等场景），
- *     用该纯文本重建 DOM（mention 退化为普通文字，与 wuzu 粘到外部的降级一致）
+ *   - 外部回填草稿时，文本与引用元数据一起恢复，不能把内部 token 当普通文字回填
  *
  * 发送协议：mention 在文本里序列化为 @路径（源码位置带 :行号区间），
  * 与 wuzu 发给引擎的占位格式一致。
@@ -18,6 +17,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -307,6 +307,7 @@ function caretBoundaries(range: Range, box: HTMLElement): { left: string; hasRig
 
 interface MentionInputProps {
   value: string
+  mentions: Mention[]
   disabled?: boolean
   placeholder?: string
   /** Accessible name for the contenteditable input (mirrors textarea labels). */
@@ -338,7 +339,7 @@ interface MentionInputProps {
 
 export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
   function MentionInput(
-    { value, disabled, placeholder, ariaLabel, className, baseClassName, includeMentionClass = true, attachmentReferences = [], attachmentRoot = null, attachmentSessionId, onChange, onSubmit, onPasteFiles, onPasteText, onOpenMention, onMentionQuery, onSlashQuery },
+    { value, mentions, disabled, placeholder, ariaLabel, className, baseClassName, includeMentionClass = true, attachmentReferences = [], attachmentRoot = null, attachmentSessionId, onChange, onSubmit, onPasteFiles, onPasteText, onOpenMention, onMentionQuery, onSlashQuery },
     ref
   ): JSX.Element {
     const boxRef = useRef<HTMLDivElement>(null)
@@ -368,6 +369,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     const draftScopeRef = useRef(draftScope)
     draftScopeRef.current = draftScope
     const domDraftScopeRef = useRef(draftScope)
+    const appliedPropsRef = useRef<{ scope: string; text: string; mentions: Mention[] } | null>(null)
     const pointerRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
     const localTextDragRef = useRef(false)
     const suppressClickUntilRef = useRef(0)
@@ -1108,11 +1110,18 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       return () => document.removeEventListener('selectionchange', handler)
     }, [onMentionQuery, onSlashQuery, syncMentionQuery, syncSlashQuery])
 
-    // 外部回填（撤回消息重新编辑等）：value 与内部序列化结果不一致时重建 DOM
-    useEffect(() => {
-      if (value === lastSerializedRef.current) return
-      rebuildFromText(value)
-    }, [value, rebuildFromText])
+    // Apply one complete draft before the next native edit. A passive text-only
+    // echo can run after typing/IME has advanced the DOM and strip every chip.
+    // Callback churn alone is not an external edit (especially during IME).
+    useLayoutEffect(() => {
+      const previous = appliedPropsRef.current
+      if (previous?.scope === draftScope && previous.text === value && previous.mentions === mentions) return
+      appliedPropsRef.current = { scope: draftScope, text: value, mentions }
+      if (domDraftScopeRef.current === draftScope && value === lastSerializedRef.current &&
+        sameAuthoredDraft(acceptedDraftRef.current, { text: value, mentions }) &&
+        mentions.every((mention, index) => mention.displayText === acceptedDraftRef.current.mentions[index].displayText)) return
+      restoreDraft(value, mentions)
+    }, [value, mentions, draftScope, restoreDraft])
 
     useEffect(() => invalidateInsertions, [invalidateInsertions])
 

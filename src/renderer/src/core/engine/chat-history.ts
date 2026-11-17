@@ -56,6 +56,31 @@ function asNumberRecord(raw: unknown): Record<string, number> {
   return result
 }
 
+interface PeerDeliveryOrigin {
+  kind: 'peer'
+  participantId: string
+  body: string
+}
+
+/** Peer rows are authenticated by the engine's `peer:` history id and carry
+ * a structured prefix. Do not infer a sender from ordinary user prose. */
+function peerDeliveryOrigin(row: EngineHistoryRow): PeerDeliveryOrigin | undefined {
+  if (row.role !== 'user' || typeof row.id !== 'string' || !row.id.startsWith('peer:') || typeof row.content !== 'string') return undefined
+  const prefix = '[对等 Agent 消息]\n'
+  if (!row.content.startsWith(prefix)) return undefined
+  const end = row.content.indexOf('\n\n', prefix.length)
+  if (end < 0) return undefined
+  try {
+    const envelope: unknown = JSON.parse(row.content.slice(prefix.length, end))
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return undefined
+    const sender = (envelope as { sender?: unknown }).sender
+    if (typeof sender !== 'string' || !sender.trim()) return undefined
+    return { kind: 'peer', participantId: sender.trim(), body: row.content.slice(end + 2) }
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * 引擎 conversations 表回放行（GET /conversation/history 的 data 项）。
  *
@@ -213,13 +238,15 @@ export function replayMessages(rows: EngineHistoryRow[]): ChatMessage[] {
       // so a restart can bind a row even when conversationId was compacted.
       const rowRunId = row.metadata?.runId ?? row.metadata?.rootRunId
     const attemptId = row.metadata?.attemptId ?? row.metadata?.rootAttemptId
+      const collaborationOrigin = peerDeliveryOrigin(row)
       result.push({
         id: row.id || newId(),
         role: 'user',
         conversationId: row.conversationId ?? row.metadata?.turnId,
         runId: rowRunId, attemptId,
         rootFollowup: normalizeRootFollowupMessage(row),
-        content: extractText(row.content),
+        content: collaborationOrigin?.body ?? extractText(row.content),
+        ...(collaborationOrigin ? { collaborationOrigin } : {}),
         attachments: row.metadata?.attachments?.map(file => ({ path: file.name,
           name: file.displayName || file.name.replace(/\\/g, '/').split('/').at(-1) || file.name,
           type: file.type || '', size: file.size ?? 0,

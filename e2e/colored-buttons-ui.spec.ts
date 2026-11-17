@@ -172,6 +172,11 @@ for (const appearance of ['light', 'dark'] as const) for (const accent of ['blue
     await page.reload(); await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
     await expect(page.locator('html')).toHaveAttribute('data-accent', accent)
     await expect(page.locator('.status-bar')).toBeVisible()
+    // The monitor ships its styles with the lazy page; enter through its real
+    // navigation before checking the refresh button's local color rules.
+    await page.getByRole('complementary', { name: '应用导航', exact: true })
+      .getByRole('button', { name: '引擎监控', exact: true }).click()
+    await expect(page.locator('.engine-resource')).toBeVisible()
     await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].focus())
     await page.bringToFront()
     await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: 'Button test window owns keyboard and pointer focus after reload' }).toBe(true)

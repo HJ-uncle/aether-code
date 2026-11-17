@@ -13,39 +13,21 @@ import { TaskStatus } from '../sessions/TaskStatus'
 import { ProjectNavigator } from './ProjectNavigator'
 import { useSessionTaskActions, type SessionTaskActionController } from '../sessions/useSessionTaskActions'
 import { SESSION_TASK_PAGE_SIZE } from '../sessions/view-performance'
+import { buildProjectGroups, PROJECT_PREFERENCES_KEY, type ProjectGroup as SharedProjectGroup } from './project-preferences'
+import { useProjectPreferences } from './useProjectPreferences'
 import './projects.css'
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const fullDateFormatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'long', timeStyle: 'short' })
-const projectName = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) || path
-interface ProjectGroup { path: string; name: string; tasks: SessionTask[]; matches: SessionTask[]; updatedAt: number; pinned: boolean; archived: boolean }
-interface ProjectPreferences { pinnedPaths: string[]; archivedPaths: string[]; names: Record<string, string>; selectedPath: string | null; selectedCollection: 'projects' | 'independent'; sort: 'recent' | 'name' }
+interface ProjectGroup extends SharedProjectGroup { matches: SessionTask[] }
 interface ProjectMenu { id: number; path: string; anchor: HTMLButtonElement; x: number; y: number }
-
-function readPreferences(key: string): ProjectPreferences {
-  const fallback: ProjectPreferences = { pinnedPaths: [], archivedPaths: [], names: {}, selectedPath: null, selectedCollection: 'projects', sort: 'recent' }
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null')
-    if (!value || typeof value !== 'object') return fallback
-    const record = value as Record<string, unknown>
-    return {
-      pinnedPaths: Array.isArray(record.pinnedPaths) ? [...new Set(record.pinnedPaths.filter((path): path is string => typeof path === 'string'))] : [],
-      archivedPaths: Array.isArray(record.archivedPaths) ? [...new Set(record.archivedPaths.filter((path): path is string => typeof path === 'string'))] : [],
-      names: record.names && typeof record.names === 'object' && !Array.isArray(record.names)
-        ? Object.fromEntries(Object.entries(record.names).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && Boolean(entry[1].trim()))) : {},
-      selectedPath: typeof record.selectedPath === 'string' ? record.selectedPath : null,
-      selectedCollection: record.selectedCollection === 'independent' ? 'independent' : 'projects',
-      sort: record.sort === 'name' ? 'name' : 'recent'
-    }
-  } catch { return fallback }
-}
 
 export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, source, remote, uploading }: {
   tasks: SessionTask[]; ready: boolean; onOpenTask: (id: string) => void; onNewTask: (path: string) => Promise<void>
   source: string; remote: boolean; uploading: boolean; controller: SessionTaskActionController
 }): JSX.Element {
-  const storageKey = sessionStorageKey('aether.work.projects.v1', source)
-  const [preferences, setPreferences] = useState(() => readPreferences(storageKey))
+  const storageKey = sessionStorageKey(PROJECT_PREFERENCES_KEY, source)
+  const [preferences, persist] = useProjectPreferences(storageKey)
   const [search, setSearch] = useState('')
   const [searchCollection, setSearchCollection] = useState<'projects' | 'independent' | null>(null)
   const [filter, setFilter] = useState<'all' | 'pinned' | 'archived'>('all')
@@ -62,36 +44,16 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
   const searchRef = useRef<HTMLInputElement>(null)
   const allProjectsRef = useRef<HTMLButtonElement>(null)
   const independentRef = useRef<HTMLButtonElement>(null)
-  const persist = (change: Partial<ProjectPreferences>): void => {
-    const next = { ...preferences, ...change }
-    setPreferences(next)
-    try { localStorage.setItem(storageKey, JSON.stringify(next)) } catch { /* Browsing remains available if storage is full. */ }
-  }
-  const groups = useMemo(() => {
-    const byPath = new Map<string, SessionTask[]>()
-    // Full paths distinguish same-name projects; reading the list never changes task ownership.
-    for (const task of tasks) {
-      if (task.archived || !task.workspacePath) continue
-      const group = byPath.get(task.workspacePath)
-      if (group) group.push(task)
-      else byPath.set(task.workspacePath, [task])
-    }
-    const pins = new Set(preferences.pinnedPaths)
-    const archived = new Set(preferences.archivedPaths)
-    return [...byPath].map(([path, items]): ProjectGroup => {
-      const sorted = items.sort((a, b) => b.updatedAt - a.updatedAt)
-      return { path, name: preferences.names[path] || projectName(path), tasks: sorted, matches: sorted,
-        updatedAt: sorted[0].updatedAt, pinned: pins.has(path), archived: archived.has(path) }
-    }).sort((a, b) => Number(b.pinned) - Number(a.pinned) ||
-      (preferences.sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : b.updatedAt - a.updatedAt) || a.path.localeCompare(b.path))
-  }, [tasks, preferences.pinnedPaths, preferences.archivedPaths, preferences.names, preferences.sort])
+  const groups = useMemo(() => buildProjectGroups(tasks, preferences, 'all'), [tasks, preferences])
+  const currentGroups = useMemo(() => buildProjectGroups(tasks, preferences, 'current'), [tasks, preferences])
+  const scopedGroups = useMemo(() => filter === 'archived' ? buildProjectGroups(tasks, preferences, 'archived') : currentGroups, [tasks, preferences, filter, currentGroups])
   const query = search.trim().toLocaleLowerCase()
-  const filtered = useMemo(() => groups.flatMap(group => {
-    if (filter === 'archived' ? !group.archived : group.archived || filter === 'pinned' && !group.pinned) return []
-    if (!query || group.path.toLocaleLowerCase().includes(query) || group.name.toLocaleLowerCase().includes(query)) return [group]
+  const filtered = useMemo(() => scopedGroups.flatMap((group): ProjectGroup[] => {
+    if (filter === 'pinned' && !group.pinned) return []
+    if (!query || group.path.toLocaleLowerCase().includes(query) || group.name.toLocaleLowerCase().includes(query)) return [{ ...group, matches: group.tasks }]
     const matches = group.tasks.filter(task => task.title.toLocaleLowerCase().includes(query))
     return matches.length ? [{ ...group, matches }] : []
-  }), [groups, query, filter])
+  }), [scopedGroups, query, filter])
   // A default sandbox is an execution directory, not a selected project. Keep
   // these sessions reachable without inventing a directory or changing ownership.
   const independentTasks = useMemo(() => tasks.filter(task => !task.workspacePath).sort((a, b) => {
@@ -110,7 +72,7 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
     : [independentRunning && `${independentRunning} 个进行中`, independentWaiting && `${independentWaiting} 个待处理`].filter(Boolean).join(' · ')
   // Searching can temporarily select a match without overwriting the user's remembered project.
   const selected = filtered.find(group => group.path === preferences.selectedPath) ?? filtered[0]
-  const onlyIndependent = !groups.length && independentTasks.length > 0
+  const onlyIndependent = filter !== 'archived' && !currentGroups.length && independentTasks.length > 0
   const collection = query && searchCollection ? searchCollection : preferences.selectedCollection
   const automaticSearch = Boolean(query) && searchCollection === null
   const showIndependent = independentTasks.length > 0 && (onlyIndependent ||
@@ -146,11 +108,11 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
     setSearchCollection('projects')
     persist({ selectedPath: path, selectedCollection: 'projects' })
   }
-  const togglePin = (project = selected): void => {
+  const togglePin = (project: SharedProjectGroup | undefined = selected): void => {
     if (!project) return
     if (filter === 'pinned' && project.pinned) { setMobileDetail(false); setRecoverFocus(true) }
-    persist({ pinnedPaths: project.pinned ? preferences.pinnedPaths.filter(path => path !== project.path)
-      : [...preferences.pinnedPaths, project.path] })
+    persist(current => ({ pinnedPaths: project.pinned ? current.pinnedPaths.filter(path => path !== project.path)
+      : [...new Set([...current.pinnedPaths, project.path])] }))
   }
   const openMenu = (path: string, anchor: HTMLButtonElement, position: { x: number; y: number }): void => {
     // A new request must not inherit the previous menu's exit animation, even at the same coordinates.
@@ -175,9 +137,9 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
       onSelect: () => perform(async () => onNewTask(menuProject.path)) },
     { id: 'pin', label: menuProject.pinned ? '取消置顶项目' : '置顶项目', icon: <Icon name="pin" size={16} />, separatorBefore: true,
       onSelect: () => togglePin(menuProject) },
-    { id: 'rename', label: '修改显示名称', icon: <Icon name="pencil" size={16} />, onSelect: () => setRenaming(menuProject) },
+    { id: 'rename', label: '修改显示名称', icon: <Icon name="pencil" size={16} />, onSelect: () => setRenaming({ ...menuProject, matches: menuProject.tasks }) },
     ...(preferences.names[menuProject.path] ? [{ id: 'reset-name', label: '恢复目录名称', icon: <Icon name="undo" size={16} />,
-      onSelect: () => { const names = { ...preferences.names }; delete names[menuProject.path]; persist({ names }) } }] : []),
+      onSelect: () => persist(current => { const names = { ...current.names }; delete names[menuProject.path]; return { names } }) }] : []),
     { id: 'copy-name', label: '复制项目名称', icon: <Icon name="copy" size={16} />, separatorBefore: true,
       onSelect: () => perform(async () => { await navigator.clipboard.writeText(menuProject.name); toast.success('已复制项目名称') }) },
     { id: 'copy-path', label: '复制项目路径', icon: <Icon name="copy" size={16} />,
@@ -194,8 +156,8 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
         if (!menuProject.archived && !await confirmDialog({ title: '归档项目',
           body: `归档“${menuProject.name}”后，可在“已归档”中查看和恢复。已有任务与磁盘文件会保留，正在进行的任务不受影响。`, confirmText: '归档' })) return
         assertCurrent()
-        persist({ archivedPaths: menuProject.archived ? preferences.archivedPaths.filter(path => path !== menuProject.path)
-          : [...preferences.archivedPaths, menuProject.path] })
+        persist(current => ({ archivedPaths: menuProject.archived ? current.archivedPaths.filter(path => path !== menuProject.path)
+          : [...new Set([...current.archivedPaths, menuProject.path])] }))
         setMobileDetail(false)
         setRecoverFocus(true)
         toast.success(menuProject.archived ? '已恢复项目' : '已归档项目')
@@ -230,7 +192,7 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
         <div className="work-projects__navigation-toolbar">
           <div className="work-projects__filters" role="group" aria-label="项目筛选">
             <button ref={allProjectsRef} type="button" aria-label="全部项目" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>全部</button>
-            <button type="button" aria-label="仅看置顶" title="只显示置顶项目，与左侧的置顶会话相互独立" aria-pressed={filter === 'pinned'} onClick={() => setFilter('pinned')}>仅看置顶</button>
+            <button type="button" aria-label="仅看置顶" title="只显示置顶项目" aria-pressed={filter === 'pinned'} onClick={() => setFilter('pinned')}>仅看置顶</button>
             <button type="button" aria-label="已归档" aria-pressed={filter === 'archived'} onClick={() => setFilter('archived')}>已归档</button>
           </div>
           <Select ariaLabel="项目排序" title="项目排序" value={preferences.sort}
@@ -262,7 +224,7 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
         total={scopedIndependent.length} archivedCount={archivedIndependent} ready={ready} query={query} scope={independentScope}
         onScope={setIndependentScope} controller={controller} onOpenTask={onOpenTask} showDetail={mobileDetail}
         onBack={() => { setMobileDetail(false); requestAnimationFrame(() => independentRef.current?.focus()) }} />
-        : selected ? <ProjectDetail key={`${selected.path}:${query}`} group={selected} ready={ready} query={query} showDetail={mobileDetail}
+        : selected ? <ProjectDetail key={`${selected.path}:${filter}:${query}`} group={selected} ready={ready} query={query} showDetail={mobileDetail}
         controller={controller} onOpenTask={onOpenTask} onPin={() => togglePin()} onMenu={anchor => {
           const rect = anchor.getBoundingClientRect(); openMenu(selected.path, anchor, { x: rect.right, y: rect.bottom + 4 })
         }} onBack={() => { setMobileDetail(false); setFocusRequest(value => value + 1) }} />
@@ -279,7 +241,7 @@ export function Projects({ tasks, ready, controller, onOpenTask, onNewTask, sour
       validate={value => !value ? '项目名称不能为空' : value.length > 80 ? '项目名称不能超过 80 个字符' : null}
       onConfirm={value => {
         if (!mounted.current || source !== getEngineStorageKey()) throw new Error('项目连接已变化，请重新操作。')
-        persist({ names: { ...preferences.names, [renaming.path]: value } })
+        persist(current => ({ names: { ...current.names, [renaming.path]: value } }))
       }} onClose={() => setRenaming(null)} />}
   </section>
 }

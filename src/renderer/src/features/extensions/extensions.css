@@ -8,16 +8,16 @@
 .extension-page__interaction { width: 100%; max-width: 620px; min-width: 0; }
 .extension-page__interaction > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: var(--fg-muted); font-size: 12px; }
 .extension-slots { display: grid; gap: 8px; min-width: 0; }
-.extension-slot { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-surface); overflow: hidden; }
+.extension-slot { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); overflow: hidden; }
 .extension-slot__toggle { width: 100%; display: flex; align-items: center; gap: 6px; padding: 7px 10px; border: 0; color: var(--fg-muted); background: transparent; cursor: pointer; text-align: left; font: inherit; font-size: 12px; }
 .extension-slot__toggle:hover { background: var(--bg-hover); color: var(--fg); }
 .extension-slot__body { min-height: 100px; max-height: 800px; overflow: auto; }
 .extension-native { padding: 16px; color: var(--fg); font-size: 13px; }
 .extension-native__stack, .extension-native__card { display: flex; flex-direction: column; gap: 12px; }
-.extension-native__card { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); }
+.extension-native__card { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); }
 .extension-native__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .extension-native__field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .extension-native__check { display: flex; align-items: center; gap: 8px; }
 .extension-native__text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .extension-native__image { max-width: 100%; height: auto; object-fit: contain; }
-.extension-native__result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--bg-input); padding: 12px; border-radius: 6px; }
+.extension-native__result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--bg-input); padding: 12px; border-radius: var(--radius); }

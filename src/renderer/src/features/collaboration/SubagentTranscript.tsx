@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useApp } from '@renderer/core/app-context'
 import { getSubagentProtocol, request } from '@renderer/core/engine/client'
+import { getSubagentRuns } from '@renderer/core/engine/subagent-store'
 import { getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import type { SubagentRun } from '@shared/subagent'
@@ -31,15 +32,15 @@ export function newSessionSubagentTranscriptMemory(): SubagentTranscriptMemory {
 
 const EMPTY_ROWS: NonNullable<SessionTranscriptWindow['rows']> = []
 
-const TranscriptMessage = memo(function TranscriptMessage({ message, isRunning, fileContext, active }: {
-  message: ChatMessage; isRunning: boolean; fileContext: ChatFileContext; active: boolean
+const TranscriptMessage = memo(function TranscriptMessage({ message, name, isRunning, fileContext, active }: {
+  message: ChatMessage; name: string; isRunning: boolean; fileContext: ChatFileContext; active: boolean
 }): JSX.Element {
   const segments = useMemo(() => sessionMessageTimeline(message), [message])
   const display = useMemo(() => isRunning ? { ...message, status: 'streaming' as const } : message, [message, isRunning])
   const errorText = sessionSubagentErrorText(message)
   const time = sessionSubagentInstructionTime(message.createdAt)
   return <div className="work-subagent-transcript__reply">
-    {time ? <div className="work-subagent-transcript__message-meta"><span>代理</span><time dateTime={time.dateTime} title={time.title}>{time.label}</time></div> : null}
+    {time ? <div className="work-subagent-transcript__message-meta" aria-label={`${name}消息`}><span>{name}</span><time dateTime={time.dateTime} title={time.title}>{time.label}</time></div> : null}
     <MessageContent message={display} sessionId={fileContext.sessionId} fileContext={fileContext}
     active={active} readOnly defaultProcessOpen={false} showAllContent turnSegments={segments}>
     {errorText ? <ErrorNotice compact className="work-subagent-transcript__failure" error={errorText}
@@ -171,6 +172,7 @@ export function SubagentTranscript({ source, parentSessionId, childSessionId, ru
   // Opening an instruction or receiving a live token must not replay every
   // historical tool. Completed assistant rows also retain stable memo props.
   const messages = useMemo(() => sessionSubagentMessages(rows), [rows])
+  const senderNames = useMemo(() => new Map(getSubagentRuns(parentSessionId).map(run => [run.childSessionId, run.agentName?.trim() || ''])), [parentSessionId, refreshKey, messages])
   const lastAssistant = useMemo(() => messages.findLast(item => item.role === 'assistant'), [messages])
   const liveMessage = useMemo(() => memory.window ? sessionSubagentLiveMessage(liveRun, childSessionId, messages) : undefined, [memory.window, liveRun, childSessionId, messages])
   const window = memory.window
@@ -183,8 +185,9 @@ export function SubagentTranscript({ source, parentSessionId, childSessionId, ru
     }} aria-busy={loading}>
       {window && (window.endpoint === '/conversation/history' || window.backend !== 'jsonl') ? <p className="work-subagent-transcript__notice">当前引擎仅提供保留的历史，早期记录可能不完整。</p> : null}
       {messages.map(message => message.role === 'user'
-        ? <SubagentInstruction key={message.id} message={message} memory={memory} redraw={redraw} fileContext={fileContext} />
-        : <TranscriptMessage key={message.id} message={message} fileContext={fileContext} active={active}
+        ? <SubagentInstruction key={message.id} message={message} memory={memory} redraw={redraw} fileContext={fileContext}
+            senderLabel={message.collaborationOrigin?.participantId.startsWith('child:') ? senderNames.get(message.collaborationOrigin.participantId.slice('child:'.length)) : undefined} />
+        : <TranscriptMessage key={message.id} message={message} name={name} fileContext={fileContext} active={active}
           isRunning={running && message === lastAssistant && message.runId === runId} />)}
       {liveMessage ? <div className="work-subagent-transcript__live" data-live-run-id={liveMessage.runId}>
         <p className="work-subagent-transcript__notice">实时进度</p>

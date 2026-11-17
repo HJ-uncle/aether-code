@@ -27,6 +27,46 @@ export function sessionSidebarStatus(task: SessionTask, ready: boolean, stopping
   }[task.status] as SessionSidebarStatus
 }
 
+export interface ProjectSidebarStatus extends SessionSidebarStatus {
+  /** Number of sessions sharing the most urgent state, not pending requests. */
+  count: number
+  detail: string
+}
+
+/** Summarize the full project, including sessions outside the visible page. */
+export function projectSidebarStatus(tasks: readonly SessionTask[], ready: boolean, options: { includeArchived?: boolean } = {}): ProjectSidebarStatus | undefined {
+  const waiting: SessionSidebarStatus[] = []
+  const counts = new Map<string, { status: SessionSidebarStatus; count: number }>()
+  for (const task of tasks) {
+    if (task.archived && !options.includeArchived) continue
+    let status = sessionSidebarStatus(task, ready)
+    if (status.kind === 'done' && task.completionUnread) status = { kind: 'unread', label: '已完成，未查看' }
+    if (['done', 'stopped', 'draft'].includes(status.kind)) continue
+    if (status.kind === 'permission' || status.kind === 'question') waiting.push(status)
+    // Dependency progress belongs to each session; the project counts running
+    // sessions without suggesting that their different progress can be summed.
+    if (status.kind === 'running') status = { ...status, label: '运行中' }
+    const key = status.kind + ':' + status.label
+    const previous = counts.get(key)
+    if (previous) previous.count++
+    else counts.set(key, { status, count: 1 })
+  }
+  const priority = ['permission', 'question', 'disconnected', 'running', 'error', 'interrupted', 'unread']
+  const states = [...counts.values()].sort((a, b) => priority.indexOf(a.status.kind) - priority.indexOf(b.status.kind) || a.status.label.localeCompare(b.status.label, 'zh-CN'))
+  if (!states.length) return undefined
+  const detail = states.map(({ status, count }) => `${status.label} · ${count} 个会话`).join('；')
+  if (waiting.length) {
+    const permission = waiting.some(status => status.kind === 'permission')
+    const question = waiting.some(status => status.label === '等你补充' || status.label === '待授权与补充')
+    return {
+      kind: permission ? 'permission' : 'question',
+      label: permission ? question ? '待授权与补充' : '待授权' : question ? '等你补充' : '待处理',
+      icon: permission ? 'shield' : 'chat', count: waiting.length, detail
+    }
+  }
+  return { ...states[0].status, count: states[0].count, detail }
+}
+
 /** Pinning is a reading preference; process activity never displaces pinned rows. */
 export function sortSessionSidebarTasks(tasks: readonly SessionTask[]): SessionTask[] {
   return [...tasks].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||

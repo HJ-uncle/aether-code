@@ -8,6 +8,7 @@ import { SettingsContent, SettingsGroup, SettingsRow } from '../settings/Setting
 interface ConcurrencySettings {
   SUBAGENT_CONCURRENCY_LIMIT?: number
   managedKeys?: string[]
+  permissions?: { canManage: boolean }
   subagentConcurrency?: { defaultLimit: number; min: number; max: number; effectiveLimit: number; scope: string; hotReload: boolean }
 }
 const SETTING = 'SUBAGENT_CONCURRENCY_LIMIT'
@@ -33,6 +34,7 @@ function ConcurrencySetting({ source }: { source: number }): JSX.Element {
     && capability.min <= capability.max && Number.isInteger(capability.effectiveLimit)
     && capability.effectiveLimit >= capability.min && capability.effectiveLimit <= capability.max)
   const managed = settings?.managedKeys?.includes(SETTING)
+  const canManage = settings?.permissions?.canManage === true
 
   useEffect(() => {
     mounted.current = true
@@ -53,7 +55,7 @@ function ConcurrencySetting({ source }: { source: number }): JSX.Element {
 
   const change = async (value: string): Promise<void> => {
     const limit = Number(value)
-    if (!current() || !ready || busy.current || loading || !supported || !capability || managed
+    if (!current() || !ready || busy.current || loading || !supported || !capability || managed || !canManage
       || !Number.isInteger(limit) || limit < capability.min || limit > capability.max) return
     const expectedEngine = getExpectedEngine()
     busy.current = true; setLoading(true); setError(''); setNotice('')
@@ -78,12 +80,12 @@ function ConcurrencySetting({ source }: { source: number }): JSX.Element {
   const description = !ready ? '引擎就绪后可调整。'
     : loading && !settings ? '正在读取当前引擎设置…'
       : settings && !supported ? '当前引擎尚不支持调整，请先更新引擎。'
-        : managed ? '此数量由引擎管理员统一管理。'
+        : managed || (settings && !canManage) ? '此数量由服务管理员管理，当前可查看实际生效值。'
           : '每个主会话同时执行的数量，超出后依次排队。默认 5 个。'
-  return <SettingsGroup title="子代理执行" footer={supported ? `${engine.snapshot.mode === 'remote' ? '适用于当前远程引擎' : '适用于当前引擎'}，Code 与 Work 共用。调整立即生效；降低数量不会中断正在执行的任务。` : undefined}>
+  return <SettingsGroup title="子代理执行" footer={supported ? `${engine.snapshot.mode === 'remote' ? '适用于当前远程引擎' : '适用于当前引擎'}的所有会话。${canManage && !managed ? '调整立即生效；降低数量不会中断正在执行的任务。' : ''}` : undefined}>
     <SettingsRow label="子代理并发数量" description={description}>
       <Select title="子代理并发数量" className="sg__select-field" width={160}
-        disabled={!ready || loading || !supported || managed} value={supported ? String(capability!.effectiveLimit) : ''}
+        disabled={!ready || loading || !supported || managed || !canManage} value={supported ? String(capability!.effectiveLimit) : ''}
         onChange={value => void change(value)}
         options={supported ? Array.from({ length: capability!.max - capability!.min + 1 }, (_, index) => {
           const count = capability!.min + index

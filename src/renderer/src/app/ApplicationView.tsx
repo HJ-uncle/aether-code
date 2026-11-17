@@ -6,7 +6,7 @@ import { toast } from '@renderer/core/toast'
 import { parseConversationLink, buildConversationLink } from '@shared/conversation-link'
 import { conversationLinkTask } from '../features/conversation/conversation-reference'
 import { onOpenConversationRequest } from '../features/conversation/conversation-navigation'
-import { getEngineSource, getEngineStorageKey, isEngineReady } from '@renderer/core/engine/source'
+import { getEngineSource, getEngineStorageKey, isEngineReady, sessionStorageKey } from '@renderer/core/engine/source'
 import { setBrowserSessionOverride } from '@renderer/core/browser/connection'
 import { useWorkbenchClient, waitForSessionPreview } from '@renderer/core/workbench/client'
 import { requestSessionPreview } from '@renderer/core/workbench/preview-request'
@@ -43,7 +43,7 @@ import { onSessionTerminalRequest } from '../features/terminal/terminal-navigati
 import { type SessionSubagentReveal, onSessionSubagentRequest } from '../features/collaboration/subagent-navigation'
 import { createLocalSession } from '../features/terminal/terminal-store'
 import { initialView, type ViewState, VIEW_KEY, type Page, type WorkspaceTab, NAVIGATION } from './navigation'
-import { type ActivitySelection, type FinalSelection, type SessionTask, type ArtifactNavigation, filename } from '../features/sessions/session-presentation'
+import { type ActivitySelection, type FinalSelection, type SessionTask, type ArtifactNavigation, filename, useSessionTools } from '../features/sessions/session-presentation'
 import { SessionRootStop } from '../features/conversation/SessionFeedback'
 import { Conversation } from '../features/conversation/ConversationView'
 import { SessionDivider } from '../ui/PaneDivider'
@@ -56,7 +56,6 @@ import { AgentManager, PluginManager, AutomationsView, EngineMonitorView, Projec
 import { ExtensionPage, useExtensionContributions, getExtensionNavigationRequest, subscribeExtensionNavigation, getExtensionHostSnapshot, subscribeExtensionHost, publishExtensionEvent } from '@renderer/features/extensions'
 import { isExtensionDestination, extensionIcon } from './navigation'
 import { usePublishServiceTrayContext } from '@renderer/features/services/tray-context'
-import { ServiceTray } from '@renderer/features/services/ServiceTray'
 
 /** Application assembly owns navigation; domain views retain their own session state. */
 export function ApplicationView(): JSX.Element {
@@ -72,6 +71,7 @@ export function ApplicationView(): JSX.Element {
   const [storedView, setView] = useState(initialView)
   const initialWorkspaceTab = useRef(storedView.tab)
   const task = controller.activeTask
+  const activityTools = useSessionTools(controller.messages)
   const workspaceTabs = useWorkspaceTabs(browserSource, task?.id, initialWorkspaceTab.current)
   const view = useMemo(() => ({ ...storedView, tab: workspaceTabs.tab }), [storedView, workspaceTabs.tab])
   const selectWorkspaceTab = workspaceTabs.setTab
@@ -386,6 +386,26 @@ export function ApplicationView(): JSX.Element {
   }, [set, controller.selectTask])
   const openWorkspace = useCallback((tab: WorkspaceTab): void =>
     set({ workspace: true, tab, pane: 'workspace' }), [set])
+  // The workspace card is a destination switcher. Opening its 成果 entry
+  // should return to the stable overview instead of replaying a stale file
+  // review selection from a previous turn.
+  const openWorkspaceOverview = useCallback((tab: WorkspaceTab): void => {
+    if (tab === 'files') {
+      setFinalSelection(null)
+      setChangeSelection(null)
+    }
+    openWorkspace(tab)
+  }, [openWorkspace])
+  const openSubagents = useCallback((): void => {
+    if (!task) return
+    openWorkspace('subagents')
+    set({ page: 'home', workspace: true, pane: 'workspace' })
+  }, [task?.id, openWorkspace, set])
+  const openGit = useCallback((): void => {
+    if (!task) return
+    openWorkspace('git')
+    set({ page: 'home', workspace: true, pane: 'workspace' })
+  }, [task?.id, openWorkspace, set])
   useEffect(() => onSessionSubagentRequest(request => {
     if (request.source !== getEngineSource() || request.sessionId !== task?.id) return
     setSubagentReveal(request)
@@ -401,8 +421,14 @@ export function ApplicationView(): JSX.Element {
     set({ page: 'home', workspace: true, tab: 'terminal', pane: 'workspace' })
     setNavigationOpen(false)
   }, [task?.id, browserSource, controller.commandJobs, set])
-  usePublishServiceTrayContext({ source: browserSource, sessionId: task?.id ?? null,
-    jobs: controller.commandJobs, onOpenTerminal: task ? openRunningTerminal : undefined })
+  // The home composer owns a real session too. Publishing that identity keeps
+  // its running work visible in the global activity tray even before it is
+  // promoted into a project task.
+  usePublishServiceTrayContext({ source: browserSource, sessionId: task?.id ?? controller.securitySessionId,
+    jobs: controller.commandJobs, tools: activityTools,
+    onOpenTerminal: task ? openRunningTerminal : undefined,
+    onOpenSubagents: task ? openSubagents : undefined,
+    onOpenGit: task ? openGit : undefined })
   useEffect(() => onSessionTerminalRequest(action => {
     if (!task) { toast.info('请先打开一个任务，再使用终端'); return }
     if (action === 'toggle' && view.page === 'home' && view.workspace && view.tab === 'terminal' && view.pane === 'workspace') {
@@ -452,8 +478,12 @@ export function ApplicationView(): JSX.Element {
   })
   const setWorkspaceTab = useCallback((tab: WorkspaceTab): void => set({ tab }), [set])
   const closeWorkspace = useCallback((): void => {
+    // The leading control is the workspace pane's collapse action. The home
+    // surface is opened explicitly when the last workspace destination closes.
     set({ workspace: false, pane: 'conversation' })
-    requestAnimationFrame(() => rootRef.current?.querySelector<HTMLButtonElement>('.work-task-heading .work-workspace__more button')?.focus())
+  }, [set])
+  const openWorkspaceHome = useCallback((): void => {
+    set({ workspace: true, tab: 'home', pane: 'workspace' })
   }, [set])
   const setRatio = useCallback((ratio: number): void => set({ ratio }), [set])
   const openActivity = useCallback((toolId: string): void => {
@@ -546,7 +576,9 @@ export function ApplicationView(): JSX.Element {
         </nav>
         <SidebarHistory key={browserSource} tasks={controller.tasks} controller={controller}
           selectedTaskId={view.page === 'home' ? task?.id ?? null : null}
-          visible={compactNavigation ? navigationOpen : !view.collapsed} onOpen={openTask} />
+          visible={compactNavigation ? navigationOpen : !view.collapsed} onOpen={openTask}
+          onCreateTask={path => path ? newProjectTask(path) : newTask()}
+          projectPreferencesKey={sessionStorageKey('aether.work.projects.v1', getEngineStorageKey())} />
         <div className="work-sidebar__bottom">
           <button
             type="button"
@@ -593,7 +625,6 @@ export function ApplicationView(): JSX.Element {
                     ) : null}
                   </div>
                   <div className="work-task-heading__actions">
-                    <ServiceTray variant="services" placement="down" sessionId={task.id} jobs={controller.commandJobs} onOpenTerminal={openRunningTerminal} />
                     {controller.sessionUsage && (controller.sessionUsage.total > 0 || controller.sessionUsage.unknownSubagents > 0) ? <UsageMeter
                       total={controller.sessionUsage.total} rounds={controller.sessionUsage.rounds} summary={controller.sessionUsage.summary}
                       messages={controller.messages} /> : null}
@@ -612,9 +643,19 @@ export function ApplicationView(): JSX.Element {
                     <ResourceTabs
                       key={`${browserSource}:${task.id}`}
                       sessionId={task.id}
+                      activeTab={view.tab}
+                      visibleWorkspaceIds={[
+                        'home',
+                        'workspace',
+                        ...(task.sources.length ? ['sources'] : []),
+                        ...(controller.artifacts.length ? ['files'] : []),
+                        ...(partitionCommandJobs(controller.commandJobs, task.id).running.length ? ['terminal'] : []),
+                        ...(controller.publishedFixedChildren ? ['subagents'] : [])
+                      ]}
                       onSelect={() => openWorkspace('browser')}
+                      onNewTab={openWorkspaceHome}
                       items={workspaceSurfaceTabs(extensions.workspaceTabs).map(([id, label, icon]) => ({
-                        id, label, icon, onSelect: () => openWorkspace(id)
+                        id, label, icon, onSelect: () => openWorkspaceOverview(id)
                       }))}
                     />
                   </div>
@@ -663,6 +704,7 @@ export function ApplicationView(): JSX.Element {
                     openEntries={workspaceTabs.entries}
                     setOpenEntries={workspaceTabs.setEntries}
                     onClose={closeWorkspace}
+                    onOpenHome={openWorkspaceHome}
                     selectedArtifact={selectedArtifact}
                     fileRevealRequest={fileRevealRequest?.scope === fileTreeScope ? fileRevealRequest : null}
                     onDidReveal={acknowledgeFileReveal}

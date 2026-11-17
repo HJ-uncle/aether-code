@@ -34,7 +34,7 @@
 .settings-view .sg__card {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-card, 0 1px 2px color-mix(in srgb, var(--fg) 6%, transparent));
 }
@@ -89,7 +89,7 @@
 
 .settings-view .sg__hint-block code {
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-mark);
   background: var(--bg-inset);
   color: var(--accent);
   font-family: var(--font-mono);
@@ -99,7 +99,7 @@
 .settings-view .field__input,
 .settings-view .sg__input {
   min-height: 32px;
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: var(--bg-input);
 }
 
@@ -115,7 +115,7 @@
 
 .settings-view .btn {
   min-height: 30px;
-  border-radius: 7px;
+  border-radius: var(--radius);
 }
 
 .settings-inline-control {
@@ -158,7 +158,7 @@
   margin: 0 4px 20px;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border));
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--danger-soft);
   color: var(--danger-fg);
   font-size: 12px;
@@ -169,7 +169,7 @@
   margin: 0 4px 16px;
   padding: 11px 13px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--bg-inset);
   color: var(--fg-muted);
   font-size: 12px;
@@ -223,7 +223,7 @@
   width: 44px;
   height: 36px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--radius);
   background: transparent;
   cursor: pointer;
   transition:
@@ -247,7 +247,7 @@
   width: 20px;
   height: 20px;
   border: 2px solid color-mix(in srgb, var(--bg-elevated) 80%, transparent);
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent),
     0 2px 5px color-mix(in srgb, var(--fg) 18%, transparent);
@@ -331,7 +331,7 @@
   margin-left: 8px;
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-inset);
   color: var(--fg-muted);
   font-size: 10px;
@@ -395,7 +395,6 @@
   margin-top: -4px;
 }
 
-.settings-view--codegraph .kv,
 .settings-view--engine .kv {
   display: grid;
   grid-template-columns: minmax(110px, 0.34fr) minmax(0, 1fr);
@@ -404,24 +403,54 @@
   width: 100%;
 }
 
+.settings-view--codegraph .sg {
+  margin-bottom: 16px;
+}
+
+.settings-view--codegraph .sg__title {
+  margin-left: 0;
+}
+
+/* Keep the status table and any errors stacked; SettingsContent otherwise
+ * inherits the horizontal layout used for editable settings rows. */
+.settings-view--codegraph .sg__row--content {
+  display: block;
+  padding: 6px 18px;
+}
+
+.settings-view--codegraph .kv {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  margin: 0;
+  font-size: 12px;
+}
+
 .settings-view--codegraph .kv dt,
 .settings-view--codegraph .kv dd {
   min-width: 0;
   margin: 0;
-  padding: 10px 0;
+  padding: 12px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .settings-view--codegraph .kv dt {
+  padding-right: 16px;
   color: var(--fg-muted);
 }
 
 .settings-view--codegraph .kv dd {
-  overflow: hidden;
   color: var(--fg-strong);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.settings-view--codegraph .kv__mono {
+  font-family: inherit;
+  font-weight: 500;
 }
 
 .settings-view--codegraph .kv dd:last-child,
@@ -430,7 +459,19 @@
 }
 
 .settings-view--codegraph .settings-view__actions {
-  margin-top: -4px;
+  justify-content: flex-end;
+  margin: 0 0 24px;
+  padding: 0;
+}
+
+.settings-view--codegraph .sg__footer {
+  max-width: none;
+  margin: 10px 0 0;
+}
+
+.settings-view--codegraph .settings-view__error {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
 }
 
 /* Exclude rules -------------------------------------------------------- */
@@ -490,7 +531,7 @@
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--fg-faint);
   font-size: 18px;
@@ -523,7 +564,7 @@
   min-height: 34px;
   padding: 7px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--bg-input);
   color: var(--fg-strong);
   font-size: 12px;
@@ -555,7 +596,7 @@
 .keybindings__list {
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-card, 0 1px 2px color-mix(in srgb, var(--fg) 6%, transparent));
 }
@@ -577,7 +618,7 @@
   min-height: 28px;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-input);
   color: var(--fg-strong);
   font-family: var(--font-mono);
@@ -597,7 +638,7 @@
   gap: 6px;
 }
 .keybindings__action {
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 .keybindings__conflict {
   grid-column: 1 / -1;
@@ -743,7 +784,7 @@
   max-width: 760px;
   padding: 0 8px 0 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--bg-input);
   color: var(--fg-faint);
   transition: border-color var(--duration-fast) var(--ease-out);
@@ -785,7 +826,7 @@
   flex: none;
   place-items: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--fg-faint);
   cursor: pointer;
@@ -808,7 +849,7 @@
   overflow-y: auto;
   padding: 6px;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--bg-elevated);
   /* 浮层阴影走 material 家族（--shadow-popover 从未定义，原声明静默失效） */
   box-shadow: var(--material-shadow), var(--material-highlight);
@@ -821,7 +862,7 @@
   min-width: 0;
   padding: 9px 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--fg);
   text-align: left;

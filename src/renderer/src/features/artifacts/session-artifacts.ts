@@ -6,6 +6,7 @@ import { sessionChangePathKey } from './file-changes'
 import { sessionFileChangeStats } from './file-change-presentation'
 import type { SessionArtifact } from '../sessions/state'
 import { userMessageText } from '../conversation/shared/mention-context'
+import { turnFileChangeSummaries } from './turn-file-changes'
 
 const artifactCollator = new Intl.Collator('zh-CN', { numeric: true })
 
@@ -18,7 +19,7 @@ export interface SessionArtifactSelection {
   revision: number
 }
 
-export type SessionArtifactScope = 'net' | 'operation'
+export type SessionArtifactScope = 'turn' | 'net' | 'operation'
 export type SessionArtifactDetailView = 'current' | SessionArtifactScope
 export interface SessionArtifactView {
   scope: SessionArtifactScope
@@ -31,6 +32,7 @@ export interface SessionArtifactFile {
   displayPath: string
   operations: EngineFileChange[]
   net: EngineFileChange[]
+  turn?: EngineFileChange[]
 }
 export interface SessionArtifactTreeNode {
   key: string
@@ -201,7 +203,7 @@ function displayPath(path: string, root?: string | null): string {
 
 /** Keep the server's continuous net segments intact. A path is a tree identity,
  * never permission to combine snapshots across turns or other sessions. */
-export function buildSessionArtifactFiles(sessionId: string, log: unknown, net: unknown, root?: string | null): SessionArtifactFile[] {
+export function buildSessionArtifactFiles(sessionId: string, log: unknown, net: unknown, root?: string | null, turnId?: string): SessionArtifactFile[] {
   const files = new Map<string, SessionArtifactFile>()
   const append = (change: EngineFileChange, scope: SessionArtifactScope): void => {
     const key = sessionChangePathKey(change.path, root)
@@ -216,11 +218,17 @@ export function buildSessionArtifactFiles(sessionId: string, log: unknown, net: 
   }
   for (const change of ownedArtifactChanges(sessionId, log).sort(newestFirst)) append(change, 'operation')
   for (const change of ownedArtifactChanges(sessionId, net).filter(change => change.status === 'pending').sort(newestFirst)) append(change, 'net')
+  if (turnId) for (const file of files.values()) file.turn = turnFileChangeSummaries(sessionId, turnId, file.operations)
   return [...files.values()].sort((a, b) => artifactCollator.compare(a.displayPath, b.displayPath))
 }
 
+export function artifactViews(file: SessionArtifactFile, scope: SessionArtifactScope): EngineFileChange[] {
+  return scope === 'turn' ? file.turn ?? [] : scope === 'net' ? file.net : file.operations
+}
+
 export function defaultArtifactView(file: SessionArtifactFile): SessionArtifactView {
-  return file.net[0] ? { scope: 'net', change: file.net[0] } : { scope: 'operation', change: file.operations[0] }
+  return file.turn?.[0] ? { scope: 'turn', change: file.turn[0] }
+    : file.net[0] ? { scope: 'net', change: file.net[0] } : { scope: 'operation', change: file.operations[0] }
 }
 
 /** Use the whole session ledger: a deletion in an older turn must not hide a
@@ -321,7 +329,8 @@ export function artifactChangesCancel(operations: readonly EngineFileChange[], n
 /** The supplied operations define the scope: a turn cancels only its own
  * creations. Exact history requests retain otherwise cancelled receipts. */
 export function filterSessionArtifactFiles(files: readonly SessionArtifactFile[], preserveFileKey?: string): SessionArtifactFile[] {
-  return files.filter(file => file.key === preserveFileKey || !artifactChangesCancel(file.operations, file.net))
+  return files.filter(file => file.key === preserveFileKey ||
+    (!file.operations.length || file.operations.some(change => change.status !== 'reverted')) && !artifactChangesCancel(file.operations, file.net))
 }
 
 /** A historical deletion does not prove that today's file is absent: it may
@@ -351,7 +360,7 @@ export function resolveArtifactChoice(files: readonly SessionArtifactFile[], ses
   }
   const file = files.find(item => choice?.kind === 'view' && item.key === choice.fileKey) ?? files[0]
   if (!file) return null
-  const scoped = choice?.kind === 'view' ? file[choice.scope === 'net' ? 'net' : 'operations'] : []
+  const scoped = choice?.kind === 'view' ? artifactViews(file, choice.scope) : []
   const change = choice?.kind === 'view' ? scoped.find(item => item.id === choice.changeId) : undefined
   return { file, view: change && choice?.kind === 'view' ? { scope: choice.scope, change } : defaultArtifactView(file) }
 }

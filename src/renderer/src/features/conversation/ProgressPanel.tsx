@@ -92,19 +92,20 @@ export function SessionProgressSync({ state }: { state: SessionProgressSyncState
   </div> : null
 }
 
-const SessionProgressFileRow = memo(function SessionProgressFileRow({ change: { latest, records }, workspacePath, onOpenFile, onOpenChange, onShowChanges }: {
+const SessionProgressFileRow = memo(function SessionProgressFileRow({ change: { latest, records, summaries }, workspacePath, onOpenFile, onOpenChange, onShowChanges }: {
   change: SessionProgressChange
   workspacePath?: string | null
   onOpenFile: ProgressPanelProps['onOpenFile']
   onOpenChange: ProgressPanelProps['onOpenChange']
   onShowChanges: ProgressPanelProps['onShowChanges']
 }): JSX.Element {
-  const stats = useMemo(() => latest.kind === 'delete' ? null : sessionFileChangeStats(latest), [latest])
+  const summary = summaries?.length === 1 ? summaries[0] : summaries ? undefined : latest
+  const stats = useMemo(() => summary ? sessionFileChangeStats(summary) : null, [summary])
   const display = sessionProgressPath(latest.path, workspacePath)
   const separator = display.lastIndexOf('/')
   const name = display.slice(separator + 1)
   const directory = separator > 0 ? display.slice(0, separator) : ''
-  const code = sessionFileChangeCode(latest)
+  const code = sessionFileChangeCode(summary ?? latest)
   const kindLabel = code === 'U' ? '新增' : code === 'D' ? '删除' : '修改'
   const status = sessionProgressChangeStatus(records)
   const deleted = latest.kind === 'delete' && latest.status !== 'reverted'
@@ -118,11 +119,12 @@ const SessionProgressFileRow = memo(function SessionProgressFileRow({ change: { 
         {directory ? <span className="work-progress-panel__file-path">{directory}</span> : null}
       </span>
       <span className="work-progress-panel__file-meta">
-        {stats ? <span className="work-progress-panel__file-stats" title={stats.approximate ? DIFF_APPROXIMATION_HINT : '最新一次修改的增删行数'}
-          aria-label={`最新修改${stats.approximate ? '估算' : ''}：新增 ${stats.added} 行，删除 ${stats.removed} 行`}>
+        {stats ? <span className="work-progress-panel__file-stats" title={stats.approximate ? DIFF_APPROXIMATION_HINT : summaries ? '本轮开始至结束的增删行数' : '最新一次修改的增删行数'}
+          aria-label={`${summaries ? '本轮改动' : '最新修改'}${stats.approximate ? '估算' : ''}：新增 ${stats.added} 行，删除 ${stats.removed} 行`}>
           {stats.approximate ? <span className="work-progress-panel__file-estimate">约</span> : null}
           <span className="work-progress-panel__file-added">+{stats.added}</span><span className="work-progress-panel__file-removed">-{stats.removed}</span>
-        </span> : <span className="work-progress-panel__file-code" data-change-code={code} title={kindLabel} aria-label={kindLabel}>{code}</span>}
+        </span> : summaries && summaries.length > 1 ? <span className="work-progress-panel__file-code" title="版本链不连续，分段查看，不能合计增删行数">{summaries.length} 段变更</span>
+          : <span className="work-progress-panel__file-code" data-change-code={code} title={kindLabel} aria-label={kindLabel}>{code}</span>}
         {!status.pending ? <span className="work-progress-panel__file-state" title={status.detail}>{status.label}</span> : null}
       </span>
       <Icon name="chevron-right" size={12} />

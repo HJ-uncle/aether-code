@@ -1,7 +1,7 @@
 /** Real Electron + owned engine fixture: master-detail project identity,
  * cross-project search, source-scoped pins/selection/sort, virtual navigation,
  * paginated task opening, complete details, responsive light/dark layout,
- * project/task context menus, independent sessions and source isolation, confirmed deletion and failure recovery, local aliases/archive,
+ * project/task context menus, independent sessions and source isolation, confirmed deletion and failure recovery, shared aliases/archive,
  * and draft-preserving creation. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
@@ -13,8 +13,9 @@ import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/en
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'disposable-projects-ui-token', now = Date.now() - 60_000
-const alphaPath = 'D:\\clients\\alpha\\web-2048', betaPath = 'D:\\clients\\beta\\web-go'
-const sameNamePath = 'D:\\archive\\客户资料与项目成果\\跨部门协作项目\\需要保留完整路径以便区分同名项目\\web-2048'
+const alphaPath = 'D:/clients/alpha/web-2048', betaPath = 'D:/clients/beta/web-go'
+const sameNamePath = 'D:/archive/客户资料与项目成果/跨部门协作项目/需要保留完整路径以便区分同名项目/web-2048'
+const archivedOnlyPath = 'D:/archived-only'
 const longTitle = '为当前 Web 项目整理面向技术客户的介绍材料，包含 Word 项目说明、Excel 功能清单与演示文稿，并核对最终交付文件'
 const task = (id: string, title: string, workspacePath: string | null, updatedAt: number, status: SessionTask['status'] = 'done'): SessionTask => ({
   id, title, workspacePath, updatedAt, status, createdAt: updatedAt - 60_000, draft: '', modelId: '', attachments: [], sources: [],
@@ -29,7 +30,7 @@ const tasks: SessionTask[] = [
   task('work-project-beta-1', '整理围棋项目的功能清单', betaPath, now - 100_000),
   task('work-project-same-1', '同名项目中的独立任务', sameNamePath, now - 190_000),
   task('work-project-beta-3', '复核项目说明文档', betaPath, now - 170_000),
-  { ...task('work-project-archived', '归档任务不应出现', 'D:\\archived-only', now + 1_000), archived: true },
+  { ...task('work-project-archived', '已归档的项目会话', archivedOnlyPath, now + 1_000), archived: true },
   task('work-project-unbound', '无工作目录的独立会话', null, now + 2_000),
 ]
 const independentTasks: SessionTask[] = [
@@ -45,7 +46,7 @@ const independentTasks: SessionTask[] = [
   { ...task('work-independent-archived', '已归档的独立会话', null, now + 9_000), archived: true },
 ]
 const portfolioTasks = Array.from({ length: 160 }, (_, index) => task(`work-project-portfolio-${index}`,
-  `规模项目任务 ${String(index).padStart(3, '0')}`, `D:\\portfolio\\Project-${String(index).padStart(3, '0')}`, now - 20_000_000 - index * 60_000))
+  `规模项目任务 ${String(index).padStart(3, '0')}`, `D:/portfolio/Project-${String(index).padStart(3, '0')}`, now - 20_000_000 - index * 60_000))
 let seededTasks = tasks
 const errors: string[] = [], forbidden: string[] = [], opened: string[] = []
 const deletedSessions: string[] = []
@@ -182,7 +183,7 @@ async function setWindow(width: number, height: number): Promise<void> {
   await expect.poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height })
 }
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.locator('.work-sidebar').getByRole('button', { name: '设置', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   await settings.getByRole('tab', { name: '外观', exact: true }).click()
   await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
@@ -245,13 +246,13 @@ test.describe.serial('Work 项目页', () => {
   })
 
   test('项目独立选择、全量搜索、置顶和排序保持明确且持久', async () => {
-    await expect(projects().locator('.work-projects__summary')).toHaveText(/3 个项目\s*·\s*57 项任务/)
+    await expect(projects().locator('.work-projects__summary')).toHaveText(/4 个项目\s*·\s*58 项任务/)
     await expect(options()).toHaveCount(3)
     await expect(detail()).toHaveCount(1)
     await expect(detail()).toHaveAttribute('data-project-path', alphaPath)
     await expect(detail().locator('.work-project-task')).toHaveCount(40)
     await expect(option(alphaPath)).toHaveAttribute('aria-selected', 'true')
-    await expect(projects().getByText('归档任务不应出现', { exact: true })).toHaveCount(0)
+    await expect(taskButton('work-project-archived')).toHaveCount(0)
     await expect(independentNavigation()).toBeVisible()
     await expect(independentNavigation()).toHaveAttribute('aria-pressed', 'false')
     await expect(detail()).not.toContainText('无工作目录的独立会话')
@@ -295,8 +296,15 @@ test.describe.serial('Work 项目页', () => {
     await search().fill('无工作目录'); await expect(taskButton('work-project-unbound')).toBeVisible()
     await seed(tasks.filter(item => item.archived))
     await expect(options()).toHaveCount(0); await expect(detail()).toHaveCount(0)
-    await expect(search()).toHaveCount(0)
-    await expect(projects()).toContainText('工作目录'); await expect(projects()).not.toContainText('后续版本')
+    await expect(search()).toBeVisible()
+    await projects().getByRole('button', { name: '已归档', exact: true }).click()
+    await expect(options()).toHaveCount(1)
+    await expect(option(archivedOnlyPath)).toBeVisible()
+    await expect(taskButton('work-project-archived')).toContainText('已归档的项目会话')
+    await expect(detail().locator('.work-project-task')).toHaveCount(1)
+    await taskButton('work-project-archived').click({ button: 'right' })
+    await expect(taskAction('恢复任务')).toBeVisible()
+    await page.keyboard.press('Escape')
   })
 
   test('独立会话保留真实待处理状态，搜索和点击不混入目录项目', async ({}, info) => {
@@ -431,7 +439,7 @@ test.describe.serial('Work 项目页', () => {
 
   test('大量项目使用有界列表，键盘跨虚拟区域导航且两侧独立滚动', async ({}, info) => {
     await seed([...tasks, ...portfolioTasks])
-    await expect(projects().locator('.work-projects__summary')).toHaveText(/163 个项目\s*·\s*217 项任务/)
+    await expect(projects().locator('.work-projects__summary')).toHaveText(/164 个项目\s*·\s*218 项任务/)
     const mounted = await options().count()
     expect(mounted).toBeGreaterThan(1); expect(mounted).toBeLessThan(60)
     await expect(detail().locator('.work-project-task')).toHaveCount(40)
@@ -642,13 +650,60 @@ test.describe.serial('Work 项目页', () => {
     expect(await taskIdentity()).toEqual(original)
     await page.reload(); await expect(projects()).toBeVisible(); await expect(option(sameNamePath)).toHaveCount(0)
     await projects().getByRole('button', { name: '已归档', exact: true }).click()
-    await expect(options()).toHaveCount(1); await expect(option(sameNamePath)).toBeVisible()
+    await expect(options()).toHaveCount(2); await expect(option(sameNamePath)).toBeVisible()
+    await expect(option(archivedOnlyPath)).toBeVisible()
     await option(sameNamePath).click({ button: 'right' }); await menuAction('恢复项目').click()
     await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}').archivedPaths, preferencesKey)).not.toContain(sameNamePath)
-    await expect(projects().getByRole('button', { name: '全部项目', exact: true })).toBeFocused()
+    await expect(option(archivedOnlyPath)).toBeFocused()
     await projects().getByRole('button', { name: '全部项目', exact: true }).click()
     await expect(options()).toHaveCount(3); await expect(option(sameNamePath)).toBeVisible()
     expect(await taskIdentity()).toEqual(original)
+  })
+
+  test('项目归档展示完整会话，恢复项目保留单独归档与运行状态', async () => {
+    const running: SessionTask = { ...task('work-project-mixed-running', '项目内仍在运行的会话', alphaPath, now + 30_000, 'running'),
+      activity: { runId: 'root-work-project-mixed-running', seq: 1, version: 2, status: 'running', updatedAt: now + 30_000, pendingAsk: 0, pendingPermission: 0 } }
+    const completed = task('work-project-mixed-done', '项目当前已完成会话', alphaPath, now + 20_000)
+    const archived = { ...task('work-project-mixed-archived', '已单独归档的会话', alphaPath, now + 10_000), archived: true }
+    const other = task('work-project-mixed-other', '其他项目会话', betaPath, now)
+    await seed([running, completed, archived, other])
+    await expect(detail()).toHaveAttribute('data-project-path', alphaPath)
+    await expect(detail().locator('.work-project-task')).toHaveCount(2)
+    await expect(taskButton(archived.id)).toHaveCount(0)
+    await projects().getByRole('button', { name: '已归档', exact: true }).click()
+    await expect(option(alphaPath)).toBeVisible()
+    await expect(detail().locator('.work-project-task')).toHaveCount(1)
+    await expect(taskButton(archived.id)).toBeVisible()
+    await expect(taskButton(running.id)).toHaveCount(0)
+    await projects().getByRole('button', { name: '全部项目', exact: true }).click()
+    await option(alphaPath).click({ button: 'right' })
+    await menuAction('归档项目').click()
+    await page.getByRole('dialog', { name: '归档项目', exact: true }).getByRole('button', { name: '归档', exact: true }).click()
+    await expect(option(alphaPath)).toHaveCount(0)
+    await expect(option(betaPath)).toBeVisible()
+    const identity = async () => (await state()).tasks.map(item => ({ id: item.id, status: item.status, archived: Boolean(item.archived), path: item.workspacePath })).sort((a, b) => a.id.localeCompare(b.id))
+    const expected = [running, completed, archived, other].map(item => ({ id: item.id, status: item.status, archived: Boolean(item.archived), path: item.workspacePath })).sort((a, b) => a.id.localeCompare(b.id))
+    await expect.poll(identity).toEqual(expected)
+    await projects().getByRole('button', { name: '已归档', exact: true }).click()
+    await expect(detail()).toHaveAttribute('data-project-path', alphaPath)
+    await expect(detail().locator('.work-project-task')).toHaveCount(3)
+    await expect(taskButton(running.id)).toContainText('进行中')
+    await option(alphaPath).click({ button: 'right' })
+    await menuAction('恢复项目').click()
+    await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}').archivedPaths, preferencesKey)).not.toContain(alphaPath)
+    await expect(detail().locator('.work-project-task')).toHaveCount(1)
+    await expect(taskButton(archived.id)).toBeVisible()
+    await expect(taskButton(running.id)).toHaveCount(0)
+    await projects().getByRole('button', { name: '全部项目', exact: true }).click()
+    await expect(detail().locator('.work-project-task')).toHaveCount(2)
+    await expect(taskButton(running.id)).toBeVisible()
+    await expect(taskButton(archived.id)).toHaveCount(0)
+    await expect.poll(identity).toEqual(expected)
+    await page.reload(); await expect(projects()).toBeVisible()
+    await projects().getByRole('button', { name: '已归档', exact: true }).click()
+    await expect(detail().locator('.work-project-task')).toHaveCount(1)
+    await expect(taskButton(archived.id)).toBeVisible()
+    await expect.poll(identity).toEqual(expected)
   })
 
   test('项目任务与侧栏共享会话菜单，更多入口、右键和键盘均不打开会话', async () => {
@@ -677,6 +732,7 @@ test.describe.serial('Work 项目页', () => {
     await page.keyboard.press('Escape'); await expect(taskMenu()).toHaveCount(0)
     await more.click(); await expect(taskMenu()).toBeVisible(); await taskAction('置顶').click()
     await expect.poll(async () => (await state()).tasks.find(task => task.id === target.id)?.pinned).toBe(true)
+    await expect(detail().locator('.work-project-task').first()).toHaveAttribute('data-task-id', target.id)
     await expect(sidebarTask(target.id).locator('.work-sidebar__pin')).toBeVisible()
     await expect(projects()).toBeVisible(); await expect(option(alphaPath)).toHaveAttribute('aria-selected', 'true')
     expect((await state()).activeTaskId).toBeNull(); expect(opened.slice(beforeOpened)).toEqual([])

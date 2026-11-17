@@ -4,7 +4,6 @@ import { useMotionPresence, useMotionValue } from '../ui/MotionPresence'
 import { OverlayScope, useOverlay } from '../ui/overlay'
 import { executeCommand } from '@renderer/core/platform/commands'
 import { getKeybindingHint } from '@renderer/core/platform/keybindings'
-import { openAppSettings } from '@renderer/features/settings/app-settings-navigation'
 import { AccountMenu } from '@renderer/features/account/AccountMenu'
 import { Icon } from '@renderer/ui/icons'
 import brandIcon from '@renderer/assets/icon.png'
@@ -233,18 +232,9 @@ export function MenuBar(): JSX.Element {
             document.body
           )
         : null}
-      {/* 右侧动作区：布局按钮组 + 设置入口（后续用户头像 / 账号等也在此扩展） */}
+      {/* 右侧动作区：账号入口；应用设置从工作台侧栏和命令菜单进入。 */}
       <div className="menu-bar__spacer" />
       <div className="menu-bar__actions">
-        <button
-          type="button"
-          className="menu-bar__action"
-          title="设置（引擎管理 / 模型 / 安全 / 代码图）"
-          aria-label="设置"
-          onClick={() => openAppSettings()}
-        >
-          <Icon name="settings" size={16} />
-        </button>
         <AccountMenu />
       </div>
       <WindowControls />

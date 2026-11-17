@@ -1,4 +1,4 @@
-import { dialog, shell, type BrowserWindow, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+import { clipboard, dialog, shell, type BrowserWindow, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import type { AccountProfileInput, AccountProvider, AccountSession, AccountState, AccountUser } from '../../shared/account'
@@ -48,7 +48,13 @@ export function assertAccountTransport(value: string): void {
 function publish(t: AccountTarget, next: Partial<AccountState>): AccountState {
   if (dep().target().scope !== t.scope) return state
   if (stateScope !== t.scope) { state = initial(t.url); stateScope = t.scope }
-  state = { ...state, ...next, serviceUrl: t.url, transport: getAccountTransport(t.url) }
+  let recovery: AccountState['recovery'] = { available: false, exportedAt: null }
+  try {
+    const credential = readAccountCredential(t.scope).credential
+    recovery = { available: !!credential?.recoveryKey, exportedAt: credential?.recoveryKey ? credential.exportedAt ?? null : null }
+  } catch { /* An unreadable key store must not prevent publishing its recoverable error state. */ }
+  state = { ...state, ...next, serviceUrl: t.url, transport: getAccountTransport(t.url),
+    connectionMode: t.scope === 'embedded' ? 'embedded' : 'remote', recovery }
   dep().changed(state)
   return state
 }
@@ -122,7 +128,8 @@ async function accept(t: AccountTarget, result: AccountCredential): Promise<Acco
   generation++
   const previous = readAccountCredential(t.scope).credential
   const recoveryKey = result.recoveryKey || (previous?.user.id === result.user.id ? previous.recoveryKey : undefined)
-  const entry = saveAccountCredential(t.scope, { ...result, recoveryKey })
+  const exportedAt = previous?.user.id === result.user.id && previous.recoveryKey === recoveryKey ? previous.exportedAt : null
+  const entry = saveAccountCredential(t.scope, { ...result, recoveryKey, exportedAt })
   const identityMessage = await committedIdentity()
   return publish(t, { status: 'authenticated', user: result.user, persistence: entry.persistence, message: cleanupMessage ?? identityMessage ?? (entry.persistence === 'session' ? '系统安全存储不可用，当前登录仅在本次运行有效。请备份登录凭证。' : null) })
 }
@@ -165,7 +172,7 @@ export async function ensureAccountSession(t: AccountTarget): Promise<void> {
       if (!current || current.user.id !== credential.user.id || current.user.tenantId !== credential.user.tenantId || current.refreshToken !== credential.refreshToken) return
       if (!validCredential(refreshed) || refreshed.user.id !== credential.user.id || refreshed.user.tenantId !== credential.user.tenantId) throw new Error('服务端刷新了不匹配的账号。')
       const user = { ...current.user, sessionId: refreshed.user.sessionId }
-      const saved = saveAccountCredential(t.scope, { ...refreshed, user, recoveryKey: current.recoveryKey })
+      const saved = saveAccountCredential(t.scope, { ...refreshed, user, recoveryKey: current.recoveryKey, exportedAt: current.exportedAt })
       publish(t, { status: 'authenticated', user, persistence: saved.persistence, message: saved.persistence === 'session' ? '当前登录仅在本次运行有效，请备份登录凭证。' : null })
     } catch (error) {
       const current = readAccountCredential(t.scope).credential
@@ -259,6 +266,17 @@ export const accountService = {
     const result = await request<AccountCredential>(t, '/login', 'POST', { recoveryKey: recoveryKey.trim() })
     return accept(t, { ...result, recoveryKey: recoveryKey.trim() })
   }) },
+  reauthenticate(recoveryKey: string): Promise<AccountState> { return exclusive(async t => {
+    if (typeof recoveryKey !== 'string' || !recoveryKey.trim() || recoveryKey.length > 4096) throw new Error('请输入有效恢复码。')
+    const user = await request<AccountUser>(t, '/reauth', 'POST', { recoveryKey: recoveryKey.trim() }, true)
+    assertTarget(t)
+    assertUser(t, user)
+    const credential = readAccountCredential(t.scope).credential
+    if (!credential || !user.sessionId || user.sessionId !== credential.user.sessionId) throw new Error('重新验证返回了不同的登录会话，已保留当前登录。')
+    saveAccountCredential(t.scope, { ...credential, user })
+    changedProfile(t.scope)
+    return publish(t, { status: 'authenticated', user, message: null })
+  }) },
   updateProfile(input: AccountProfileInput): Promise<AccountState> { return exclusive(async t => {
     const user = await request<AccountUser>(t, '/profile', 'PATCH', input, true)
     assertTarget(t)
@@ -294,20 +312,34 @@ export const accountService = {
   exportRecovery(owner?: BrowserWindow | null): Promise<boolean> { return exclusive(async t => {
     const credential = readAccountCredential(t.scope).credential
     if (!credential) throw new Error('请先登录再备份。')
+    if (!credential.recoveryKey) throw new Error('此设备没有当前恢复码，请先使用“重新生成恢复码”，再保存恢复文件。')
     const options: SaveDialogOptions = { title: '备份登录凭证（请勿分享此文件）', defaultPath: 'aether-account.json', filters: [{ name: 'Aether 账号备份', extensions: ['json'] }] }
     const picked = owner && !owner.isDestroyed() ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
     if (picked.canceled || !picked.filePath) return false
     assertTarget(t)
-    let recoveryKey = credential.recoveryKey
-    if (!recoveryKey) {
-      const result = await request<{ recoveryKey: string }>(t, '/recovery', 'POST', {}, true)
-      recoveryKey = result.recoveryKey
-      const latest = readAccountCredential(t.scope).credential
-      if (!latest) throw new Error('当前登录已结束。')
-      saveAccountCredential(t.scope, { ...latest, recoveryKey })
-    }
+    const recoveryKey = credential.recoveryKey
     writeFileSync(picked.filePath, JSON.stringify({ version: 1, scope: t.scope === 'embedded' ? 'embedded' : 'remote', serviceUrl: t.url, userId: credential.user.id, recoveryKey }, null, 2), { mode: 0o600 })
+    const latest = readAccountCredential(t.scope).credential
+    if (!latest || latest.user.id !== credential.user.id || latest.recoveryKey !== recoveryKey) throw new Error('账号或恢复码已变化，请重新保存。')
+    saveAccountCredential(t.scope, { ...latest, exportedAt: new Date().toISOString() })
+    publish(t, {})
     return true
+  }) },
+  regenerateRecovery(): Promise<AccountState> { return exclusive(async t => {
+    const current = readAccountCredential(t.scope).credential
+    if (!current) throw new Error('请先登录再生成恢复码。')
+    const result = await request<{ recoveryKey: string }>(t, '/recovery', 'POST', {}, true)
+    assertTarget(t)
+    const latest = readAccountCredential(t.scope).credential
+    if (!latest || latest.user.id !== current.user.id || latest.user.tenantId !== current.user.tenantId || latest.user.sessionId !== current.user.sessionId) throw new Error('账号已变化，无法保存恢复码。')
+    if (typeof result.recoveryKey !== 'string' || !/^aether_recovery_[A-Za-z0-9_-]{32,128}$/.test(result.recoveryKey)) throw new Error('账号服务返回的恢复码无效。')
+    saveAccountCredential(t.scope, { ...latest, recoveryKey: result.recoveryKey, exportedAt: null })
+    return publish(t, { message: null })
+  }) },
+  copyRecovery(): Promise<void> { return exclusive(async t => {
+    const credential = readAccountCredential(t.scope).credential
+    if (!credential?.recoveryKey) throw new Error('此设备没有当前恢复码，请先使用“重新生成恢复码”。')
+    clipboard.writeText(credential.recoveryKey)
   }) },
   async importRecovery(owner?: BrowserWindow | null): Promise<AccountState | null> {
     const t = target()
@@ -322,8 +354,8 @@ export const accountService = {
     if (backup.version !== 1 || typeof backup.recoveryKey !== 'string' || (!sameLocal && backup.serviceUrl !== t.url)) throw new Error('备份与当前服务地址不匹配，请先连接备份对应的服务。')
     return accountService.login(backup.recoveryKey)
   },
-  externalLogin(providerId: string, mode: 'login' | 'link', credential?: string): Promise<AccountState> { return exclusive(async t => {
-    if (typeof providerId !== 'string' || !/^[a-zA-Z0-9_.-]{1,80}$/.test(providerId) || !['login', 'link'].includes(mode)) throw new Error('第三方登录参数无效。')
+  externalLogin(providerId: string, mode: 'login' | 'link' | 'reauth', credential?: string): Promise<AccountState> { return exclusive(async t => {
+    if (typeof providerId !== 'string' || !/^[a-zA-Z0-9_.-]{1,80}$/.test(providerId) || !['login', 'link', 'reauth'].includes(mode)) throw new Error('第三方登录参数无效。')
     const finish = async (result: AccountCredential | AccountUser): Promise<AccountState> => {
       assertTarget(t)
       if (mode === 'login') return accept(t, result as AccountCredential)
@@ -331,18 +363,19 @@ export const accountService = {
       const user = result as AccountUser
       assertUser(t, user)
       if (!previous || user.id !== previous.user.id || user.tenantId !== previous.user.tenantId) throw new Error('绑定结果与当前账号不匹配。')
+      if (mode === 'reauth' && (!user.sessionId || user.sessionId !== previous.user.sessionId)) throw new Error('重新验证返回了不同的登录会话，已保留当前登录。')
       saveAccountCredential(t.scope, { ...previous, user })
       changedProfile(t.scope)
-      return publish(t, { user })
+      return publish(t, { user, ...(mode === 'reauth' ? { status: 'authenticated' as const, message: null } : {}) })
     }
     if (credential !== undefined) {
       if (typeof credential !== 'string' || !credential.trim() || credential.length > 16384) throw new Error('第三方凭证无效。')
-      return finish(await request(t, '/external/credential', 'POST', { providerId, mode, credential }, mode === 'link'))
+      return finish(await request(t, '/external/credential', 'POST', { providerId, mode, credential }, mode !== 'login'))
     }
     externalAbort = new AbortController()
     const signal = externalAbort.signal
     try {
-      const started = await request<{ authorizationUrl: string; flowId: string; pollToken: string }>(t, '/external/start', 'POST', { providerId, mode }, mode === 'link', signal)
+      const started = await request<{ authorizationUrl: string; flowId: string; pollToken: string }>(t, '/external/start', 'POST', { providerId, mode }, mode !== 'login', signal)
       const url = new URL(started.authorizationUrl)
       if (url.username || url.password || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw new Error('第三方授权地址必须使用 HTTPS。')
       await shell.openExternal(url.toString())
@@ -350,7 +383,7 @@ export const accountService = {
       while (Date.now() < deadline) {
         assertTarget(t)
         signal.throwIfAborted()
-        const result = await request<{ status: 'pending' | 'complete'; result?: AccountCredential | AccountUser }>(t, '/external/poll', 'POST', { flowId: started.flowId, pollToken: started.pollToken }, false, signal)
+        const result = await request<{ status: 'pending' | 'complete'; result?: AccountCredential | AccountUser }>(t, '/external/poll', 'POST', { flowId: started.flowId, pollToken: started.pollToken }, mode === 'reauth', signal)
         if (result.status === 'complete' && result.result) return finish(result.result)
         await new Promise<void>((resolve, reject) => {
           const aborted = (): void => { clearTimeout(timer); reject(new Error('已取消第三方登录。')) }

@@ -76,17 +76,16 @@ const server = createServer((request, response) => { void (async () => {
   const parsed: unknown = raw ? JSON.parse(raw) : {}, body = isRecord(parsed) ? parsed : {}
   response.setHeader('content-type', 'application/json')
   if (path.startsWith('/api/') && request.headers['x-aether-instance-token'] !== token) throw new Error(`Unauthenticated ${path}`)
-  if (path === '/api/v1/changes/revert-preview' || path === '/api/v1/changes/revert-batch') {
+  if (path === '/api/v1/changes/revert-preview') {
     expect(body.sessionId).toBe(sessionId); expect(body.fromTurnId).toBe(removed.turnId)
-    if (path.endsWith('revert-batch')) writes.push(path)
-    response.end(envelope(path.endsWith('revert-preview') ? { total: 0, changes: [] }
-      : { total: 0, reverted: 0, conflicts: 0, unavailable: 0, failed: 0, results: [] })); return
+    response.end(envelope({ total: 0, changes: [] })); return
   }
-  if (path === '/api/v1/conversation/truncate') {
-    expect(body).toEqual({ sessionId, messageId: removed.userMessageId }); expect(writes).toEqual(['/api/v1/changes/revert-batch'])
+  if (path === '/api/v1/conversation/rollback') {
+    expect(body).toEqual({ sessionId, messageId: removed.userMessageId, reviewedCommandChangeIds: [], requestKey: expect.any(String) }); expect(writes).toEqual([])
     rows.splice(rows.findIndex(row => row.id === removed.userMessageId)); roots.splice(1)
     children.splice(0, children.length, ...children.filter(run => run.parentConversationId !== removed.turnId))
-    stage = 1; writes.push(path); response.end(envelope({ success: true })); return
+    stage = 1; writes.push(path); response.end(envelope({ total: 0, reverted: 0, conflicts: 0, unavailable: 0, failed: 0, results: [],
+      historyTruncated: true, removedFrom: removed.userMessageId })); return
   }
   if (path === '/api/v1/chat/admission/context') {
     const run = id === sessionId ? current() : undefined
@@ -234,6 +233,6 @@ test('rollback and resend remove old child cards and 640.3k usage without droppi
   await expect(turn(3).locator('.turn-usage__value')).toHaveText('2.1k')
   await expect(work().locator('.usage-meter__tokens')).toHaveText('3.3k')
   await expect(work()).not.toContainText('640.3k')
-  expect(writes).toEqual(['/api/v1/changes/revert-batch', '/api/v1/conversation/truncate', '/api/v1/chat'])
+  expect(writes).toEqual(['/api/v1/conversation/rollback', '/api/v1/chat'])
   expect(errors).toEqual([])
 })

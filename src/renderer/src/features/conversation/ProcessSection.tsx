@@ -4,16 +4,24 @@ import { MotionPresence } from '@renderer/ui/MotionPresence'
 import { useCollapseMemory } from './shared/useCollapseMemory'
 import { ProcessPanel } from './ProcessPanel'
 import type { ProcessSection as Section } from './process-sections'
+import { sessionActivityState } from './inline-activity-state'
 
-export function ProcessSection({ section, memoryKey, running, showThinking, revealTool, children }: {
+export function ProcessSection({ section, memoryKey, running, showThinking, isLatest = false, revealTool, children }: {
   section: Section; memoryKey: string; running: boolean; showThinking: boolean
+  isLatest?: boolean
   revealTool?: { toolId: string; revision: number } | null; children: ReactNode
 }) {
   const root = useRef<HTMLDivElement>(null)
   const id = useId()
   const [manual, setOpen] = useCollapseMemory(`work-process-section:${memoryKey}`)
-  const collapsible = section.toolCount > 3
-  const open = manual ?? !collapsible
+  const collapsible = section.activityCount > 3
+  const inProgress = running && section.segments.some(item => {
+    const tools = item.kind === 'tool' ? [item.tool] : item.kind === 'tools' || item.kind === 'collaboration' ? item.tools : []
+    return tools.some(tool => ['running', 'waiting'].includes(sessionActivityState(tool)))
+  })
+  // Keep only the latest stage visible while a run advances. Earlier stages
+  // stay compact, and a manual choice always wins in either phase.
+  const open = manual ?? (isLatest || inProgress || !collapsible)
   const visible = section.toolCount > 0 || showThinking && section.thinkingCount > 0
   const consumedReveal = useRef<number | undefined>(undefined)
   const pendingJump = useRef<'first' | 'latest' | null>(null)
@@ -58,13 +66,14 @@ export function ProcessSection({ section, memoryKey, running, showThinking, reve
   }, [open, jumpVersion])
   if (!visible) return null
   return <div ref={root} className="work-process-section" data-process-section={section.key}
-    data-tool-count={section.toolCount} data-thinking-count={section.thinkingCount}>
+    data-tool-count={section.toolCount} data-file-change-count={section.fileChangeCount} data-thinking-count={section.thinkingCount}>
     {collapsible ? <button type="button" className="work-process-section__toggle" aria-expanded={open} aria-controls={id}
-      aria-label={`${open ? '收起' : '展开'}阶段过程，${section.toolCount} 次工具调用`}
+      aria-label={`${open ? '收起' : '展开'}阶段过程，${section.toolCount} 次工具调用${section.fileChangeCount ? `，${section.fileChangeCount} 条文件变更` : ''}`}
       onClick={() => setOpen(!open)}>
       <span className="work-process-section__dot" aria-hidden="true" />
       <span>过程</span>
       <span className="work-process-section__count">工具调用 {section.toolCount}</span>
+      {section.fileChangeCount ? <span className="work-process-section__count">文件变更 {section.fileChangeCount}</span> : null}
       {showThinking && section.thinkingCount ? <span className="work-process-section__count">思考 {section.thinkingCount} 段</span> : null}
       <Icon name="chevron-right" size={12} className="work-process-section__chevron" />
     </button> : null}

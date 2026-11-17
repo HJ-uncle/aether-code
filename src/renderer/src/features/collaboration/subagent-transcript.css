@@ -22,6 +22,7 @@
 .work-subagent-transcript__error > button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius); color: var(--fg); background: var(--bg-hover); }
 .work-subagent-transcript .work-subagent-instruction { width: fit-content; max-width: min(620px, 88%); margin: 0 0 24px auto; padding: 0; background: transparent; }
 .work-subagent-instruction__meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; min-height: 24px; padding: 0 2px 5px; color: var(--fg-muted); font: 11px/16px var(--font-ui); }
+.work-subagent-instruction__meta > span { min-width: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .work-subagent-instruction__meta time { font-variant-numeric: tabular-nums; }
 /* The small identity line keeps collapse reachable in a long original message. */
 .work-subagent-instruction.is-open > .work-subagent-instruction__meta { position: sticky; top: 0; z-index: 1; background: var(--bg-surface); padding-block: 4px; }

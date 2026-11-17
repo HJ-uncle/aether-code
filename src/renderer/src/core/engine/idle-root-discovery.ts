@@ -9,9 +9,12 @@ export function idleRootChanged(sessionId: string, known: RootRun | undefined, n
   if (!known) return true
   if (known.sessionId !== sessionId) return false
   if (next.runId !== known.runId) return Number.isFinite(next.createdAt) && next.createdAt >= known.createdAt
-  // A stale same-run status must never revive a completed or cancelled task.
-  return !terminal(known) && next.version > known.version && next.turnId === known.turnId &&
-    next.userMessageId === known.userMessageId && next.assistantMessageId === known.assistantMessageId
+  if (next.version <= known.version || next.seq !== known.seq || next.turnId !== known.turnId ||
+    next.userMessageId !== known.userMessageId) return false
+  // Continuation changes the attempt and assistant segment, not the logical
+  // root. Discover it even if the new attempt finished before this probe.
+  const nextAttempt = typeof next.attemptId === 'string' && Boolean(next.attemptId.trim()) && next.attemptId !== known.attemptId
+  return nextAttempt || !terminal(known) && next.assistantMessageId === known.assistantMessageId
 }
 
 /** Discovery only reads a small status. Hydration remains owned by the existing recovery loop. */

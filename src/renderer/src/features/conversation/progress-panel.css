@@ -181,7 +181,18 @@
 .work-progress-panel[data-result-turn-id] .work-progress-panel__pending > svg { flex: none; color: var(--fg-muted); }
 .work-progress-panel[data-result-turn-id] .work-progress-panel__pending:hover { background: var(--bg-hover); color: var(--fg-strong); }
 .work-progress-panel[data-result-turn-id] .work-progress-panel__files { margin: 3px 0 0; }
-.work-progress-panel[data-result-turn-id] .work-progress-panel__files > li + li { border-top: 1px solid var(--border); }
+.work-progress-panel[data-result-turn-id] .work-progress-panel__files > li + li { position: relative; }
+/* Inset separators follow the text column rather than spanning the icon and trailing action. */
+.work-progress-panel[data-result-turn-id] .work-progress-panel__files > li + li::before {
+  content: '';
+  position: absolute;
+  inset-inline: 38px 30px;
+  top: 0;
+  /* Borders snap to device pixels; a filled 1px box blurs on alternating rows at 150% scale. */
+  height: 0;
+  border-top: 1px solid var(--border);
+  pointer-events: none;
+}
 .work-progress-panel[data-result-turn-id] .work-progress-panel__file {
   gap: 10px;
   min-height: 48px;
@@ -208,5 +219,6 @@
   .work-progress-panel[data-result-turn-id] .work-progress-panel__review-summary { padding-inline: 5px; }
   .work-progress-panel[data-result-turn-id] .work-progress-panel__title { gap: 5px; }
   .work-progress-panel[data-result-turn-id] .work-progress-panel__file { gap: 8px; padding-inline: 5px; }
+  .work-progress-panel[data-result-turn-id] .work-progress-panel__files > li + li::before { inset-inline: 33px 25px; }
   .work-progress-panel[data-result-turn-id] .work-progress-panel__overflow button { padding-left: 33px; }
 }

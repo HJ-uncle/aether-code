@@ -90,6 +90,8 @@ const server = createServer((request, response) => { void (async () => {
       : op === 'stash-show-files' ? { success: true, content: `${files[0].path}\n${files[1].path}` }
       : op === 'stash-show' ? { success: true, content: 'diff --git a/layout.ts b/layout.ts\n+fixture layout' }
       : op === 'commit-show' ? { success: true, commit: history.find(commit => commit.hash === url.searchParams.get('hash')) }
+      : op === 'diff' ? { success: true, diff: { path: url.searchParams.get('path'), changeType: 'modified', binary: false,
+        oldContent: 'export const layout = "before"\n', newContent: 'export const layout = "after"\n', hunks: [] } }
       : undefined
     if (data === undefined) throw new Error(`Unexpected Git read: ${op}`)
     response.end(envelope(data)); return
@@ -275,6 +277,53 @@ test.describe.serial('Git 面板紧凑布局', () => {
         await screenshot(info, `git-collapsed-${appearance}-${width}`)
       }
     }
+  })
+
+  test('文件差异宽栏左右并排、窄栏上下分区，比较操作与关闭始终可达', async ({}, info) => {
+    const diff = panel().getByRole('region', { name: '任务文件差异', exact: true })
+    const changedFile = panel().locator(`[data-path="${files[1].path}"], .git-row[title="${files[1].path}"]`)
+    await changedFile.click()
+    await expect(diff.locator('.monaco-diff-editor')).toBeVisible()
+    expect(reads).toContain(`${sessionId}:diff`)
+    for (const appearance of ['light', 'dark'] as const) {
+      await setAppearance(appearance)
+      for (const width of [1440, 560]) {
+        await setWindow(width)
+        const geometry = await panel().evaluate(element => {
+          const owner = element.getBoundingClientRect()
+          const manager = element.querySelector('.work-git-panel__manager')!.getBoundingClientRect()
+          const diff = element.querySelector('.work-git-diff')!.getBoundingClientRect()
+          const editor = element.querySelector('.work-git-diff__editor')!.getBoundingClientRect()
+          const rect = (box: DOMRect) => ({ left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height })
+          return { owner: rect(owner), manager: rect(manager), diff: rect(diff), editorHeight: editor.height,
+            overflow: element.scrollWidth - element.clientWidth,
+            controls: [...element.querySelectorAll('.work-git-diff__actions button')].map(button => rect(button.getBoundingClientRect())) }
+        })
+        expect(geometry.overflow).toBeLessThanOrEqual(1)
+        if (geometry.owner.width >= 760) {
+          expect(geometry.manager.right).toBeLessThanOrEqual(geometry.diff.left + 1)
+          expect(Math.abs(geometry.manager.top - geometry.diff.top)).toBeLessThanOrEqual(1)
+          expect(geometry.diff.width).toBeGreaterThan(geometry.manager.width)
+          expect(geometry.editorHeight).toBeGreaterThan(geometry.owner.height * .7)
+        } else {
+          expect(geometry.manager.bottom).toBeLessThanOrEqual(geometry.diff.top + 1)
+          expect(Math.abs(geometry.manager.left - geometry.diff.left)).toBeLessThanOrEqual(1)
+          expect(geometry.editorHeight).toBeGreaterThan(180)
+        }
+        for (const control of geometry.controls) {
+          expect(control.left).toBeGreaterThanOrEqual(geometry.diff.left)
+          expect(control.right).toBeLessThanOrEqual(geometry.diff.right)
+          expect(control.height).toBeGreaterThanOrEqual(24)
+        }
+        await diff.getByRole('button', { name: '并排比较', exact: true }).click()
+        await expect(diff.getByRole('button', { name: '行内比较', exact: true })).toHaveAttribute('aria-pressed', 'true')
+        await diff.getByRole('button', { name: '行内比较', exact: true }).click()
+        await screenshot(info, `git-diff-layout-${appearance}-${width}`)
+      }
+    }
+    await diff.getByRole('button', { name: '关闭差异', exact: true }).click()
+    await expect(diff).toHaveCount(0)
+    await expect(changedFile).toBeVisible()
   })
 
   test('分组可通过键盘展开收起，刷新按钮不会触发分组切换', async () => {
@@ -599,7 +648,10 @@ test.describe.serial('Git 面板紧凑布局', () => {
     await expect(group('提交历史').locator('.git-panel__count')).toHaveText('50')
     paginationGate = new Promise<void>(done => { releasePagination = done })
     try {
-      await content.hover(); await page.mouse.wheel(0, 3000)
+      // The expanding section changes the outer scroll range. Wait for its
+      // animation before bringing the pagination sentinel into the viewport.
+      await settle()
+      await panel().locator('.git-panel__load-more').scrollIntoViewIfNeeded()
       const loading = panel().locator('.git-panel__loading-status')
       await expect(loading).toHaveAttribute('role', 'status')
       await expect(loading).toContainText('加载提交记录')
@@ -623,7 +675,7 @@ test.describe.serial('Git 面板紧凑布局', () => {
     await panel().locator('.git-panel__toolbar').getByRole('button', { name: '刷新', exact: true }).click()
     await expect(group('更改').locator('.git-panel__count')).toHaveText('49')
     await setExpanded('更改', true); await settle()
-    await content.hover(); await page.mouse.wheel(0, 3000)
+    await content.evaluate(element => { element.scrollTop = element.scrollHeight })
     await expect.poll(() => content.evaluate(element => element.scrollTop)).toBeGreaterThan(600)
     await expectPinned('更改')
     await screenshot(info, 'git-changes-sticky')

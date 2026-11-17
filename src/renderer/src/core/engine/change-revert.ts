@@ -22,6 +22,10 @@ export interface RevertReport {
   failed: number
   removedDirectories?: string[]
 }
+export interface ConversationRollbackReport extends RevertReport {
+  historyTruncated: boolean
+  removedFrom?: string
+}
 export interface RevertIntent {
   sessionId: string
   ids?: string[]
@@ -91,7 +95,7 @@ export function dismissRevertReport(sessionId: string): void {
   for (const listener of listeners) listener()
 }
 export function revertComplete(report: RevertReport): boolean {
-  return report.results.length === report.total && report.results.every(
+  return report.conflicts === 0 && report.unavailable === 0 && report.failed === 0 && report.results.length === report.total && report.results.every(
     (item) => item.status === 'reverted' || item.status === 'already_reverted'
   )
 }
@@ -139,14 +143,18 @@ export async function revertChanges(request: Request, intent: RevertIntent): Pro
   if (!report || !Array.isArray(report.results) || !Number.isInteger(report.total) || report.total < 0) {
     throw new Error('回退响应无效，已保留对话历史；请重新读取改动状态')
   }
-  reports.set(intent.sessionId, report)
-  for (const item of report.results) outcomes.set(item.id, item)
-  const revertedPaths = new Set([...report.results.filter(item => item.status === 'reverted').map(item => item.path), ...(report.removedDirectories ?? [])])
-  for (const path of revertedPaths) publishFileMutation({ source: getEngineSource(), sessionId: intent.sessionId, path, operation: 'revert' })
-  requestSessionRefresh(getEngineSource(), intent.sessionId)
-  for (const listener of listeners) listener()
+  publishRevertReport(intent.sessionId, report)
   operation.assertCurrent()
   return report
+}
+
+function publishRevertReport(sessionId: string, report: RevertReport): void {
+  reports.set(sessionId, report)
+  for (const item of report.results) outcomes.set(item.id, item)
+  const revertedPaths = new Set([...report.results.filter(item => item.status === 'reverted').map(item => item.path), ...(report.removedDirectories ?? [])])
+  for (const path of revertedPaths) publishFileMutation({ source: getEngineSource(), sessionId, path, operation: 'revert' })
+  requestSessionRefresh(getEngineSource(), sessionId)
+  for (const listener of listeners) listener()
 }
 
 /** Stable message and turn IDs are required; neither content nor timestamps select rollback scope. */
@@ -175,16 +183,30 @@ export async function revertConversationFrom(
   operation.assertCurrent()
   const reviewedCommandChangeIds = preview.changes.filter(item => item.requiresExplicitRevert && item.status !== 'reverted').map(item => item.id)
   if (reviewedCommandChangeIds.length && !confirm) throw new Error('命令产生的文件改动需要先确认回退范围')
-  const report = await revertChanges(operation.request, { ...intent, reviewedCommandChangeIds })
-  operation.assertCurrent()
-  if (!revertComplete(report)) {
-    throw new Error(`${revertSummary(report)}。对话历史已保留，请查看逐文件回退结果。`)
-  }
+  const requestKey = crypto.randomUUID()
+  let response: ConversationRollbackReport
   try {
-    await operation.request({ method: 'POST', path: '/conversation/truncate', body: { sessionId, messageId: row.id } })
+    // The engine holds one mutation lease while stopping producers, reverting
+    // files and truncating history. Separate writes leave an unsafe gap.
+    response = await operation.request<ConversationRollbackReport>({ method: 'POST', path: '/conversation/rollback',
+      body: { sessionId, messageId: row.id, reviewedCommandChangeIds, requestKey } })
     operation.assertCurrent()
+    if (!response || !Array.isArray(response.results) || !Number.isInteger(response.total) || response.total < 0 ||
+      typeof response.historyTruncated !== 'boolean') throw new Error('回退响应无效，正在重新读取会话与文件状态')
   } catch (error) {
-    throw new Error(`文件回退已完成，但对话删除失败：${error instanceof Error ? error.message : String(error)}`)
+    operation.assertCurrent()
+    // A lost acknowledgement says nothing about the committed disk state.
+    // Invalidate previews and directory observers before the caller recovers
+    // the authoritative conversation snapshot; never replay this mutation.
+    for (const path of new Set(preview.changes.map(change => change.path)))
+      publishFileMutation({ source: getEngineSource(), sessionId, path, operation: 'revert' })
+    requestSessionRefresh(getEngineSource(), sessionId)
+    throw error
   }
+  const { historyTruncated, removedFrom, ...report } = response
+  publishRevertReport(sessionId, report)
+  if (!revertComplete(report)) throw new Error(`${revertSummary(report)}。对话历史已保留，请查看逐文件回退结果。`)
+  if (!historyTruncated || removedFrom !== row.id)
+    throw new Error('未确认对应对话已撤回，正在重新读取会话与文件状态')
   return report
 }

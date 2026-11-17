@@ -258,6 +258,20 @@ async function selectTask(engine: Engine, id: string): Promise<void> {
   await expect(work().getByRole('heading', { name: engine.title(id), exact: true })).toBeVisible()
   await openChildren()
 }
+async function connectEngine(engine: Engine): Promise<void> {
+  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  await settings.getByRole('tab', { name: '引擎管理', exact: true }).click()
+  const endpoint = settings.getByRole('textbox', { name: '远端地址', exact: true })
+  if (await endpoint.inputValue() !== origin(engine)) {
+    await endpoint.fill(origin(engine))
+    await settings.getByRole('button', { name: '保存并重新连接', exact: true }).click()
+  }
+  await expect(settings.locator('.engine-status__hero')).toContainText(origin(engine))
+  await expect(settings.locator('.engine-status__badge')).toHaveText('已连接')
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page.locator('.modal-overlay:has([role="dialog"][aria-label="设置"])')).toHaveCount(0)
+}
 
 test.describe.serial('子代理紧凑阅读', () => {
   test.beforeAll(async () => {
@@ -311,7 +325,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(summary).toHaveAttribute('aria-expanded', 'false')
     await expect(instruction.locator('.work-subagent-instruction__body--preview')).toHaveCount(1)
     await expect(instruction).not.toContainText('INSTRUCTION_END_FIRST')
-    await expect(instruction.locator('.work-subagent-instruction__meta > span')).toHaveText('用户')
+    await expect(instruction.locator('.work-subagent-instruction__meta > span')).toHaveCount(0)
     await expect(instruction.locator('time')).toHaveAttribute('datetime', new Date(now + 50).toISOString())
     await expect(instruction.getByRole('button', { name: '用户消息详情', exact: true })).toHaveCount(0)
     await expect(work().getByRole('region', { name: '协作对话', exact: true }).locator('.work-subagent-instruction')).toHaveCount(0)
@@ -363,8 +377,8 @@ test.describe.serial('子代理紧凑阅读', () => {
         const scroll = element.closest('.work-subagent-transcript__scroll')!
         const viewport = scroll.getBoundingClientRect(), viewportTop = viewport.top + scroll.clientTop
         const header = element.querySelector('.work-subagent-instruction__meta')!
-        const summary = header.getBoundingClientRect(), label = header.querySelector('span')!.getBoundingClientRect()
-        // The identity line remains reachable while reading a long message.
+        const summary = header.getBoundingClientRect(), label = header.querySelector('time')!.getBoundingClientRect()
+        // The message metadata remains reachable while reading a long message.
         // Probe its background as well as text, without relying on DPR rounding.
         const points = [
           { label: 'viewport-left', x: summary.left + 8, y: viewportTop + 1 },
@@ -400,22 +414,31 @@ test.describe.serial('子代理紧凑阅读', () => {
     await setWindow(1440, 900)
 
     const thinking = message('thinking-only')
-    await expect(thinking.getByRole('button', { name: '展开过程', exact: true })).toHaveAttribute('aria-expanded', 'false')
+    await expect(thinking.getByRole('button', { name: '展开过程', exact: true })).toHaveCount(0)
     await expect(thinking.getByRole('button', { name: '继续阅读', exact: true })).toHaveCount(0)
     await expect(thinking.locator('.work-assistant-content')).toHaveCount(0)
     await expect(thinking.locator('.logline__detail pre')).toHaveCount(0)
     await expect(thinking).not.toContainText('THINKING_END_FIRST')
+    await work().getByRole('button', { name: '对话偏好', exact: true }).click()
+    const preferences = page.getByRole('dialog', { name: '对话偏好', exact: true })
+    const showThinking = preferences.getByRole('switch', { name: '显示思考', exact: true })
+    await expect(showThinking).not.toBeChecked()
+    await showThinking.click()
+    await preferences.getByRole('button', { name: '关闭对话偏好', exact: true }).click()
+    await expect(thinking.getByRole('button', { name: '显示思考', exact: true })).toHaveCount(0)
     await thinking.getByRole('button', { name: '展开过程', exact: true }).click()
-    await expect(thinking.locator('.logline')).toHaveCount(0)
-    await thinking.getByRole('button', { name: '显示思考', exact: true }).click()
-    await expect(thinking.locator('.logline')).toHaveAttribute('aria-expanded', 'false')
+    await expect(thinking.locator('.logline')).toHaveAttribute('aria-expanded', 'true')
     await expect(thinking.getByRole('button', { name: '继续阅读', exact: true })).toHaveCount(0)
-    await thinking.locator('.logline').click()
     await expect.poll(() => thinking.locator('.logline__detail pre').textContent()).toBe(first.thinking)
     await expect(thinking.getByRole('button', { name: /继续阅读|继续展开/ })).toHaveCount(0)
     await thinking.getByRole('button', { name: '收起过程', exact: true }).click()
     await expect(thinking.locator('.logline__detail pre')).toHaveCount(0)
     await expect(thinking).not.toContainText('THINKING_END_FIRST')
+    await work().getByRole('button', { name: '对话偏好', exact: true }).click()
+    await showThinking.click()
+    await expect(showThinking).not.toBeChecked()
+    await preferences.getByRole('button', { name: '关闭对话偏好', exact: true }).click()
+    await expect(thinking.getByRole('button', { name: '展开过程', exact: true })).toHaveCount(0)
     await expect(message('short-answer')).toContainText('SHORT_FINAL_FIRST：核对完成。')
     await expect(message('short-answer').getByRole('button', { name: '继续阅读', exact: true })).toHaveCount(0)
 
@@ -423,6 +446,10 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(answer).toContainText('FINAL_END_FIRST')
     expect((await answer.textContent())!.match(/RESULT_SEGMENT_\d{3}/g)).toHaveLength(95)
     await expect(answer.getByRole('button', { name: /继续阅读|继续展开/ })).toHaveCount(0)
+    // Reply controls appear on hover; target the footer so a long answer keeps
+    // the revealed controls inside the viewport when the copy action is used.
+    await answer.locator('.work-message__reply-actions').hover()
+    await expect(answer.getByRole('group', { name: '回复操作', exact: true })).toHaveCSS('opacity', '1')
     await answer.getByRole('button', { name: '复制回复', exact: true }).click()
     // Native Windows clipboard text uses CRLF; compare every content character
     // after normalizing that platform newline convention only.
@@ -534,7 +561,13 @@ test.describe.serial('子代理紧凑阅读', () => {
     expect(second.runReads.some(read => read.runId === 'compact-child-run-1' && read.parentSessionId === taskA)).toBe(true)
   })
 
-  test('成果两级工具栏保持搜索、版本与文件信息可用，宽窄窗口不挤占阅读区', async ({}, info) => {
+  test('成果工具栏与文件导航分工清晰，搜索、轮次、版本和批量操作在宽窄窗口均可达', async ({}, info) => {
+    // This layout case must also run alone with -g, without depending on the
+    // preceding source-switch/read-memory scenario to select its fixture.
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setMinimumSize(520, 600))
+    await setWindow(1440, 900)
+    await connectEngine(second)
+    await selectTask(second, taskA)
     const artifacts = workspace().getByRole('region', { name: '本会话成果与改动', exact: true })
     const tab = workspace().getByRole('tab', { name: '成果', exact: true })
     if (await tab.isVisible()) await tab.click()
@@ -542,7 +575,16 @@ test.describe.serial('子代理紧凑阅读', () => {
     await expect(workspace().locator('[data-final-result-fallback="changes"]')).toBeVisible()
     await expect(artifacts).toHaveAttribute('data-session-id', taskA)
     await expect(artifacts.locator('.work-session-artifacts__header')).toContainText('2 个文件')
+    const turn = artifacts.getByRole('button', { name: '文件改动轮次', exact: true })
+    await turn.click()
+    const turnMenu = page.getByRole('menu', { name: '文件改动轮次', exact: true })
+    await turnMenu.getByRole('menuitem').filter({ hasText: second.title(taskA) }).click()
+    await expect(artifacts.locator('.work-session-artifacts__turn')).toHaveAttribute('data-turn-scope', `turn:turn-${taskA}`)
+    await turn.click()
+    await page.getByRole('menu', { name: '文件改动轮次', exact: true }).getByRole('menuitem', { name: '整个会话', exact: true }).click()
+    await expect(artifacts.locator('.work-session-artifacts__turn')).toHaveAttribute('data-turn-scope', 'session')
     const search = artifacts.getByRole('searchbox', { name: '搜索当前范围文件', exact: true })
+    await expect(artifacts.getByRole('complementary', { name: '成果文件导航', exact: true }).getByRole('searchbox')).toBeVisible()
     await search.fill('不存在的文件')
     await expect(artifacts.getByRole('status')).toHaveText('当前范围没有匹配的文件。')
     await search.fill('接口审阅结果')
@@ -586,7 +628,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     await artifacts.getByRole('button', { name: '差异范围', exact: true }).click()
     await page.getByRole('menu', { name: '差异范围', exact: true }).getByRole('menuitem', { name: /^待确认改动/ }).click()
     await expect(artifacts.locator('.work-session-artifacts__diff')).toHaveAttribute('data-change-id', 'report-net')
-    for (const [appearance, width] of [['light', 1440], ['dark', 980]] as const) {
+    for (const [appearance, width] of [['light', 2400], ['dark', 1600], ['dark', 980], ['light', 560]] as const) {
       await setWindow(width, 800); await setAppearance(appearance)
       // Narrow windows show one pane at a time; choose the workspace through
       // its real control before measuring the visible file reader.
@@ -594,24 +636,105 @@ test.describe.serial('子代理紧凑阅读', () => {
       if (await workspacePane.isVisible()) await workspacePane.click()
       await expect(artifacts).toBeVisible(); await settleMotion(artifacts)
       const geometry = await artifacts.evaluate(element => {
+        const root = element.getBoundingClientRect()
+        const toolbar = element.querySelector('.work-session-artifacts__toolbar')!.getBoundingClientRect()
         const controls = element.querySelector('.work-session-artifacts__controls')!.getBoundingClientRect()
-        const batch = element.querySelector('.work-session-artifacts__batch')!.getBoundingClientRect()
+        const actions = element.querySelector('.work-session-artifacts__batch .work-change-review__actions')!.getBoundingClientRect()
+        const navigation = element.querySelector('.work-session-artifacts__navigation')!.getBoundingClientRect()
+        const search = element.querySelector('.work-session-artifacts__search')!.getBoundingClientRect()
         const split = element.querySelector('.work-session-artifacts__split')!.getBoundingClientRect()
+        const chrome = element.querySelector('.work-session-artifacts__file-chrome')!.getBoundingClientRect()
         const header = element.querySelector('.work-session-artifacts__file-header')!.getBoundingClientRect()
         const detail = element.querySelector('.work-session-artifacts__diff')!.getBoundingClientRect()
-        return { overflow: element.scrollWidth > element.clientWidth + 1, controlsBottom: controls.bottom, batchTop: batch.top,
-          batchBottom: batch.bottom, splitTop: split.top, headerHeight: header.height, bodyHeight: detail.height,
+        return { overflow: element.scrollWidth > element.clientWidth + 1, width: root.width, toolbarHeight: toolbar.height,
+          controlsCenter: controls.top + controls.height / 2, actionsCenter: actions.top + actions.height / 2,
+          toolbarBottom: toolbar.bottom, splitTop: split.top, searchLeft: search.left, searchRight: search.right,
+          navigationLeft: navigation.left, navigationRight: navigation.right, headerHeight: header.height,
+          chromeHeight: chrome.height, chromeWidth: chrome.width, chromeBottom: chrome.bottom, bodyTop: detail.top, bodyHeight: detail.height,
           singleLine: getComputedStyle(element.querySelector('.work-session-artifacts__file-header strong')!).whiteSpace }
       })
       expect(geometry.overflow).toBe(false)
-      expect(geometry.controlsBottom).toBeLessThanOrEqual(geometry.batchTop + 1)
-      expect(geometry.batchBottom).toBeLessThanOrEqual(geometry.splitTop + 1)
-      expect(geometry.headerHeight).toBeLessThanOrEqual(48)
-      expect(geometry.bodyHeight).toBeGreaterThanOrEqual(180)
+      if (width === 2400) expect(geometry.width).toBeGreaterThanOrEqual(860)
+      if (width === 1600) {
+        expect(geometry.width).toBeGreaterThan(560)
+        expect(geometry.width).toBeLessThanOrEqual(700)
+        expect(geometry.chromeWidth).toBeLessThan(480)
+      }
+      expect(geometry.toolbarHeight).toBeLessThanOrEqual(48)
+      expect(Math.abs(geometry.controlsCenter - geometry.actionsCenter)).toBeLessThanOrEqual(1)
+      expect(geometry.toolbarBottom).toBeLessThanOrEqual(geometry.splitTop + 1)
+      expect(geometry.searchLeft).toBeGreaterThanOrEqual(geometry.navigationLeft)
+      expect(geometry.searchRight).toBeLessThanOrEqual(geometry.navigationRight)
+      expect(geometry.headerHeight).toBeLessThanOrEqual(44)
+      expect(geometry.chromeHeight).toBeLessThanOrEqual(44)
+      expect(geometry.chromeBottom).toBeLessThanOrEqual(geometry.bodyTop + 1)
+      expect(geometry.bodyHeight).toBeGreaterThanOrEqual(240)
       expect(geometry.singleLine).toBe('nowrap')
+      await expect(artifacts.getByRole('button', { name: '批量改动操作', exact: true })).toBeVisible()
+      const fileChrome = artifacts.locator('.work-session-artifacts__file-chrome')
+      const identity = fileChrome.locator('.work-session-artifacts__identity')
+      const count = identity.locator('.work-session-artifacts__count')
+      await expect(count).toHaveCount(1)
+      await expect(count).toHaveAttribute('aria-label', /增加 \d+ 行，删除 \d+ 行/)
+      await expect(count).toHaveAttribute('title', /\S/)
+      const statsPlacement = await identity.evaluate(element => {
+        const name = element.querySelector('strong')!.getBoundingClientRect()
+        const stats = element.querySelector('.work-session-artifacts__count')!.getBoundingClientRect()
+        return { gap: stats.left - name.right, centerDelta: Math.abs(stats.top + stats.height / 2 - name.top - name.height / 2) }
+      })
+      expect(statsPlacement.gap).toBeGreaterThanOrEqual(-1)
+      expect(statsPlacement.gap).toBeLessThanOrEqual(12)
+      expect(statsPlacement.centerDelta).toBeLessThanOrEqual(1)
+      await expect(artifacts.locator('.work-session-artifacts__diff .diff-card__notice')).toHaveCount(0)
+      const fileActions = fileChrome.getByRole('group', { name: '此文件改动操作', exact: true })
+      const actionColors = await fileActions.evaluate(element => {
+        const mutedProbe = document.createElement('span')
+        mutedProbe.style.color = 'var(--fg-muted)'
+        mutedProbe.style.display = 'none'
+        element.append(mutedProbe)
+        const muted = getComputedStyle(mutedProbe).color
+        mutedProbe.remove()
+        return { muted, keep: getComputedStyle(element.querySelector('[aria-label="保留此改动"] svg')!).color,
+          revert: getComputedStyle(element.querySelector('[aria-label="撤回此改动"] svg')!).color }
+      })
+      expect(actionColors.keep).not.toBe(actionColors.revert)
+      expect(actionColors.keep).not.toBe(actionColors.muted)
+      expect(actionColors.revert).not.toBe(actionColors.muted)
+      for (const [label, dialogTitle] of [['保留此改动', '保留文件改动'], ['撤回此改动', '撤回文件改动']] as const) {
+        const action = fileActions.getByRole('button', { name: label, exact: true })
+        await expect(action).toBeVisible()
+        await expect(action).toHaveText('')
+        await expect(action).toHaveAttribute('aria-label', label)
+        await expect(action).toHaveAttribute('title', label)
+        await expect(action.locator('svg')).toHaveCount(1)
+        const bounds = await action.evaluate(element => {
+          const button = element.getBoundingClientRect(), row = element.closest('.work-session-artifacts__file-chrome')!.getBoundingClientRect()
+          return { inside: button.left >= row.left && button.right <= row.right + 1 && button.top >= row.top && button.bottom <= row.bottom + 1 }
+        })
+        expect(bounds.inside).toBe(true)
+        await action.click()
+        const singleConfirmation = page.getByRole('dialog', { name: dialogTitle, exact: true })
+        await expect(singleConfirmation).toContainText('接口审阅结果与兼容性说明.txt')
+        await singleConfirmation.getByRole('button', { name: '取消', exact: true }).click()
+        await expect(singleConfirmation).toHaveCount(0)
+      }
       await expect(artifacts).not.toContainText('任务结束后可确认')
       const path = info.outputPath(`compact-artifacts-${appearance}-${width}.png`)
       await page.screenshot({ path }); await info.attach(`成果工具栏 ${appearance} ${width}`, { path, contentType: 'image/png' })
+      await artifacts.getByRole('button', { name: '差异范围', exact: true }).click()
+      await page.getByRole('menu', { name: '差异范围', exact: true }).getByRole('menuitem', { name: /^修改记录/ }).click()
+      await expect(versions).toBeVisible()
+      await versions.click()
+      const records = page.getByRole('menu', { name: '选择单次修改', exact: true })
+      await expect(records.getByRole('menuitem')).toHaveCount(2)
+      await records.getByRole('menuitem').last().click()
+      await expect(artifacts.locator('.work-session-artifacts__diff')).toHaveAttribute('data-change-id', 'report-v1')
+      await expect(artifacts.locator('.work-session-artifacts__diff')).toContainText('REPORT_FIRST_SECOND')
+      expect(await fileChrome.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(44)
+      expect(await fileChrome.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+      await artifacts.getByRole('button', { name: '差异范围', exact: true }).click()
+      await page.getByRole('menu', { name: '差异范围', exact: true }).getByRole('menuitem', { name: /^待确认改动/ }).click()
+      await expect(artifacts.locator('.work-session-artifacts__diff')).toHaveAttribute('data-change-id', 'report-net')
     }
   })
 })

@@ -137,12 +137,8 @@
   display: flex;
   gap: var(--space-4);
   align-items: center;
-  margin-bottom: 20px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-panel);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-card);
+  margin-bottom: var(--space-3);
+  padding-block: var(--space-2);
 }
 .account-summary__copy {
   flex: 1;
@@ -151,7 +147,7 @@
 .account-summary__copy h2 {
   margin: 0;
   color: var(--fg-strong);
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -169,7 +165,7 @@
   display: inline-flex;
   gap: 5px;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--fg-muted);
 }
 .account-status::before {
@@ -396,6 +392,81 @@
   color: var(--fg-muted);
   font-size: 13px;
   line-height: 1.6;
+}
+.account-service {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.account-service__address {
+  flex: 1 1 160px;
+  min-width: 0;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.account-context {
+  margin: 0 0 var(--space-3);
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.account-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 30px;
+  min-height: 30px;
+  padding: var(--space-2);
+}
+.account-settings .btn:focus-visible,
+.account-onboarding .btn:focus-visible,
+.account-reauth .btn:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.account-entry-actions,
+.account-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.account-entry-actions { margin-block: var(--space-5); }
+.account-row-actions { justify-content: flex-end; }
+.account-login-panel {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--bg-elevated);
+}
+.account-login-key {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+}
+.account-login-key .account-field { flex: 1 1 180px; }
+.account-dialog-copy {
+  margin: 0 0 var(--space-4);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.account-sessions { min-width: 0; }
+.account-session .btn { flex-shrink: 0; }
+.account-onboarding,
+.account-reauth { max-width: calc(100vw - 32px); }
+@media (max-width: 760px) {
+  .account-settings .sg__row { flex-wrap: wrap; }
+  .account-settings .sg__row-control { min-width: 0; max-width: 100%; }
+  .account-provider__controls { justify-content: flex-start; }
+  .account-row-actions { justify-content: flex-start; }
+  .account-session { align-items: flex-start; flex-wrap: wrap; }
 }
 .account-settings .btn,
 .account-menu__trigger {

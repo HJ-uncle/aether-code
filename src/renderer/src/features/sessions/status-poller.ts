@@ -6,7 +6,7 @@ export interface SessionStatusTask {
   archived?: boolean; pinned?: boolean; runStartedAt?: number
 }
 export interface SessionRunStatus {
-  run?: { schemaVersion?: number; sessionId?: string; runId?: string; seq?: number; version?: number; status?: string
+  run?: { schemaVersion?: number; sessionId?: string; runId?: string; attemptId?: string; seq?: number; version?: number; status?: string
     updatedAt?: number; startedAt?: number; createdAt?: number; pending?: unknown; activity?: unknown }
   finished?: boolean; running?: boolean
 }
@@ -21,7 +21,8 @@ export function normalizeSessionTaskActivity(value: unknown): SessionTaskActivit
   const item = value as SessionTaskActivity
   if (typeof item.runId !== 'string' || !item.runId.trim() || !count(item.seq) || !count(item.version) || item.version < 1 ||
     !rootStatuses.includes(item.status) || !timestamp(item.updatedAt) || !count(item.pendingAsk) || !count(item.pendingPermission)) return undefined
-  return { runId: item.runId, seq: item.seq, version: item.version, status: item.status, updatedAt: item.updatedAt,
+  return { runId: item.runId, attemptId: typeof item.attemptId === 'string' && item.attemptId.trim() ? item.attemptId : undefined,
+    seq: item.seq, version: item.version, status: item.status, updatedAt: item.updatedAt,
     pendingAsk: item.status === 'waiting' ? item.pendingAsk : 0, pendingPermission: item.status === 'waiting' ? item.pendingPermission : 0,
     execution: item.status === 'running' ? normalizeRootRunActivity(item.execution) : undefined }
 }
@@ -40,6 +41,7 @@ export function sessionTaskActivityFromRun(response: SessionRunStatus, sessionId
 
 export function sameSessionTaskActivity(left: SessionTaskActivity | undefined, right: SessionTaskActivity | undefined): boolean {
   return left === right || Boolean(left && right && left.runId === right.runId && left.seq === right.seq && left.version === right.version &&
+    left.attemptId === right.attemptId &&
     left.status === right.status && left.updatedAt === right.updatedAt && left.pendingAsk === right.pendingAsk && left.pendingPermission === right.pendingPermission &&
     JSON.stringify(left.execution) === JSON.stringify(right.execution))
 }
@@ -49,7 +51,12 @@ export function acceptSessionTaskActivity(previous: SessionTaskActivity | undefi
   if (!previous) return true
   if (previous.runId !== next.runId) return next.seq > previous.seq
   if (next.seq !== previous.seq || next.version < previous.version) return false
-  if (!active(previous.status) && active(next.status)) return false
+  if (next.version === previous.version && previous.attemptId && next.attemptId !== previous.attemptId) return false
+  // A terminal attempt stays terminal; an explicitly newer execution of the
+  // same logical root may resume. Missing persisted attempt IDs are legacy
+  // watermarks, so a newer authoritative attempt can also hydrate those rows.
+  if (!active(previous.status) && active(next.status) &&
+    !(next.version > previous.version && next.attemptId && next.attemptId !== previous.attemptId)) return false
   // Version is the execution watermark even if the server wall clock moves
   // backwards. Equal versions may only fill waiting metadata for that state.
   return next.version > previous.version || next.status === previous.status && next.updatedAt === previous.updatedAt
@@ -69,8 +76,9 @@ export function sessionTaskRunPatch(task: SessionStatusTask, response: SessionRu
   if (sameSessionTaskActivity(task.activity, activity) && status === task.status) return undefined
   const run = response.run!
   const startedAt = timestamp(run.startedAt) ? run.startedAt : timestamp(run.createdAt) ? run.createdAt : now
+  const sameAttempt = task.activity?.runId === activity.runId && task.activity?.attemptId === activity.attemptId
   return { status, activity, updatedAt: Math.max(task.updatedAt, activity.updatedAt),
-    runStartedAt: active(status) ? task.activity?.runId === activity.runId ? task.runStartedAt ?? startedAt : startedAt : undefined }
+    runStartedAt: active(status) ? sameAttempt ? task.runStartedAt ?? startedAt : startedAt : undefined }
 }
 
 /** Discovery is separate from live polling: at most two idle rows per pass,

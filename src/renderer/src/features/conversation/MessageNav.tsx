@@ -4,13 +4,13 @@ import type { DisplayHistoryTurn } from '@renderer/core/engine/display-history'
 import { toast } from '@renderer/core/toast'
 import { MessageNavRail, type NavTurn } from './shared/MessageNavRail'
 import { userMessageText } from './shared/mention-context'
-import { sessionNavigationTarget, sessionNavigationTurns, type SessionNavigationGroup } from './message-nav'
+import { sessionNavigationTurns, type SessionNavigationGroup } from './message-nav'
 import './message-nav.css'
 
 const TURN_SELECTOR = '.work-conversation__content > .work-conversation-turn[data-turn-id]'
 
 export function MessageNav({
-  sessionKey, messages, groups, historyIndex, loadedTurnIds, onLoadTurn, firstId, scrollRef, onWindowChange, onInspectHistory, onLatest
+  sessionKey, messages, groups, historyIndex, loadedTurnIds, onLoadTurn, scrollRef, onInspectHistory, onLatest, onPositioned
 }: {
   /** Include engine source as well as task id so marks never cross engines. */
   sessionKey: string
@@ -19,13 +19,13 @@ export function MessageNav({
   historyIndex?: readonly DisplayHistoryTurn[] | null
   loadedTurnIds?: readonly string[]
   onLoadTurn?: (userMessageId: string) => Promise<boolean>
-  firstId: string | null
   scrollRef: RefObject<HTMLDivElement | null>
-  onWindowChange: (firstId: string) => void
-  /** Pause following and retain the selected window while new messages arrive. */
+  /** Pause following while the reader inspects an earlier turn. */
   onInspectHistory: () => void
-  /** Host also handles returning from an unversioned archive page. */
+  /** Return to the current live tail without remounting history. */
   onLatest: () => void
+  /** Retain the newest explicit target if a cold history prefix arrives later. */
+  onPositioned: (messageId: string, top: boolean) => void
 }): JSX.Element {
   const turns = useMemo(() => sessionNavigationTurns(groups, historyIndex, loadedTurnIds), [groups, historyIndex, loadedTurnIds])
   const pending = useRef<{ userId: string; top: boolean; ready: boolean } | null>(null)
@@ -70,10 +70,11 @@ export function MessageNav({
     if (!target?.ready) return
     const group = groups.find(group => group.messages.some(message => message.id === target.userId))
     if (!group) return
-    if (scrollToTurn(group.id, target.top)) { pending.current = null; return }
-    const window = sessionNavigationTarget(messages, groups, group.id)
-    if (window) onWindowChange(window.firstId)
-  }, [firstId, groups, messages, onWindowChange, request, scrollToTurn])
+    if (scrollToTurn(group.id, target.top)) {
+      onPositioned(target.userId, target.top)
+      pending.current = null
+    }
+  }, [groups, messages, request, scrollToTurn, onPositioned])
   const top = useCallback(() => { if (turns[0]) navigate(turns[0], true) }, [navigate, turns])
   const latest = useCallback(() => {
     generation.current++
@@ -107,7 +108,7 @@ export function MessageNav({
   // message column never shifts beneath the fixed running-service button.
   return <div className="work-message-nav-slot">
     <MessageNavRail sessionId={`work:${sessionKey}`} turns={turns} containerRef={scrollRef}
-      turnSelector={TURN_SELECTOR} navigationKey={`${firstId ?? ''}:${request}`}
+      turnSelector={TURN_SELECTOR} navigationKey={request}
       onNavigate={navigate} onTop={top} onBottom={latest} onCopy={copy} disabled
       className="work-message-nav" />
   </div>

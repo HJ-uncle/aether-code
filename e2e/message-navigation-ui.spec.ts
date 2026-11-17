@@ -1,5 +1,5 @@
 /** Real Electron: Code/Work message navigation advances through short turns,
- * loads unmounted Work history, respects boundaries and keyboard operation,
+ * loads all Work history before ordinary navigation, respects boundaries and keyboard operation,
  * and keeps its compact popover within the reading pane in both appearances.
  * The isolated HTTP fixture does not send prompts or mutate conversation data. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -118,8 +118,8 @@ const scroller = (mode: Mode): Locator => surface(mode).locator(mode === 'work' 
 const row = (mode: Mode, index: number): Locator => nav(mode).locator(`[data-nav-index="${index}"]`)
 const turnId = (mode: Mode, index: number, targetSessionId = session(mode)): string => `${mode === 'work' ? 'message:' : ''}${userId(targetSessionId, index)}`
 
-async function seed(mode: Mode, targetSessionId = session(mode)): Promise<void> {
-  releaseRead()
+async function seed(mode: Mode, targetSessionId = session(mode), initialHold?: string): Promise<void> {
+  releaseRead(initialHold)
   await app!.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 900) })
   await page.evaluate(({ key, mode, id, model, workspaceRoot, now }) => {
     localStorage.setItem(key, JSON.stringify({ tasks: [{ id, title: 'Work 消息导航', status: 'done', draft: '', mentions: [],
@@ -133,9 +133,15 @@ async function seed(mode: Mode, targetSessionId = session(mode)): Promise<void> 
     if (await history.getAttribute('aria-pressed') !== 'true') await history.click()
     await surface(mode).locator(`[data-session-id="${targetSessionId}"]`).click()
   }
-  await expect(nav(mode)).toHaveAttribute('data-variant', 'radar')
   const expectedCount = runs.get(targetSessionId)!.length
-  await expect(nav(mode).locator('[data-nav-index]')).toHaveCount(expectedCount)
+  if (initialHold && mode === 'work') {
+    await expect.poll(() => Boolean(held)).toBe(true)
+    await expect(nav(mode)).toHaveAttribute('data-variant', 'waves')
+    await expect(nav(mode).locator('[data-nav-index]')).toHaveCount(2)
+  } else {
+    await expect(nav(mode)).toHaveAttribute('data-variant', 'radar')
+    await expect(nav(mode).locator('[data-nav-index]')).toHaveCount(expectedCount)
+  }
   await expect(scroller(mode)).toContainText(`ANSWER_${expectedCount}`)
   await page.locator('html').evaluate(element => element.setAttribute('data-appearance', 'light'))
 }
@@ -244,22 +250,26 @@ test.describe.serial('Code / Work 消息导航', () => {
     await nav('code').getByRole('button', { name: '上一条', exact: true }).click(); await assertTarget('code', readingIndex - 1)
   })
 
-  test('Work 上一条读取未加载正文后准确定位，并能继续双向逐条导航', async () => {
-    await seed('work'); await openNav('work')
-    heldAnchor = userId(sessionId, 7)
-    await row('work', 7).click()
-    await expect.poll(() => Boolean(held)).toBe(true)
-    await expect(scroller('work').locator(`[data-turn-id="${turnId('work', 7)}"]`)).toHaveCount(0)
-    releaseRead(); await assertTarget('work', 7)
+  test('Work 初次自动加载全部12轮，上一条下一条直接定位且不再读取分页', async () => {
+    const beforeSeed = reads.length
+    await seed('work')
+    await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(count)
+    await expect(scroller('work').locator('.work-message')).toHaveCount(count * 2)
+    await expect(scroller('work')).toContainText('ANSWER_1：已检查。')
+    expect(reads.slice(beforeSeed).filter(read => read.sessionId === sessionId))
+      .toEqual(expect.arrayContaining([{ sessionId, anchor: null, limit: 10 }, { sessionId, anchor: userId(sessionId, 0), limit: 10 }]))
+    const beforeNavigation = reads.length
+    await select('work', 7)
     for (const index of [6, 5, 4]) {
       await nav('work').getByRole('button', { name: '上一条', exact: true }).click(); await assertTarget('work', index)
-      expect(reads.some(read => read.sessionId === sessionId && read.anchor === userId(sessionId, index))).toBe(true)
     }
     for (const index of [5, 6, 7]) {
       await nav('work').getByRole('button', { name: '下一条', exact: true }).click(); await assertTarget('work', index)
     }
     await select('work', 0); await expect(nav('work').getByRole('button', { name: '上一条', exact: true })).toBeDisabled()
     await select('work', count - 1); await expect(nav('work').getByRole('button', { name: '下一条', exact: true })).toBeDisabled()
+    expect(reads.slice(beforeNavigation).filter(read => read.sessionId === sessionId && read.anchor !== null)).toEqual([])
+    await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(count)
   })
 
   test.skip('Code 超过300条消息时导航挂载早期轮次，尾部追加不挤出正在阅读的锚点', async () => {
@@ -284,32 +294,99 @@ test.describe.serial('Code / Work 消息导航', () => {
     await assertTarget('code', 1, longCodeId)
   })
 
-  test('Work 旧历史响应晚到时保留最新上一条目标，不跳回旧轮次', async () => {
-    await seed('work'); await openNav('work')
-    heldAnchor = userId(sessionId, 7)
-    await row('work', 7).click(); await expect.poll(() => Boolean(held)).toBe(true)
-    await expect(row('work', 7)).toHaveAttribute('aria-current', 'true')
-    await nav('work').getByRole('button', { name: '上一条', exact: true }).click()
-    await expect(row('work', 6)).toHaveAttribute('aria-current', 'true')
-    const readingWindow = await scroller('work').evaluate(element => ({
-      top: element.scrollTop,
-      anchors: Array.from(element.querySelectorAll<HTMLElement>('.work-conversation__content > .work-conversation-turn')).map(turn => turn.dataset.turnId)
-    }))
-    // Display reads are serialized. Hold the newer request as soon as the old
-    // response is released, exposing the otherwise brief stale-response window.
-    releaseRead(userId(sessionId, 6))
-    await expect.poll(() => Boolean(held)).toBe(true)
-    expect(reads.at(-1)).toEqual({ sessionId: sessionId, anchor: userId(sessionId, 6), limit: 2 })
-    // Work caches the stale response but preserves firstId until the latest
-    // navigation completes; an old response must not replace that mounted window.
-    await expect.poll(() => scroller('work').evaluate(element => Array.from(element.querySelectorAll<HTMLElement>('.work-conversation__content > .work-conversation-turn')).map(turn => turn.dataset.turnId))).toEqual(readingWindow.anchors)
-    await expect.poll(() => scroller('work').evaluate((element, top) => Math.abs(element.scrollTop - top), readingWindow.top)).toBeLessThanOrEqual(2)
-    await expect(scroller('work').locator(`[data-turn-id="${turnId('work', 6)}"]`)).toHaveCount(0)
-    await scroller('work').evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    await expect(row('work', 6)).toHaveAttribute('aria-current', 'true')
-    await expect(row('work', 7)).not.toHaveAttribute('aria-current', 'true')
-    releaseRead(); await assertTarget('work', 6)
-    await nav('work').getByRole('button', { name: '下一条', exact: true }).click(); await assertTarget('work', 7)
+  test('Work 冷历史加载期间切换目标，迟到的完整响应保留最新导航意图', async () => {
+    await seed('work', sessionId, userId(sessionId, 0))
+    expect(reads.at(-1)).toEqual({ sessionId, anchor: userId(sessionId, 0), limit: 10 })
+    await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(2)
+    await expect(scroller('work').locator(`[data-turn-id="${turnId('work', 0)}"]`)).toHaveCount(0)
+    // The full cache commits atomically. Only the two snapshot turns are
+    // navigable while the first older body is deliberately held by the server.
+    await row('work', 0).click()
+    await expect(row('work', 0)).toHaveAttribute('aria-current', 'true')
+    await row('work', 1).click()
+    await expect(row('work', 1)).toHaveAttribute('aria-current', 'true')
+    expect(Boolean(held), 'both navigation choices must precede the late response').toBe(true)
+    releaseRead()
+    await expect(nav('work')).toHaveAttribute('data-variant', 'radar')
+    await expect(nav('work').locator('[data-nav-index]')).toHaveCount(count)
+    await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(count)
+    // The selected message moves from local index 1 to global index 11. A
+    // stale hydration must not retain index 1 or restore the earlier selection.
+    await assertTarget('work', count - 1)
+    await expect(row('work', count - 2)).not.toHaveAttribute('aria-current', 'true')
+    await openNav('work')
+    await nav('work').getByRole('button', { name: '上一条', exact: true }).click(); await assertTarget('work', count - 2)
+    await nav('work').getByRole('button', { name: '下一条', exact: true }).click(); await assertTarget('work', count - 1)
+  })
+
+  test('Work 冷历史补齐保留用户实际滚动后的阅读位置，之后仍可自由滚动', async () => {
+    const original = histories.get(sessionId)!
+    histories.set(sessionId, original.map((message, index) => index === original.length - 1 ? { ...message,
+      content: `ANSWER_${count}：已检查。\n\n` + Array.from({ length: 50 }, (_, index) =>
+        `READING_PARAGRAPH_${index + 1}：完整历史还未返回时，先阅读这一段长回复。`).join('\n\n') } : message))
+    try {
+      await seed('work', sessionId, userId(sessionId, 0))
+      await row('work', 1).click()
+      await expect(row('work', 1)).toHaveAttribute('aria-current', 'true')
+      const beforeWheel = await scroller('work').evaluate(element => element.scrollTop)
+      await scroller('work').hover({ position: { x: 8, y: 32 } })
+      await page.mouse.wheel(0, 500)
+      await expect.poll(() => scroller('work').evaluate(element => element.scrollTop)).toBeGreaterThan(beforeWheel + 100)
+      const readPosition = () => scroller('work').evaluate((element, messageId) => {
+        const message = element.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`)!
+        return { top: element.scrollTop, offset: message.getBoundingClientRect().top - element.getBoundingClientRect().top }
+      }, `${sessionId}-assistant-${count - 1}`)
+      await scroller('work').evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      const reading = await readPosition()
+      expect(reading.offset, 'the user must actually be reading inside the long reply').toBeLessThan(-100)
+      expect(Boolean(held)).toBe(true)
+      releaseRead()
+      await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(count)
+      await expect.poll(async () => Math.abs((await readPosition()).offset - reading.offset)).toBeLessThanOrEqual(3)
+      const restored = await readPosition()
+      expect(restored.top, 'the prepended prefix must be compensated without moving the visible reply').toBeGreaterThan(reading.top + 100)
+      await page.mouse.wheel(0, -240)
+      await expect.poll(() => scroller('work').evaluate(element => element.scrollTop)).toBeLessThan(restored.top - 100)
+      await scroller('work').evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      expect((await readPosition()).top, 'restoring history must not lock later manual scrolling').toBeLessThan(restored.top - 100)
+    } finally {
+      releaseRead()
+      histories.set(sessionId, original)
+    }
+  })
+
+  test('Work 140轮完整历史保留已有节点与最新导航锚点，滚动不改变全量挂载', async () => {
+    const originalHistory = histories.get(sessionId)!, originalRuns = runs.get(sessionId)!
+    const total = 140
+    while (runs.get(sessionId)!.length < total) appendServerTurn(sessionId)
+    try {
+      await seed('work', sessionId, userId(sessionId, 0))
+      await row('work', 1).click()
+      await expect(row('work', 1)).toHaveAttribute('aria-current', 'true')
+      const existing = await scroller('work').evaluateHandle(element =>
+        Array.from(element.querySelectorAll<HTMLElement>('.work-conversation__content > .work-conversation-turn')))
+      try {
+        releaseRead()
+        await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(total)
+        await expect(scroller('work').locator('.work-message')).toHaveCount(total * 2)
+        await expect(scroller('work')).toHaveCSS('visibility', 'visible')
+        await assertTarget('work', total - 1)
+        expect(await existing.evaluate(nodes => nodes.every(node => node.isConnected)), 'the original tail nodes must remain mounted').toBe(true)
+        const height = await scroller('work').evaluate(element => element.scrollHeight)
+        for (const index of [0, 70, total - 1]) {
+          await select('work', index)
+          await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(total)
+          expect(await scroller('work').evaluate(element => element.scrollHeight), 'navigation must retain the full transcript height').toBe(height)
+        }
+        expect(await existing.evaluate(nodes => nodes.every(node => node.isConnected))).toBe(true)
+      } finally {
+        await existing.dispose()
+      }
+    } finally {
+      releaseRead()
+      histories.set(sessionId, originalHistory)
+      runs.set(sessionId, originalRuns)
+    }
   })
 
   test.skip('Code 内层表格滚轮只移动表格，不解除底部主动选择', async () => {

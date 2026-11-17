@@ -578,7 +578,7 @@
 .browser-address {
   height: var(--control-h-lg);
   padding-inline: var(--space-3);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--bg-input) 88%, transparent);
 }
 

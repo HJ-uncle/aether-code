@@ -76,6 +76,13 @@ import {
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+function assertTaskNotArchived(source: string, taskId: string): void {
+  // Event handlers and workspace preflight can outlive the composer that
+  // started them. Consult current state instead of a captured task object.
+  if (getSessionState(source).tasks.find(task => task.id === taskId)?.archived)
+    throw new Error('此会话已归档，请先恢复会话后再操作')
+}
+
 function withDraftResourcePatch(resources: SessionResources | undefined, patch: Partial<SessionResources>): SessionResources | undefined {
   const keys = (['skills', 'mcpServers', 'knowledgeBases'] as const).filter(key => patch[key] !== undefined)
   if (!Object.keys(patch).length) return resources
@@ -389,6 +396,7 @@ export function useSessionController() {
   const enqueueNextTurn = async (text: string, mentions: Mention[], draftRevision: number): Promise<void> => {
     assertEngineSource(epoch)
     const task = getSessionState(source).tasks.find(item => item.id === activeId)
+    if (task) assertTaskNotArchived(source, task.id)
     if (!task || preparing || restartBlockingRef.current || uploadCount > 0 || !isHistoryReady(task.id)) throw new Error('任务或附件尚未就绪，草稿已保留')
     const originalDraft = getSessionDraft(source, task.id), options = optionsFor(task), pendingAttachments = [...task.attachments]
     const sentAttachments = freezeAttachmentReferences(draftAttachments(pendingAttachments, task.sources, mentions))
@@ -419,6 +427,7 @@ export function useSessionController() {
   const sendTask = useCallback(
     async (task: SessionTask, text: string, mentions: Mention[] = task.mentions ?? [], mode: 'composer' | 'follow-up' | 'replay' = 'composer', collaborators?: AgentCollaborator[]): Promise<void> => {
       assertEngineSource(epoch)
+      assertTaskNotArchived(source, task.id)
       if (workspaceSelectionRef.current?.epoch === epoch) throw new Error('正在切换工作区，请稍后发送。')
       // The stream IPC resolves after its reader closes, possibly after an
       // authoritative terminal snapshot or a later task has been selected.
@@ -439,6 +448,7 @@ export function useSessionController() {
       // continuation send a new first message into the just-deleted session.
       if (epoch !== getEngineSource() || deletingTaskKeysRef.current.has(`${source}\0${task.id}`) ||
         !getSessionState(source).tasks.some(item => item.id === task.id)) return
+      assertTaskNotArchived(source, task.id)
       updateTask(task.id, { status: 'running', agentLocked: true, runStartedAt: Date.now(), updatedAt: Date.now() })
       const preserveDraft = mode !== 'composer'
       const sentAttachments = mode === 'follow-up' ? [] : mode === 'replay'
@@ -814,16 +824,14 @@ export function useSessionController() {
       if (!task) return
       updateSessionState(source, (previous) => ({
         ...previous,
-        activeTaskId: archived && previous.activeTaskId === id ? null : previous.activeTaskId,
         tasks: previous.tasks.map((item) =>
           item.id === id
             ? { ...item, archived, archivedAt: archived ? Date.now() : undefined, updatedAt: Date.now() }
             : item
         )
       }))
-      if (archived && activeId === id) setHistoryAttempt((attempt) => attempt + 1)
     },
-    [source, activeId]
+    [source]
   )
 
   const deleteTask = useCallback((id: string): Promise<void> => {
@@ -1080,6 +1088,7 @@ export function useSessionController() {
   /** Admission is owned durably by main, so a lost response cannot replay a task. */
   const restartFailedTask = useCallback(async (taskId: string, assistantId: string): Promise<void> => {
     assertEngineSource(epoch)
+    assertTaskNotArchived(source, taskId)
     if (activeId !== taskId || getSessionState(source).activeTaskId !== taskId) throw new Error('任务已切换，请在原任务中重试')
     if (!activeTask || !engineReady) throw new Error('引擎尚未就绪，请稍后重试')
     if (messageActionRef.current) throw new Error('正在处理历史消息，请稍后重启')
@@ -1109,6 +1118,7 @@ export function useSessionController() {
 
   const editSettledTurn = useCallback((taskId: string, assistantId: string): void => {
     if (epoch !== getEngineSource() || activeId !== taskId || getSessionState(source).activeTaskId !== taskId || restartPending || hasSessionWork(taskId) || messageActionRef.current) return
+    if (getSessionState(source).tasks.find(task => task.id === taskId)?.archived) return
     const original = recoverSessionTurn(messages, assistantId)
     if (!original) { setError('原始指令不可用，请回到最新消息后编辑'); return }
     const draft = restoreMessageDraft(getSessionDraft(source, taskId), original)
@@ -1127,6 +1137,7 @@ export function useSessionController() {
     const message = messages.find(item => item.id === messageId && item.role === 'user')
     const task = getSessionState(source).tasks.find(item => item.id === taskId)
     if (!message || !task) throw new Error('这条消息已不可用，请重新加载会话')
+    assertTaskNotArchived(source, taskId)
     if (messageActionRef.current || restartPending) throw new Error('正在处理消息，请稍候')
     const draft = userMessageDraft(message.content)
     const refill = (): void => {
@@ -1359,6 +1370,7 @@ export function useSessionController() {
   const respond = useCallback(
     async (requestId: string, values: string[]): Promise<void> => {
       if (!activeTask || !restored) return
+      assertTaskNotArchived(source, activeTask.id)
       invalidateStatusProbe(activeTask.id)
       setError(null)
       try {
@@ -1370,13 +1382,14 @@ export function useSessionController() {
         throw cause
       }
     },
-    [activeTask, restored, chatRespond, optionsFor]
+    [activeTask, restored, chatRespond, optionsFor, source]
   )
 
   const assertPendingResponse = useCallback((requestId: string, runId: string): void => {
     if (!activeTask || !restored || getSessionState(source).activeTaskId !== activeTask.id) {
       throw new Error('当前任务已变化，请在当前会话重试')
     }
+    assertTaskNotArchived(source, activeTask.id)
     chat.assertPendingResponse(requestId, activeTask.id, runId)
   }, [activeTask, restored, source, chat.assertPendingResponse])
 

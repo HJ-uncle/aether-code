@@ -7,6 +7,8 @@ export interface SessionProgressChange {
   key: string
   latest: EngineFileChange
   records: EngineFileChange[]
+  /** Verified owning turn's continuous before/after segments, newest first. */
+  summaries?: EngineFileChange[]
 }
 
 /** One acknowledged edit does not acknowledge earlier edits to the same file. */

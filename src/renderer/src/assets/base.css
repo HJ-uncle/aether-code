@@ -166,7 +166,7 @@ select:where(:not(.monaco-editor *, .xterm *)):focus-visible {
   background: color-mix(in srgb, var(--scrollbar-thumb) 55%, transparent);
   border: 1px solid transparent;
   background-clip: content-box;
-  border-radius: 6px;
+  border-radius: var(--radius-pill);
 }
 
 *:hover::-webkit-scrollbar-thumb,
@@ -233,7 +233,7 @@ select:where(:not(.monaco-editor *, .xterm *)):focus-visible {
   position: absolute;
   inset: auto 0 0;
   height: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   background: var(--scrollbar-thumb);
 }
 .horizontal-scrollbar:hover .horizontal-scrollbar__thumb::after,

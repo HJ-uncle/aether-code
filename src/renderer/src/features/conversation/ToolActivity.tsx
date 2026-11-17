@@ -42,7 +42,9 @@ export const ToolActivity = memo(function ToolActivity({ tool, fileContext, onOp
   const details = <CompactToolRow tool={displayTool} state={state} summary={outputOnly ? '调用记录未载入' : sessionToolTarget(tool, fileContext.workspaceRoot)}
     summaryDetail={outputOnly ? '调用记录未载入' : sessionToolTarget(tool, undefined, true)}
     memoryKey={`work-tool:${getEngineSource()}:${fileContext.sessionId}:${tool.id}${previewScope}`} fileContext={fileContext} onOpenFile={onOpenFile}
-    structuredResult={tool.name !== 'read_file'} readRange={readPreview?.range} readFiles={readFiles} quiet defaultOpen={defaultOpen ?? false} revealRevision={revealRevision} />
+    structuredResult={tool.name !== 'read_file'} readRange={readPreview?.range} readFiles={readFiles} quiet
+    defaultOpen={defaultOpen ?? (turnRunning === true && (state === 'running' || state === 'waiting'))}
+    revealRevision={revealRevision} />
   return <div className="work-tool-activity" data-tool-kind={kind} data-work-tool-id={tool.id}>
     {outputOnly ? <>
       {changes.map(change => <FileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}

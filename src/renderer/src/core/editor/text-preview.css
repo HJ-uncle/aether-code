@@ -21,4 +21,4 @@
 .text-preview__text { padding: 0 16px 0 12px; color: var(--fg); user-select: text; }
 .text-preview__line.is-revealed { background: var(--accent-soft); }
 .text-preview__line.is-revealed > .text-preview__number { color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
-.text-preview__match { background: var(--bg-selected); color: inherit; outline: 1px solid var(--accent); border-radius: 2px; }
+.text-preview__match { background: var(--bg-selected); color: inherit; outline: 1px solid var(--accent); border-radius: var(--radius-mark); }

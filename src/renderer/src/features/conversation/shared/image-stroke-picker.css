@@ -6,7 +6,7 @@
   height: 32px;
   padding: 0 7px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--image-viewer-fg);
   font: 12px/1 var(--font-ui);
@@ -18,12 +18,12 @@
 .image-stroke-picker__trigger:disabled { opacity: .35; cursor: default; }
 .image-stroke-picker__trigger:focus-visible { outline: 2px solid var(--image-viewer-fg); outline-offset: 2px; }
 .image-stroke-picker__sample { display: flex; align-items: center; width: 28px; height: 16px; flex: none; }
-.image-stroke-picker__sample > span { display: block; width: 100%; border-radius: 999px; background: currentColor; }
+.image-stroke-picker__sample > span { display: block; width: 100%; border-radius: var(--radius-pill); background: currentColor; }
 .image-stroke-picker__value { flex: none; min-width: 31px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .image-stroke-picker__value > span, .image-stroke-picker__caret { color: var(--image-viewer-muted); }
 .popover__panel.image-stroke-picker__panel {
   border: 1px solid var(--image-viewer-border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--image-viewer-chrome);
   color: var(--image-viewer-fg);
   box-shadow: var(--image-viewer-shadow);
@@ -37,7 +37,7 @@
   min-height: 36px;
   padding: 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius);
   color: var(--image-viewer-fg);
   background: transparent;
   font: 13px/1 var(--font-ui);

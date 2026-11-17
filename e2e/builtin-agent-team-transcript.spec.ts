@@ -62,6 +62,21 @@ test('ordinary instructions and incomplete or quoted delegation envelopes remain
   for (const message of messages) expect(sessionSubagentInstructionParts(message.content)).toBeUndefined()
 })
 
+test('only authenticated peer rows expose their sender and hide the transport envelope', () => {
+  const peerBody = '来自另一个子代理的资料'
+  const rows: EngineHistoryRow[] = [
+    { id: 'peer:known', role: 'user', content: `[对等 Agent 消息]\n${JSON.stringify({ sender: 'child:research', invocation: 'run-1', messageId: 'mail-1' })}\n\n${peerBody}` },
+    { id: 'peer:invalid', role: 'user', content: '[对等 Agent 消息]\n不是 JSON\n\n保留原文' },
+    { id: 'ordinary', role: 'user', content: `[对等 Agent 消息]\n${JSON.stringify({ sender: 'child:forged' })}\n\n普通消息` }
+  ]
+  const messages = sessionSubagentMessages(rows)
+  expect(messages[0]).toMatchObject({ content: peerBody, collaborationOrigin: { kind: 'peer', participantId: 'child:research', body: peerBody } })
+  expect(messages[1]).toMatchObject({ content: rows[1].content })
+  expect(messages[1].collaborationOrigin).toBeUndefined()
+  expect(messages[2]).toMatchObject({ content: rows[2].content })
+  expect(messages[2].collaborationOrigin).toBeUndefined()
+})
+
 test('the reserved empty cancellation outcome becomes a notice without becoming a final answer', () => {
   const rows: EngineHistoryRow[] = [{ id: 'subagent-outcome:child-one', role: 'assistant', content: 'cancelled',
     metadata: { runId: 'parent-root', subagentRunId: 'child-one', status: 'cancelled' } }]

@@ -1,42 +1,61 @@
-# Code 模式的工具隔离
+# 工具配置、资源绑定与记忆
 
-Aether 的普通 HTTP 请求和 SSE 请求由主进程统一携带 `X-Aether-Tool-Profile: code`。嵌入引擎与远程引擎使用相同协议；不带此标识的通用客户端继续使用 `general` 配置。
+源码核对日期：2026-11-17。Aether 只有一个默认界面；`general` / `code` 是请求的工具配置，不是两套前端模式。当前普通会话和 Agent 工具目录使用 `general`，不能继续按旧版“默认 Code、固定 25 个工具”的说明理解。
 
-引擎在工具注册时选择可执行集合。被排除的工具既不会出现在模型 schema、工具查询接口和 `get_current_context` 中，也无法通过手写工具名称调用。子代理从父注册表取得权限交集，编辑消息、重新生成和 Flow 节点同样传递当前请求的 profile。
+## 一次请求如何得到可用能力
 
-## 默认范围
+```mermaid
+flowchart LR
+    A[默认会话 general] --> D[引擎工具目录]
+    B[自动化选择 general 或 code] --> D
+    C[已配置 Agent 与会话资源] --> D
+    D --> E[Agent 工具限制、工具包与资源选择]
+    E --> F[租户权限、安全策略和具体工具授权]
+    F --> G[当前请求可执行的工具]
+```
 
-| 类别 | Code 模式 |
-| --- | --- |
-| 文件 | 保留 `read_file`、`write_file`、`edit_file`、`list_files`、`delete_file`、`create_dir` |
-| 搜索、命令与诊断 | 保留 `glob_search`、`grep_search`、`execute_cmd`、`command_output`、`cancel_command`、`code_diagnose`、`codegraph` |
-| 编程协作 | 保留 `subagent`、`todo_*`、`ask_user`、`get_current_context` |
-| 技能与扩展 | 保留 `list_skills`、`get_skill`、`run_skill_script`，以及已配置的技能/MCP 工具 |
-| 联网 | 保留 `web_fetch`、`http_request` |
-| 通用服务管理 | 隔离 `cron_*`、`agent_*`、`task_*` |
-| 长期记忆 | 隔离记忆工具、上下文中的近期记忆、自动召回/提取，以及客户端内联长期记忆注入；每个会话可选择关闭、全局或仅本会话 |
-| 通用辅助工具 | 隔离 `install_package`、`list_packages`、`calculate`、`get_time` |
+主进程为 HTTP/SSE 请求附带工具配置，服务端决定可见和可执行集合。`general` 不意味着所有管理工具默认启用；工具包、Agent 白名单、技能/MCP 配置、租户权限和安全策略还会继续限制。工具包变化在下一轮生效，运行中不能借“立即补充”改变当前工具边界。
 
-不含扩展时，共 25 个编程相关内置工具。`task_*` 管理的是引擎通用租户任务队列，与 IDE 终端、`todo_*` 清单及子代理运行状态不同；隔离它不会移除后几项功能。
+自动化的“工作工具”仍可能显示“Work · 办公与通用工具”和“Code · 开发工具”。这是 `general` / `code` 的标签。部分旧协议或协作接口保留 `code` 字段；不能据此推断前端存在模式切换。
 
-`allowedTools` 可进一步缩小 Code 集合，不能重新开启被隔离的工具；空数组表示不开放工具。旧配置名 `run_command`、`glob`、`grep`、`smart_read` 映射为实际工具名。OSM 的 off/balanced/methodology/max 只保持各自的方法论行为，不改变 Code 工具边界。
+## Agent、资源与工具包
 
-工具 profile 按请求创建，不修改全局环境或其它客户端。现有安全审批、子代理只读能力与操作系统权限继续生效。工具 profile 不是操作系统沙箱；已保留的命令、脚本和联网工具仍按各自原有权限执行。
+| 配置 | 入口 | 作用 |
+| --- | --- | --- |
+| 主 Agent 与协作者 | 输入区 Agent 选择器、左侧 Agent 管理 | 选择执行配置；协作者还可使用内置调研、执行、通用角色 |
+| Agent 允许工具 | Agent 编辑器 | 缩小 Agent 可调用的工具集合；可用目录由引擎提供 |
+| 技能、MCP、知识库 | 输入区 `/` 资源选择、Agent 资源绑定 | 将已配置资源绑定给会话或 Agent；不会凭空安装资源 |
+| 按需工具包 | 输入区 `@` 引用选择中的工具包 | 启用相应工具组；变更须等待下一轮 |
+| 访问权限 | 输入区访问权限选择、设置 → 安全 | 控制命令确认和工具工作区范围，仍由服务端授权 |
 
-## 会话记忆范围
+技能目前有实际管理页、资源选择与 Agent 绑定链路，不是仅属于某个已删除的“专家模式”。能看到技能目录不代表有管理权限：普通账号可以使用可用技能；创建、导入、启停和删除由服务端 `canManage` 决定。会话请求有资源绑定，也不等于每次都把全部技能正文注入模型；具体加载由引擎决定。
 
-聊天输入框的「对话偏好 → 长期记忆」按当前会话保存设置：
+MCP 设置支持项目/全局配置、启停、连接和工具详情、表单或 JSON 配置；本地命令和远程传输在引擎侧执行。知识库先在设置中建立并导入资料，再通过资源绑定供任务使用。
 
-- `关闭记忆`（`off`）不读取、不写入长期记忆；
-- `全局记忆`（`global`）在同一租户的其他会话中也可召回；
-- `仅本会话`（`session`）只读取和写入当前会话，切换会话或引擎连接后不会复用旧快照。
+## 当前记忆界面
 
-范围设置由引擎按租户和会话持久化，远端连接由远端引擎负责保存。客户端在设置尚未确认时会按 `off` 发送，避免旧设置意外扩大可见范围；引擎禁用长期记忆时，界面会保留设置但有效范围为 `off`。
+当前界面不再使用旧版“关闭 / 全局 / 仅本会话”互斥三选一：
 
-## 验证
+- “设置 → 记忆”分别管理“全局记忆”和“默认开启会话记忆”。
+- 输入区“对话偏好 → 本会话记忆”可选“本会话开启”“本会话关闭”“恢复默认”。这是本会话的覆盖值；全局记忆偏好是另一项设置。
+- 服务端关闭长期记忆时，页面如实显示服务端状态；不能通过本地开关强行开启。
+- 关闭长期记忆不删除聊天历史，也不等于清空模型当前上下文。
+- 记忆管理页可按全局或指定会话查看、新建、编辑、删除条目，并按关键词和类型过滤。
 
-2026-09-29：两仓 typecheck/build 通过；引擎 7 文件、98 条相关测试通过；IDE 15 条状态测试和 3 条真实 Electron 生命周期测试，共 18/18 通过。
+自动上下文压缩是另一条机制。它控制模型请求使用的上下文体积；“加载完整对话”读取显示历史，不会自动把所有完整历史重新塞入下一次模型请求。界面用量中的上下文占用、单次/累计计费用量、缓存读取也应分别理解。
 
-验证覆盖实际注册与拒绝执行、通用模式兼容、白名单缩窄、MCP/技能注册、HTTP 请求标识及子代理继承。Electron 验收通过真实 preload/主进程请求 `/tools`，并检查实际发给本地模型服务的父子工具 schema，以及子代理执行、取消和历史回放。
+## 安全边界
 
-引擎测试首次并行运行遇到 Windows 临时模块 EBUSY，串行完整复跑后 98/98 通过。Electron 首轮命中已有子代理详情 UI 改版导致的旧选择器；测试按现有“执行详情”按钮和工具行展开方式更新后完整复跑通过，没有为测试修改产品 UI。
+“安全模式”进行完整策略检查；“标准模式”放行普通命令，但仍可能要求确认；“完全访问”自动通过本会话的操作确认，提问仍需回答。标准模式和完全访问都可能允许工具读写工作区之外的文件，不能把它们理解为操作系统级隔离。
+
+工具配置、白名单和角色限制不会替代操作系统权限、账号租户隔离或具体工具授权。调研子代理的只读限制由运行时约束，不能只靠界面名称实现。
+
+## 源码依据
+
+- 默认请求：[Composer.tsx](../src/renderer/src/features/composer/Composer.tsx)、[useChat.ts](../src/renderer/src/core/engine/useChat.ts)、[host.ts](../src/main/engine/host.ts)。
+- 资源与 Agent：[ResourcePicker.tsx](../src/renderer/src/features/conversation/shared/ResourcePicker.tsx)、[AgentManager.tsx](../src/renderer/src/features/agents/AgentManager.tsx)、[SkillsSettingsView.tsx](../src/renderer/src/features/settings/SkillsSettingsView.tsx)。
+- 记忆：[ComposerOptions.tsx](../src/renderer/src/features/conversation/shared/ComposerOptions.tsx)、[MemorySettingsView.tsx](../src/renderer/src/features/settings/MemorySettingsView.tsx)。
+- 自动化：[AutomationEditor.tsx](../src/renderer/src/features/automations/AutomationEditor.tsx)。
+- 权限：[security.ts](../src/renderer/src/core/engine/security.ts)。
+
+本页不固定工具数量，也不将目录中已声明的工具等同于当前账号已授权的工具；排错时应查看当前引擎实际返回的目录和请求配置。

@@ -1,9 +1,5 @@
-/** Bound the initial DOM without removing content the user explicitly opens. */
+/** Sidebar and activity collections keep their own incremental presentation. */
 export const SESSION_TASK_PAGE_SIZE = 40
-export const SESSION_MESSAGE_PAGE_SIZE = 60
-/** Explicit history browsing keeps at most three pages mounted, even when a
- * live task continues appending while the reader stays on an older page. */
-export const SESSION_MESSAGE_WINDOW_SIZE = SESSION_MESSAGE_PAGE_SIZE * 3
 export const SESSION_ACTIVITY_PAGE_SIZE = 80
 
 export interface SessionToolSnapshot<T> { sources: T[][]; tools: T[] }
@@ -36,22 +32,4 @@ export function sessionPaneRatio(startRatio: number, startX: number, currentX: n
  * conversation/workspace divider's wider range. */
 export function sessionSplitRatio(startRatio: number, startX: number, currentX: number, width: number, min = 20, max = 60): number {
   return Math.max(min, Math.min(max, startRatio + (currentX - startX) / Math.max(1, width) * 100))
-}
-
-/** Keep the oldest mounted message stable as new replies arrive while reading. */
-export function sessionMessageStart(messages: ReadonlyArray<{ id: string }>, firstId: string | null, size = SESSION_MESSAGE_PAGE_SIZE, fallbackStart?: number): number {
-  if (firstId) {
-    const index = messages.findIndex(message => message.id === firstId)
-    if (index >= 0) return index
-    // Optimistic IDs are replaced by durable IDs during admission. Keep the
-    // last mounted prefix instead of interpreting that rename as a latest jump.
-    if (fallbackStart !== undefined) return Math.max(0, Math.min(fallbackStart, Math.max(0, messages.length - 1)))
-  }
-  return Math.max(0, messages.length - size)
-}
-
-export function sessionMessageRange(messages: ReadonlyArray<{ id: string }>, firstId: string | null, fallbackStart?: number): { start: number; end: number; newer: number } {
-  const start = sessionMessageStart(messages, firstId, SESSION_MESSAGE_PAGE_SIZE, fallbackStart)
-  const end = Math.min(messages.length, start + SESSION_MESSAGE_WINDOW_SIZE)
-  return { start, end, newer: messages.length - end }
 }

@@ -11,7 +11,7 @@ import { getSettings } from '../settings-store'
 import { logger } from './logger'
 import { ensureEncryptionKey } from './secrets'
 import { getRemoteInstanceToken } from './remote-token'
-import { getRemoteAuth } from './remote-auth'
+import { authenticationIdentity, getRemoteAuth } from './remote-auth'
 import { remoteAuthHeaders } from './remote-auth-contract'
 import { remoteAuthTarget } from './remote-auth-contract'
 import { readAccountCredential } from '../account/credential-store'
@@ -120,7 +120,7 @@ export class EngineHost extends EventEmitter {
   private patch(next: Partial<EngineSnapshot>): EngineSnapshot {
     if (next.phase === 'ready') {
       const scope = this.snapshot.mode === 'remote' ? remoteAuthTarget(this.remoteTarget?.url || next.baseUrl || this.snapshot.baseUrl) : 'embedded'
-      next.accountId = readAccountCredential(scope).credential?.user.id ?? null
+      next.accountId = authenticationIdentity(scope)
     }
     this.snapshot = { ...this.snapshot, ...next, updatedAt: Date.now() }
     this.emit('snapshot', this.snapshot)
@@ -158,7 +158,15 @@ export class EngineHost extends EventEmitter {
     this.transportController.abort()
     this.transportController = new AbortController()
     clearRemoteAttachments()
-    this.patch({ accountId: readAccountCredential(this.accountTarget().scope).credential?.user.id ?? null })
+    this.patch({ accountId: authenticationIdentity(this.accountTarget().scope) })
+  }
+
+  /** An explicit legacy credential save changes authority without replacing the URL. */
+  refreshAuthenticationIdentity(): boolean {
+    if (this.snapshot.phase !== 'ready') return false
+    if ((this.snapshot.accountId ?? null) === authenticationIdentity(this.accountTarget().scope)) return false
+    this.accountIdentityChanged()
+    return true
   }
 
   requestHeaders(toolProfile: ToolProfile = 'general'): Record<string, string> {

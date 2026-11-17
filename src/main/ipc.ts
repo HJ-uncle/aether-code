@@ -163,13 +163,16 @@ export function registerIpcHandlers(): void {
       case 'setHttpTrust': return accountService.setHttpTrust(args[0] as string, args[1] as boolean, BrowserWindow.fromWebContents(event.sender))
       case 'register': return accountService.register()
       case 'login': return accountService.login(args[0] as string)
+      case 'reauthenticate': return accountService.reauthenticate(args[0] as string)
       case 'updateProfile': return accountService.updateProfile(args[0] as AccountProfileInput)
       case 'logout': return accountService.logout(args[0] === true)
       case 'sessions': return accountService.sessions()
       case 'revokeSession': return accountService.revokeSession(args[0] as string)
       case 'exportRecovery': return accountService.exportRecovery(BrowserWindow.fromWebContents(event.sender))
+      case 'regenerateRecovery': return accountService.regenerateRecovery()
+      case 'copyRecovery': return accountService.copyRecovery()
       case 'importRecovery': return accountService.importRecovery(BrowserWindow.fromWebContents(event.sender))
-      case 'externalLogin': return accountService.externalLogin(args[0] as string, args[1] as 'login' | 'link', args[2] as string | undefined)
+      case 'externalLogin': return accountService.externalLogin(args[0] as string, args[1] as 'login' | 'link' | 'reauth', args[2] as string | undefined)
       case 'cancelExternalLogin': return accountService.cancelExternalLogin()
       case 'unlink': return accountService.unlink(args[0] as string)
       default: throw new Error('未知账号操作。')
@@ -525,7 +528,13 @@ export function registerIpcHandlers(): void {
         auth,
         save
       )
-    return token === undefined ? withAuth() : withRemoteInstanceTokenChange(token, withAuth)
+    const next = token === undefined ? withAuth() : withRemoteInstanceTokenChange(token, withAuth)
+    if (auth !== undefined && engineHost.refreshAuthenticationIdentity()) {
+      abortAllStreams()
+      // Each terminal retains its old endpoint and headers for authenticated cleanup.
+      void remoteTerminalService.disposeForIdentityChange()
+    }
+    return next
   })
 
   // ── 文件系统 ──

@@ -9,7 +9,7 @@ import { BrowserPreviewServer } from './browser-preview'
 import { sessionPreviewAccess } from './browser-workspace-preview'
 import { engineIdentityOf } from './engine/protocol'
 import { engineHost } from './engine/host'
-import { readAccountCredential } from './account/credential-store'
+import { authenticationIdentity } from './engine/remote-auth'
 import { NativeBrowserHostManager } from './browser/native-host-manager'
 
 const bridges = new Set<BrowserEngineBridge>()
@@ -26,7 +26,7 @@ function pendingBrowserEngine(): BrowserConnectInput['expectedEngine'] | undefin
     return {
       mode: target.scope === 'embedded' ? 'embedded' : 'remote',
       baseUrl: target.scope === 'embedded' ? '' : target.url,
-      accountId: readAccountCredential(target.scope).credential?.user.id ?? null
+      accountId: authenticationIdentity(target.scope)
     }
   } catch {
     // Invalid server settings or locked account storage must not break ordinary

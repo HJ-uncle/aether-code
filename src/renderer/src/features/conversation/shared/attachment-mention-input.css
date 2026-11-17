@@ -17,7 +17,7 @@
   width: 18px;
   height: 18px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-mark);
   object-fit: cover;
   background: var(--bg-elevated);
   pointer-events: none;
@@ -30,7 +30,7 @@
   position: fixed;
   z-index: var(--z-popover);
   width: 2px;
-  border-radius: 1px;
+  border-radius: var(--radius-mark);
   background: var(--accent);
   box-shadow: 0 0 0 1px var(--bg-elevated);
   pointer-events: none;

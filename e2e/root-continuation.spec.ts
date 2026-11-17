@@ -15,6 +15,8 @@ import { replayMessages } from '../src/renderer/src/core/engine/chat-history'
 import { restoreChatSnapshot, type ChatRecoverySnapshot } from '../src/renderer/src/core/engine/chat-recovery'
 import { sessionConversationGroups, sessionConversationEntries } from '../src/renderer/src/features/conversation/conversation-turns'
 import { continuationObserved, continuationTarget, sessionTaskRestart } from '../src/renderer/src/features/sessions/task-restart'
+import { idleRootChanged } from '../src/renderer/src/core/engine/idle-root-discovery'
+import { normalizeSessionTaskActivity, pollSessionTaskStatuses, createSessionStatusDiscovery, sessionTaskActivityFromRun, sessionTaskRunPatch, type SessionStatusTask } from '../src/renderer/src/features/sessions/status-poller'
 
 const scope: NextTurnQueueScope = { source: { mode: 'embedded', endpoint: '', accountId: null }, tenantId: 'tenant', namespace: { id: 'db', generation: 'one' }, owner: 'work', taskId: 'task' }
 const target: QueueContinuationTarget = { runId: 'root', attemptId: 'attempt-1', version: 3, turnId: 'turn' }
@@ -31,6 +33,41 @@ function exactWire(frozen: ReturnType<typeof freezeQueueRequest>, run = resumed(
   const request = JSON.parse(frozen.wireBody!).continuation
   return { protocolVersion: 1, status: 'accepted', receipt: { ...request, ...run.continuationReceipt, requestKey: request.requestKey, bodyDigest: request.bodyDigest }, run }
 }
+
+test('continued attempt updates task status and timing while old attempt observations stay terminal', () => {
+  const stopped: SessionStatusTask = { id: 'task', status: 'stopped', updatedAt: 3,
+    activity: sessionTaskActivityFromRun({ run: initial() }, 'task') }
+  const next = sessionTaskRunPatch(stopped, { run: resumed() }, 10)
+  expect(next).toMatchObject({ status: 'running', activity: { runId: 'root', attemptId: 'attempt-2', version: 4 }, runStartedAt: 4 })
+  expect(normalizeSessionTaskActivity(JSON.parse(JSON.stringify(next!.activity)))).toMatchObject({ attemptId: 'attempt-2' })
+  expect(sessionTaskRunPatch({ ...stopped, ...next! }, { run: initial() }, 11)).toBeUndefined()
+  expect(sessionTaskRunPatch(stopped, { run: { ...initial(), status: 'running', version: 4 } }, 11)).toBeUndefined()
+  expect(sessionTaskRunPatch(stopped, { run: { ...resumed(), version: 3 } }, 11)).toBeUndefined()
+  expect(sessionTaskRunPatch(stopped, { run: { ...resumed(), attemptId: undefined } }, 11)).toBeUndefined()
+  const legacy = { ...stopped, activity: { ...stopped.activity!, attemptId: undefined } }
+  expect(sessionTaskRunPatch(legacy, { run: resumed() }, 11)?.status).toBe('running')
+})
+
+test('same-run idle discovery recognizes a new attempt even if it completed between probes', () => {
+  expect(idleRootChanged('task', initial(), resumed())).toBe(true)
+  expect(idleRootChanged('task', initial(), { ...resumed(), status: 'succeeded', version: 5 })).toBe(true)
+  expect(idleRootChanged('task', initial(), { ...initial(), status: 'running', version: 4 })).toBe(false)
+  expect(idleRootChanged('task', resumed(), initial())).toBe(false)
+  expect(idleRootChanged('task', initial(), { ...resumed(), version: 3 })).toBe(false)
+  expect(idleRootChanged('task', initial(), { ...resumed(), userMessageId: 'foreign-user' })).toBe(false)
+  expect(idleRootChanged('task', initial(), { ...resumed(), seq: 2 })).toBe(false)
+})
+
+test('background polling discovers continuation from a stopped sidebar row', async () => {
+  let task: SessionStatusTask = { id: 'task', status: 'stopped', updatedAt: 3,
+    activity: sessionTaskActivityFromRun({ run: initial() }, 'task') }
+  const applied: string[] = []
+  await pollSessionTaskStatuses({ tasks: () => [task], revision: () => 0, shouldPoll: () => true,
+    isCurrent: () => true, request: async () => ({ run: resumed() }), discovery: createSessionStatusDiscovery(), now: () => 10,
+    apply: (id, status, activity, response) => { applied.push(id); task = { ...task, ...sessionTaskRunPatch(task, response, 10)!, status, activity } } })
+  expect(applied).toEqual(['task'])
+  expect(task).toMatchObject({ status: 'running', activity: { attemptId: 'attempt-2', version: 4 } })
+})
 
 test('continuation freezes only source authority, hashes child selection and rejects user replay or altered identities', () => {
   const frozen = freezeQueueRequest(scope, body(), 1, anchor())

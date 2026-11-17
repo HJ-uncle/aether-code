@@ -2,7 +2,8 @@
  * while completed older turns remain visible. Covers waiting, success, failure,
  * cancellation, early published deliveries, and restoration after reload.
  * Published files and their change-review summary coexist after settlement;
- * task lists remain visible only while their owning root is active. */
+ * task lists remain visible only while their owning root is active. Checks
+ * result separators at fractional display scales in both appearances. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -329,6 +330,89 @@ test.describe.serial('本轮成果只在运行结束后显示', () => {
     for (const code of ['U', 'M', 'D']) await expect(card(run).locator('[data-change-code="' + code + '"]')).toHaveText(code)
     await expect(card(run)).not.toContainText('临时.png')
     await expect(card(run).locator('.work-progress-panel__footer')).toHaveCount(0)
+  })
+
+  test('成果分隔线在不同缩放和主题下保持相同深浅', async ({}, info) => {
+    const original = changes[0], run = { ...current }
+    changes.splice(0, changes.length, ...['功能台账.xlsx', '使用手册.pdf', '项目说明.docx', '项目介绍.pptx'].map((name, index) => ({
+      ...original, id: `${original.id}-${index}`, path: `${workspaceRoot}/交付/2048-${name}`,
+      oldContent: null, newContent: null, oldHash: 'missing', newHash: 'a'.repeat(64), isNew: true, truncated: true
+    })))
+    await page.reload()
+    await card(run).getByRole('button', { name: '展开成果文件列表，共 4 个文件', exact: true }).click()
+    const rows = card(run).locator('.work-progress-panel__files > li')
+    await expect(rows).toHaveCount(4)
+    const originalZoom = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor())
+    const nativeScale = await page.evaluate(() => devicePixelRatio) / originalZoom
+    const originalAppearance = await page.locator('html').getAttribute('data-appearance')
+    try {
+      for (const appearance of ['light', 'dark'] as const) {
+        await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+        const settings = page.getByRole('dialog', { name: '设置', exact: true })
+        await settings.getByRole('tab', { name: '外观', exact: true }).click()
+        await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
+        await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+        await settings.getByRole('button', { name: '关闭', exact: true }).click()
+        await expect(settings).toHaveCount(0)
+        for (const scale of [1, 1.5, 2]) {
+          await app!.evaluate(({ BrowserWindow }, zoom) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(zoom), scale / nativeScale)
+          await expect.poll(() => page.evaluate(() => devicePixelRatio)).toBeCloseTo(scale, 5)
+          await card(run).scrollIntoViewIfNeeded()
+          await page.mouse.move(4, 4)
+          await page.evaluate(async () => { await document.fonts.ready; await new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))) })
+          const layout = await rows.evaluateAll(elements => elements.map(element => {
+            const rect = element.getBoundingClientRect(), style = getComputedStyle(element, '::before')
+            return { x: rect.left + rect.width / 2, y: rect.top, height: rect.height, content: style.content,
+              inset: parseFloat(style.left), border: parseFloat(style.borderTopWidth) }
+          }))
+          expect(layout[0].content).toBe('none')
+          for (const row of layout) expect(row.height).toBeCloseTo(49, 4)
+          const path = info.outputPath(`result-separators-${appearance}-${scale}.png`)
+          // Native capture avoids Playwright rescaling zoomed Electron pages to the launch DPR.
+          const dataUrl = await app!.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toDataURL())
+          const png = Buffer.from(dataUrl.split(',')[1], 'base64')
+          writeFileSync(path, png)
+          const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+          expect(png.readUInt32BE(16) / viewport.width).toBeCloseTo(scale, 2)
+          expect(png.readUInt32BE(20) / viewport.height).toBeCloseTo(scale, 2)
+          await info.attach(`${appearance} / ${scale}`, { path, contentType: 'image/png' })
+          const strengths = await app!.evaluate(({ nativeImage }, { dataUrl, layout, scale }) => {
+            const image = nativeImage.createFromDataURL(dataUrl), size = image.getSize(), pixels = image.toBitmap()
+            const shade = (x: number, y: number): number => {
+              const offset = (y * size.width + x) * 4
+              return (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3
+            }
+            return layout.slice(1).map(row => {
+              const x = Math.round(row.x * scale), y = Math.round(row.y * scale), background = shade(x, y - 5)
+              // Sample actual paint, since identical computed styles can still rasterize differently.
+              const contrast = Array.from({ length: 7 }, (_, offset) => Math.abs(shade(x, y + offset - 3) - background))
+              return { peak: Math.max(...contrast), total: contrast.reduce((sum, value) => sum + value, 0) }
+            })
+          }, { dataUrl, layout, scale })
+          await info.attach(`separator-pixels-${appearance}-${scale}`, { body: JSON.stringify({ layout, strengths }), contentType: 'application/json' })
+          for (const strength of strengths) expect(strength.peak).toBeGreaterThan(2)
+          for (const metric of ['peak', 'total'] as const) {
+            const values = strengths.map(strength => strength[metric])
+            expect(Math.max(...values) - Math.min(...values), `${appearance} / ${scale} / ${metric}`).toBeLessThanOrEqual(2)
+          }
+          for (const row of layout.slice(1)) {
+            expect(row.inset).toBe(38)
+            expect(row.border).toBeGreaterThan(0)
+            expect(row.border).toBeLessThanOrEqual(1)
+          }
+        }
+      }
+    } finally {
+      await app!.evaluate(({ BrowserWindow }, zoom) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(zoom), originalZoom)
+      if (await page.locator('html').getAttribute('data-appearance') !== originalAppearance) {
+        await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+        const settings = page.getByRole('dialog', { name: '设置', exact: true })
+        await settings.getByRole('tab', { name: '外观', exact: true }).click()
+        await settings.getByRole('radio', { name: originalAppearance === 'dark' ? '深色' : '浅色', exact: true }).click()
+        await settings.getByRole('button', { name: '关闭', exact: true }).click()
+        await expect(settings).toHaveCount(0)
+      }
+    }
   })
 
   test('仅有已发布交付物的一轮历史仍读取成果记录并显示摘要', async ({}, info) => {

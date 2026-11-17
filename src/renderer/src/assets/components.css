@@ -20,7 +20,7 @@
   box-sizing: border-box;
   border: 1.5px solid var(--border-strong);
   border-top-color: currentColor;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   color: var(--accent);
   animation: ui-spinner-rotate 0.8s linear infinite;
   vertical-align: middle;
@@ -148,7 +148,7 @@
   pointer-events: none;
 }
 
-/* 右上角动作区：设置入口，后续用户头像等也在此扩展 */
+/* 右上角动作区：账号入口 */
 .menu-bar__spacer {
   flex: 1;
 }
@@ -740,7 +740,7 @@
 .search-view__hit-text mark {
   background: color-mix(in srgb, var(--warn) 28%, transparent);
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--radius-mark);
 }
 
 /* Monaco 内的匹配片段高亮（搜索结果点击跳转后的装饰） */
@@ -944,7 +944,7 @@
   align-self: center;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 .problems-view__dot.is-error {
@@ -1040,7 +1040,7 @@
   margin-top: 4px;
   padding: 3px 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--bg-elevated);
   color: var(--fg);
   font-size: 12px;
@@ -1442,7 +1442,7 @@
 .editor-tab__status {
   flex: 0 0 auto;
   padding: 1px 3px;
-  border-radius: 3px;
+  border-radius: var(--radius);
   font-size: 10px;
   font-weight: 700;
   line-height: 1.1;
@@ -1611,7 +1611,7 @@
 .status-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   flex: 0 0 auto;
   background: var(--fg-faint);
 }
@@ -1659,7 +1659,7 @@
   transform: translateX(-50%);
   z-index: 20;
   padding: 6px 14px;
-  border-radius: var(--radius-lg, 8px);
+  border-radius: var(--radius);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-card);
@@ -1774,7 +1774,7 @@
   gap: 4px;
   padding: 3px 9px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   color: var(--fg-muted);
   white-space: nowrap;
@@ -1853,7 +1853,7 @@
   height: 8px;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--fg-faint);
   opacity: 0.45;
   cursor: pointer;
@@ -1932,7 +1932,7 @@
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--fg-faint);
 }
 .chat__nav-item-text {
@@ -1979,7 +1979,7 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--material-bg, var(--bg-surface));
   border: 1px solid var(--material-border, var(--border));
   color: var(--fg);
@@ -2379,7 +2379,7 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--fg-muted);
   opacity: 0.5;
 }
@@ -2446,7 +2446,7 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 .logline__dot--think {
@@ -2662,7 +2662,7 @@
 
 .md a {
   color: var(--link-fg);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-mark);
   overflow-wrap: anywhere;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
@@ -2702,7 +2702,7 @@
 /* 行内代码 */
 .md-inline-code {
   padding: 0.1em 0.35em;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-mark);
   background: var(--bg-inset);
   font-family: var(--font-mono);
   font-size: 0.86em;
@@ -3011,7 +3011,7 @@
 .usage-detail__bar {
   flex: 0 0 3px;
   height: 11px;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
 }
 
 .usage-detail__bar--input {
@@ -3768,7 +3768,7 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--ok);
   margin-top: 4px;
 }
@@ -3874,7 +3874,7 @@
 .attach-chip__thumb {
   width: 18px;
   height: 18px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-mark);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -4250,7 +4250,7 @@
   flex: 0 0 auto;
   width: 12px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--radius-mark);
   background: var(--fg-muted);
   clip-path: polygon(0 25%, 35% 25%, 45% 10%, 100% 10%, 100% 100%, 0 100%);
 }
@@ -4379,7 +4379,7 @@
   height: 28px;
   flex: 0 0 auto;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent);
   color: var(--accent-fg);
   cursor: pointer;
@@ -4480,7 +4480,7 @@
   width: 18px;
   height: 18px;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--bg-active);
   color: var(--fg-muted);
   cursor: pointer;
@@ -4544,7 +4544,7 @@
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   cursor: zoom-in;
   overflow: hidden;
@@ -4553,7 +4553,7 @@
 .attach-chip--image .attach-chip__thumb {
   width: 32px;
   height: 32px;
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 
 /* 可点击查看的附件 chip（文本类）：整块可点 */
@@ -4793,7 +4793,7 @@
   height: var(--control-h);
   padding: 0 9px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-muted);
   font-size: 11px;
@@ -5324,7 +5324,7 @@
   flex: none;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   border: 1.5px solid var(--fg-faint);
   position: relative;
   transition:
@@ -5341,7 +5341,7 @@
   content: '';
   position: absolute;
   inset: 3.5px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent-fg);
 }
 
@@ -5368,7 +5368,7 @@
   display: block;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent-fg);
   box-shadow: var(--shadow-control);
   transition: transform 0.2s ease;
@@ -5587,7 +5587,7 @@ textarea.field__input {
   height: 32px;
   padding: 0;
   border: 2px solid transparent;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   transition: border-color 120ms ease;
 }
 
@@ -5602,7 +5602,7 @@ textarea.field__input {
 .accent-swatch__dot {
   width: 20px;
   height: 20px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   /* 浅色强调色（橙/绿）在白底上边缘发虚，加一圈内描边定形 */
   box-shadow: var(--shadow-inset);
 }
@@ -5706,7 +5706,7 @@ textarea.field__input {
   flex: 0 0 auto;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--bg-input);
   color: var(--fg-muted);
   font-size: 11px;
@@ -6044,7 +6044,7 @@ textarea.field__input {
   padding: 0 var(--space-2);
   border: 1px solid var(--border-strong);
   /* 胶囊形：半高，用最大圆角而非碎值 */
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated);
   color: var(--fg-muted);
   font-size: 11px;
@@ -6188,7 +6188,7 @@ select.field__input {
 /* 树内筛选命中片段的高亮（对齐 wuzu-client 的 tree-match） */
 .tree-match {
   padding: 0 1px;
-  border-radius: 2px;
+  border-radius: var(--radius-mark);
   background: color-mix(in srgb, var(--accent) 42%, transparent);
   color: var(--fg-strong);
 }
@@ -6400,7 +6400,7 @@ select.field__input {
   flex: 0 0 auto;
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--radius-mark);
   background: var(--fg-faint);
 }
 
@@ -6409,7 +6409,7 @@ select.field__input {
 .tree-row__icon--dir {
   width: 14px;
   height: 12px;
-  border-radius: 2px;
+  border-radius: var(--radius-mark);
   background: var(--fg-muted);
   clip-path: polygon(0 25%, 35% 25%, 45% 10%, 100% 10%, 100% 100%, 0 100%);
   transition: background-color 0.12s ease;
@@ -7213,7 +7213,7 @@ select.field__input {
 .pending-card__tab {
   flex: none;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-surface);
   border: 1px solid var(--border);
   font-size: 11px;
@@ -7289,12 +7289,12 @@ select.field__input {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border-strong);
-  border-radius: 3px;
+  border-radius: var(--radius-check);
   color: var(--accent);
 }
 
 .pending-card__choice-box--radio {
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 .pending-card__choice--on .pending-card__choice-box {
@@ -7500,7 +7500,7 @@ select.field__input {
 
 .think-picker__mark {
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--bg-input);
   color: var(--fg-muted);
   font-size: 10px;
@@ -7594,7 +7594,7 @@ select.field__input {
   flex: 0 0 auto;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 /* 二级菜单：分组入口右侧的展开箭头 */
@@ -7733,7 +7733,7 @@ select.field__input {
   height: 18px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
@@ -7837,7 +7837,7 @@ select.field__input {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--fg);
   text-align: left;
@@ -7924,7 +7924,7 @@ select.field__input {
   min-width: 12px;
   height: 12px;
   padding: 0 3px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--accent-fg);
   font-size: 9px;
@@ -7952,7 +7952,7 @@ select.field__input {
   width: 8px;
   height: 8px;
   margin-top: 4px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 .history-view__main {
@@ -7995,7 +7995,7 @@ select.field__input {
   flex: none;
   width: 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 .history-tag-options > button > svg {
   margin-left: auto;
@@ -8010,7 +8010,7 @@ select.field__input {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-elevated);
   color: var(--fg-strong);
   font-size: 13px;
@@ -8091,7 +8091,7 @@ select.field__input {
   min-width: 14px;
   height: 14px;
   padding: 0 2px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 9px;
   line-height: 14px;
   text-align: center;
@@ -8188,7 +8188,7 @@ select.field__input {
 }
 .git-panel__count {
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-active);
   color: var(--fg-muted);
   font-size: 10px;
@@ -8305,7 +8305,7 @@ select.field__input {
   height: 22px;
   margin-right: 4px;
   flex-shrink: 0;
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--fg-faint);
   opacity: 0;
 }
@@ -8503,7 +8503,7 @@ select.field__input {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 10px;
   line-height: 16px;
   border: 1px solid transparent;
@@ -8642,7 +8642,7 @@ select.field__input {
   display: inline-block;
   vertical-align: bottom;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-active);
   font-size: 10px;
   line-height: 15px;
@@ -8968,7 +8968,7 @@ select.field__input {
 }
 .git-hovercard__badge {
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 10px;
   line-height: 15px;
 }
@@ -9489,7 +9489,7 @@ select.field__input {
   top: 7px;
   bottom: 7px;
   width: 2px;
-  border-radius: 0 2px 2px 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .sidebar__header,
@@ -9662,7 +9662,7 @@ select.field__input {
   top: 8px;
   bottom: 8px;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--accent);
 }
 
@@ -9996,7 +9996,7 @@ select.field__input {
 }
 .git-clone__progress {
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-active);
   overflow: hidden;
 }

@@ -81,6 +81,7 @@ interface SelectProps {
   actions?: SelectAction[]
   /** Selection labels can be verbose in the menu while the trigger stays compact. */
   triggerLabel?: string
+  triggerIcon?: IconName
   /** Optional short label for compact toolbars; the menu keeps full option names. */
   compactTriggerLabel?: string
   hint?: string
@@ -112,6 +113,7 @@ export function Select({
   panelClassName,
   actions = [],
   triggerLabel,
+  triggerIcon,
   compactTriggerLabel,
   hint,
   onOpenChange,
@@ -262,6 +264,7 @@ export function Select({
           aria-invalid={ariaInvalid || undefined}
           onKeyDown={onKeyDown}
         >
+          {triggerIcon ? <Icon name={triggerIcon} size={15} className="select__trigger-icon" /> : null}
           <span className="select__value">{triggerLabel ?? current?.label ?? value}</span>
           {compactTriggerLabel ? <span className="select__compact-value" aria-hidden="true">{compactTriggerLabel}</span> : null}
           <Icon name="chevron" size={16} className="select__caret" />

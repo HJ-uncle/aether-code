@@ -13,13 +13,13 @@ const complete: RevertReport = { total: 2, reverted: 2, conflicts: 0, unavailabl
   results: changes.map(item => ({ id: item.id, path: item.path, status: 'reverted' })) }
 test.beforeEach(({}, info) => publishEngineSource({ mode: 'remote', baseUrl: `http://rollback/${info.title}`, phase: 'ready' }))
 
-function fixture(report = complete) {
+function fixture(report = complete, historyTruncated = report.conflicts === 0) {
   const calls: EngineRequestInput[] = []
   const request = async <T>(input: EngineRequestInput): Promise<T> => {
     calls.push(input)
     return (input.path === '/conversation/history' ? [{ ...user, conversationId: 'turn-1' }]
       : input.path === '/changes/revert-preview' ? { total: changes.length, changes }
-        : input.path === '/changes/revert-batch' ? report : {}) as T
+        : input.path === '/conversation/rollback' ? { ...report, historyTruncated, ...(historyTruncated ? { removedFrom: user.id } : {}) } : {}) as T
   }
   return { calls, request }
 }
@@ -27,6 +27,7 @@ function fixture(report = complete) {
 test('remote mode allows both reviewed rollback routes and rejects unrelated mutations', () => {
   expect(remoteRequestError('remote', 'POST', '/changes/revert-preview')).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/changes/revert-batch')).toBeNull()
+  expect(remoteRequestError('remote', 'POST', '/conversation/rollback')).toBeNull()
   expect(remoteRequestError('remote', 'POST', '/changes/revert-anything')).not.toBeNull()
 })
 
@@ -37,7 +38,7 @@ test('summary includes implicitly cleaned folders without counting them as files
   expect(revertSummary(report)).toBe('已撤回 2 个文件、2 个文件夹（3 处改动）')
 })
 
-test('one scope preview confirms command IDs and truncates only after all files succeed', async () => {
+test('one scope preview confirms command IDs and one atomic rollback owns file and history mutation', async () => {
   const { calls, request } = fixture()
   const source = getEngineSource(), before = sessionPreviewRevision(source, 'session', undefined)
   await revertConversationFrom(request, 'session', user, async preview => {
@@ -45,12 +46,40 @@ test('one scope preview confirms command IDs and truncates only after all files 
     expect(calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-preview'])
     return true
   })
-  expect(calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-preview', '/changes/revert-batch', '/conversation/truncate'])
-  expect(calls[2].body).toEqual({ sessionId: 'session', scope: 'all', fromTurnId: 'turn-1', reviewedCommandChangeIds: ['command'] })
-  expect(calls[3].body).toEqual({ sessionId: 'session', messageId: 'user' })
+  expect(calls.map(call => call.path)).toEqual(['/conversation/history', '/changes/revert-preview', '/conversation/rollback'])
+  expect(calls[2].body).toEqual({ sessionId: 'session', messageId: 'user', reviewedCommandChangeIds: ['command'], requestKey: expect.any(String) })
   expect(sessionPreviewRevision(source, 'session', undefined)).toBeGreaterThan(before)
   expect(sessionPreviewRevision(source, 'session', '/unmounted/file')).toBeGreaterThan(before)
   expect(sessionPreviewRevision(source, 'other-session', undefined)).toBe(0)
+})
+
+test('a lost rollback acknowledgement invalidates every preview and never repeats the mutation', async () => {
+  const { calls, request } = fixture()
+  const source = getEngineSource(), before = sessionPreviewRevision(source, 'lost', undefined)
+  await expect(revertConversationFrom(async input => {
+    const value = await request(input)
+    if (input.path === '/conversation/rollback') throw new Error('ACK lost after commit')
+    return value
+  }, 'lost', user, async () => true)).rejects.toThrow('ACK lost after commit')
+  expect(calls.filter(call => call.path === '/conversation/rollback')).toHaveLength(1)
+  expect(calls.some(call => call.path === '/conversation/truncate' || call.path === '/changes/revert-batch')).toBe(false)
+  expect(sessionPreviewRevision(source, 'lost', '/unmounted/file')).toBeGreaterThan(before)
+})
+
+test('file success without an exact history truncation receipt cannot report complete', async () => {
+  const { request } = fixture(complete, false)
+  await expect(revertConversationFrom(request, 'unconfirmed', user, async () => true)).rejects.toThrow('未确认对应对话已撤回')
+  expect(getRevertReport('unconfirmed')).toEqual(complete)
+})
+
+test('a new explicit confirmation gets a new rollback key after a prior attempt', async () => {
+  const { calls, request } = fixture()
+  await revertConversationFrom(request, 'session', user, async () => true)
+  await revertConversationFrom(request, 'session', user, async () => true)
+  const bodies = calls.filter(call => call.path === '/conversation/rollback').map(call => call.body as { requestKey: string })
+  expect(bodies).toHaveLength(2)
+  expect(bodies[0].requestKey).toMatch(/^[\da-f-]{36}$/)
+  expect(bodies[1].requestKey).not.toBe(bodies[0].requestKey)
 })
 
 test('cancel after scope preview performs no rollback or history mutation', async () => {

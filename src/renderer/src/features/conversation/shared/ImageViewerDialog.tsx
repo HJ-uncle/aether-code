@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Dialog } from '@renderer/ui/Dialog'
+import { getTopOverlayId } from '@renderer/ui/overlay'
 import { Icon } from '@renderer/ui/icons'
 import { OUTLINE_ICON_PATHS, OUTLINE_ICON_STROKE } from '@renderer/ui/outline-icons'
 import { toast } from '@renderer/core/toast'
@@ -84,6 +85,7 @@ export function ImageViewerDialog({ src, title, onClose, open = true, className 
   const textInput = useRef<HTMLTextAreaElement>(null)
   const fitted = useRef(false)
   const gesture = useRef<{ pointerId: number; start: Point; origin: Point; annotations: readonly ImageAnnotation[]; item?: ImageAnnotation } | null>(null)
+  const blankPress = useRef<{ pointerId: number; start: Point; moved: boolean; released: boolean } | null>(null)
   const natural = image?.src === src ? image.element : null
   const ready = Boolean(natural && !failure && !loadError)
   const dirty = hasUnexportedEdits(history)
@@ -99,7 +101,7 @@ export function ImageViewerDialog({ src, title, onClose, open = true, className 
   useEffect(() => {
     if (!open) return
     setFailure(''); setImage(null); setDraft(null); setTextEdit(null); setScale(1); setOffset({ x: 0, y: 0 }); fitted.current = false
-    gesture.current = null; setDragging(false)
+    gesture.current = null; blankPress.current = null; setDragging(false)
     if (!src) return
     let current = true
     const element = new Image()
@@ -108,6 +110,12 @@ export function ImageViewerDialog({ src, title, onClose, open = true, className 
     element.src = src
     return () => { current = false }
   }, [src, identity, open])
+
+  useEffect(() => {
+    const clearPress = (): void => { blankPress.current = null }
+    window.addEventListener('blur', clearPress)
+    return () => { clearPress(); window.removeEventListener('blur', clearPress) }
+  }, [open])
 
   const fit = useCallback((): void => {
     if (!natural || !stage.current) return
@@ -247,6 +255,31 @@ export function ImageViewerDialog({ src, title, onClose, open = true, className 
     finally { busyRef.current = false; setBusy(false) }
   }
   const close = (): void => { if (busyRef.current) return; if ([...histories.values()].some(hasUnexportedEdits) || textEdit?.text.trim()) setConfirmClose(true); else onClose() }
+  const blankPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    blankPress.current = null
+    const owner = event.currentTarget.closest<HTMLElement>('[data-overlay-id]')?.dataset.overlayId
+    // A click dismissing an open color/width menu belongs only to that menu.
+    if (event.target !== event.currentTarget || event.button !== 0 || !event.isPrimary || busyRef.current || textEdit || getTopOverlayId() !== owner) return
+    blankPress.current = { pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, moved: false, released: false }
+  }
+  const blankPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const press = blankPress.current
+    // Remember any drag, including one that returns to its starting point.
+    if (press?.pointerId === event.pointerId && Math.hypot(event.clientX - press.start.x, event.clientY - press.start.y) > 4) press.moved = true
+  }
+  const blankPointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    blankPointerMove(event)
+    const press = blankPress.current
+    if (!press || press.pointerId !== event.pointerId || event.button !== 0 || event.target !== event.currentTarget ||
+      document.elementFromPoint(event.clientX, event.clientY) !== event.currentTarget || press.moved) { blankPress.current = null; return }
+    press.released = true
+  }
+  const blankClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const press = blankPress.current
+    blankPress.current = null
+    // Wait for click so dismissal cannot send a trailing click to the app below.
+    if (event.target === event.currentTarget && event.button === 0 && press?.released && !press.moved) close()
+  }
   const navigate = (direction: 'previous' | 'next'): void => {
     if (!ready || busyRef.current || textEdit || confirmClose || gesture.current) return
     if (direction === 'previous' && canPrevious) onPrevious?.()
@@ -302,7 +335,10 @@ export function ImageViewerDialog({ src, title, onClose, open = true, className 
   }
   return <Dialog title={title} hideHeader className={`modal--image-preview modal--image-editor ${className}`} open={open} closeDisabled={busy} onClose={close}>
     <div className="image-editor" aria-busy={busy} onClick={event => event.stopPropagation()}>
-      <div ref={stage} className={`image-editor__stage${dragging ? ' is-dragging' : ''}`} tabIndex={0} aria-label="图片画布" onDoubleClick={() => { if (tool === 'move') fit() }}>
+      <div ref={stage} className={`image-editor__stage${dragging ? ' is-dragging' : ''}`} tabIndex={0} aria-label="图片画布" onDoubleClick={() => { if (tool === 'move') fit() }}
+        onPointerDown={blankPointerDown} onPointerMove={blankPointerMove} onPointerUp={blankPointerUp} onClick={blankClick}
+        onPointerLeave={() => { blankPress.current = null }} onPointerCancel={() => { blankPress.current = null }}
+        onLostPointerCapture={() => { if (!blankPress.current?.released) blankPress.current = null }}>
         {natural ? <div className="image-editor__surface" style={{ width: natural.naturalWidth, height: natural.naturalHeight,
           transform: `translate(${offset.x}px, ${offset.y}px) rotate(${edit.rotation}deg) scale(${scale})` }}>
           <img src={src!} alt={title} draggable={false} />

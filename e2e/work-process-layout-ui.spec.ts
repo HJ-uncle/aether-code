@@ -1,5 +1,6 @@
 /** Real Electron + authenticated history/SSE: each prose-delimited tool batch
- * folds only above three operations and scrolls independently when opened.
+ * folds above three displayed activities (including a command's file receipts)
+ * and scrolls independently when opened.
  * Reasoning visibility is a local session preference; navigation and final
  * answers remain usable with folded batches. Build first. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -7,30 +8,40 @@ import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
-import type { ChatSsePayload } from '../src/shared/ipc'
+import type { ChatSsePayload, EngineFileChange } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'process-bulk-changes')
 const token = 'process-layout-token', model = 'process-layout-model', now = Date.now() - 60_000
 const settled = 'work-process-layout-settled', live = 'work-process-layout-live', paged = 'work-process-layout-paged', threshold = 'work-process-layout-threshold', thinkingOnly = 'work-process-layout-thinking-only', workspaceRoot = '/remote/process-layout'
 const titles = new Map([[settled, '核对完整文档处理过程'], [live, '继续检查文档处理过程'], [paged, '核对长过程的分页阅读'], [threshold, '核对三步与四步的边界'], [thinkingOnly, '只含思考和最终回复']])
+const bulk = 'work-process-layout-bulk-live'
+titles.set(bulk, '核对单次命令的批量文件记录')
 const finalText = 'PROCESS_LAYOUT_FINAL：文档检查已完成。\n\n所有页面均已核对，正文只保留交付结论。'
 const noteText = 'PROCESS_LAYOUT_NOTE：正在核对页面尺寸和内容层次，下一步检查实际画面。'
 const errors: string[] = [], mutations: string[] = [], streams = new Map<string, ServerResponse>()
 const projections: ChatSsePayload[] = []
+const bulkProjections: ChatSsePayload[] = []
+const isLive = (id: string): boolean => id === live || id === bulk
 let app: ElectronApplication | undefined, page: Page, fixture = '', imageDataUrl = '', source = ''
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 const toolId = (sessionId: string, index: number): string => `${sessionId}-step-${index.toString().padStart(2, '0')}`
 const ownedRun = (id: string): RootRun | undefined => titles.has(id) ? {
   schemaVersion: 1, runId: `${id}-root`, sessionId: id, turnId: `${id}-turn`, userMessageId: `${id}-user`,
-  assistantMessageId: `${id}-answer`, seq: id === live ? 2 : 1, version: id === live ? 1 : 2, status: id === live ? 'running' : 'succeeded',
+  assistantMessageId: `${id}-answer`, seq: id === live ? 2 : 1, version: isLive(id) ? 1 : 2, status: isLive(id) ? 'running' : 'succeeded',
   pending: [], modelId: model, workspacePaths: [workspaceRoot], createdAt: now, updatedAt: now + 38_000,
-  startedAt: now, ...(id === live ? {} : { finishedAt: now + 38_000 })
+  startedAt: now, ...(isLive(id) ? {} : { finishedAt: now + 38_000 })
 } : undefined
 const previousRun = (): RootRun => ({ ...ownedRun(live)!, runId: `${live}-previous-root`, turnId: `${live}-previous-turn`,
   userMessageId: `${live}-previous-user`, assistantMessageId: `${live}-previous-answer`, seq: 1, version: 2,
   status: 'succeeded', createdAt: now - 600_000, startedAt: now - 600_000, updatedAt: now - 570_000, finishedAt: now - 570_000 })
+const bulkChanges: EngineFileChange[] = Array.from({ length: 150 }, (_, index) => ({
+  id: `bulk-change-${index}`, sessionId: bulk, runId: `${bulk}-root`, turnId: `${bulk}-turn`,
+  toolCallId: toolId(bulk, 0), path: `${workspaceRoot}/runtime/package-${index}/LICENSE`,
+  kind: 'write', oldContent: null, newContent: `Package ${index} license\n`, isNew: true,
+  oldHash: 'missing', status: 'pending', truncated: false, createdAt: now + 3
+}))
 
 function history(id: string): EngineHistoryRow[] {
   const run = ownedRun(id)
@@ -40,6 +51,11 @@ function history(id: string): EngineHistoryRow[] {
     id: `${id}-${suffix}`, role, content, createdAt: now + offset, conversationId: run.turnId, metadata
   })
   const rows: EngineHistoryRow[] = []
+  if (id === bulk) return [row('user', 'user', titles.get(id), 0),
+    { ...row('call-0', 'assistant', '', 2), toolCall: { id: toolId(id, 0), name: 'execute_cmd', args: { command: 'npm install' } } },
+    { ...row('result-0', 'tool', '已安装运行依赖。', 3), toolCallId: toolId(id, 0), success: true,
+      metadata: { ...metadata, success: true, changes: bulkChanges } }
+  ]
   if (id === live) {
     const previous = previousRun(), earlier = { rootRunId: previous.runId, turnId: previous.turnId }
     rows.push({ id: previous.userMessageId, role: 'user', content: '先保留完整的既有审阅记录。', createdAt: previous.createdAt,
@@ -104,7 +120,7 @@ const server = createServer((request, response) => { void (async () => {
   }
   if (path === '/api/v1/chat/stream') {
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
-    if (id === live) {
+    if (isLive(id)) {
       streams.set(id, response); response.flushHeaders()
       response.once('close', () => { if (streams.get(id) === response) streams.delete(id) })
     } else response.end('data: [DONE]\n\n')
@@ -114,10 +130,10 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/meta' ? { version: '2.0.0', buildId: `sha256:${'9'.repeat(64)}`, protocolVersion: 1,
       toolProfiles: ['general', 'code'], subagentSchemaVersion: 1, instanceId: 'process-layout-fixture' }
     : path === '/api/v1/models' ? [{ id: model, modelId: model, provider: 'openai', displayName: '过程布局测试模型', isEnabled: true, capabilities: { toolCalling: true } }]
-    : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId: id, source: id === live ? 'live' : 'persisted',
-      eventId: id === live ? `${run!.runId}:${projections.length}` : null, finished: id !== live, history: rows,
-      projection: id === live ? projections : [], run, runs: run ? id === live ? [previousRun(), run] : [run] : [], subagentRuns: [], todos: [], changes: [], commandJobs: [] }
-    : path === '/api/v1/chat/status' ? { running: id === live, finished: id !== live, run, lastEventId: id === live ? `${run!.runId}:${projections.length}` : null }
+    : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId: id, source: isLive(id) ? 'live' : 'persisted',
+      eventId: isLive(id) ? `${run!.runId}:${id === bulk ? bulkProjections.length : projections.length}` : null, finished: !isLive(id), history: rows,
+      projection: id === bulk ? bulkProjections : id === live ? projections : [], run, runs: run ? id === live ? [previousRun(), run] : [run] : [], subagentRuns: [], todos: [], changes: id === bulk ? bulkChanges : [], commandJobs: [] }
+    : path === '/api/v1/chat/status' ? { running: isLive(id), finished: !isLive(id), run, lastEventId: isLive(id) ? `${run!.runId}:${id === bulk ? bulkProjections.length : projections.length}` : null }
     : path === '/api/v1/chat/runs' ? { runs: run ? id === live ? [previousRun(), run] : [run] : [] }
     : path === '/api/v1/conversation/history' ? rows
     : path === '/api/v1/conversation/sessions' ? [...titles].map(([sessionId, title]) => ({ sessionId, title, lastAt: now, messageCount: history(sessionId).length }))
@@ -346,6 +362,10 @@ test.describe.serial('Work 展开过程阅读', () => {
         id: row.toolCallId, name: names.get(row.toolCallId), output: row.content, success: row.success, finishedAt: row.createdAt
       } })
     }
+    bulkProjections.push({ userMessage: history(bulk)[0] },
+      { toolStart: { id: toolId(bulk, 0), name: 'execute_cmd', args: { command: 'npm install' } } },
+      { toolEnd: { id: toolId(bulk, 0), name: 'execute_cmd', output: '已安装运行依赖。', success: true,
+        finishedAt: now + 3, metadata: { changes: bulkChanges } } })
     await page.evaluate(({ key, entries, selected, model, timestamp }) => {
       localStorage.setItem(key, JSON.stringify({ tasks: entries.map(([id, title]) => ({ id, title, status: id.endsWith('-live') ? 'running' : 'done',
         draft: '', mentions: [], createdAt: timestamp, updatedAt: timestamp, workspacePath: '/remote/process-layout', modelId: model, attachments: [], sources: [] })), activeTaskId: selected }))
@@ -450,7 +470,9 @@ test.describe.serial('Work 展开过程阅读', () => {
       await message().getByRole('button', { name: '查看最新步骤', exact: true }).click()
       await expectContainedReceipt(receipt(settled, 37))
       const lastReceipt = receipt(settled, 37).locator('button.logline')
-      await lastReceipt.click(); await expect(lastReceipt).toHaveAttribute('aria-expanded', 'true')
+      // The newest receipt is readable immediately; older receipts stay compact.
+      if (await lastReceipt.getAttribute('aria-expanded') !== 'true') await lastReceipt.click()
+      await expect(lastReceipt).toHaveAttribute('aria-expanded', 'true')
       await expect(receipt(settled, 37)).toContainText('PROCESS_RECEIPT_37')
       await lastReceipt.click(); await expect(lastReceipt).toHaveAttribute('aria-expanded', 'false')
       const preview = receipt(settled, 35), previewButton = preview.locator('button.logline')
@@ -480,9 +502,10 @@ test.describe.serial('Work 展开过程阅读', () => {
     await selectTask(paged)
     await toggle().click(); await expectProcessHeaderLayout(true)
     const section = sectionWithCount(105), reader = section.locator('.work-process-section__viewport')
-    await expect(section.locator('.work-process-section__toggle')).toHaveAttribute('aria-expanded', 'false')
-    await expect(reader).toHaveCount(0)
+    await expect(section.locator('.work-process-section__toggle')).toHaveAttribute('aria-expanded', 'true')
+    await expect(reader).toBeVisible()
     const pages = section.getByRole('navigation', { name: '活动分页', exact: true })
+    await expect(pages).toContainText('101–105 / 105')
     const first = message().getByRole('button', { name: '查看最早步骤', exact: true })
     const latest = message().getByRole('button', { name: '查看最新步骤', exact: true })
     for (const [button, label] of [[first, '查看最早步骤'], [latest, '查看最新步骤']] as const) {
@@ -506,7 +529,8 @@ test.describe.serial('Work 展开过程阅读', () => {
     await latest.click(); await expect(pages).toContainText('101–105 / 105')
     await waitForProcessLayout(); await expectContainedReceipt(receipt(paged, 104))
     const longReceipt = receipt(paged, 104).locator('button.logline')
-    await longReceipt.click(); await expect(longReceipt).toHaveAttribute('aria-expanded', 'true')
+    if (await longReceipt.getAttribute('aria-expanded') !== 'true') await longReceipt.click()
+    await expect(longReceipt).toHaveAttribute('aria-expanded', 'true')
     await waitForProcessLayout()
     expect(await reader.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100)
     await reader.evaluate(element => { element.scrollTop = element.scrollHeight })
@@ -525,13 +549,14 @@ test.describe.serial('Work 展开过程阅读', () => {
     await toggle().click(); await expectProcessHeaderLayout(false)
   })
 
-  test('运行中的长组默认折叠，活动定位展开目标且不覆盖手动收起', async ({}, info) => {
+  test('运行中的最新阶段默认展开，活动定位展开目标且不覆盖手动收起', async ({}, info) => {
     await selectTask(live)
     await expect(toggle()).toHaveAttribute('aria-expanded', 'true')
     await expectProcessHeaderLayout(true, false)
     await expect(viewport().locator('.work-message__process-note')).toHaveText([0, 13, 33].map(index => `${noteText}（阶段 ${index + 1}）`))
-    await expect(sectionWithCount(5).locator('.work-process-section__toggle')).toHaveAttribute('aria-expanded', 'false')
-    await expect(receipt(live, 37)).toHaveCount(0)
+    await expect(sectionWithCount(5).locator('.work-process-section__toggle')).toHaveAttribute('aria-expanded', 'true')
+    await expect(receipt(live, 37)).toHaveCount(1)
+    await expect(receipt(live, 37).locator('button.logline')).toHaveAttribute('aria-expanded', 'true')
     await expect.poll(() => streams.has(live)).toBe(true)
     const outer = conversation().locator('.work-conversation__scroll'), feedback = conversation().locator('.work-turn-feedback')
     await outer.evaluate(element => { element.scrollTop = element.scrollHeight })
@@ -582,6 +607,57 @@ test.describe.serial('Work 展开过程阅读', () => {
     await expect(previewButton).toHaveAttribute('aria-expanded', 'false')
     const path = info.outputPath('work-process-focused-running.png')
     await page.screenshot({ path, animations: 'disabled' }); await info.attach('运行中的过程阅读', { path, contentType: 'image/png' })
+  })
+
+  test('单次命令的 150 条文件记录进入工具列表，新正文自动收起并可完整重开', async ({}, info) => {
+    await selectTask(bulk)
+    await expect(toggle()).toHaveAttribute('aria-expanded', 'true')
+    await expect(toggle()).toContainText('1 步')
+    const group = viewport().locator(`[data-process-section="tool:${toolId(bulk, 0)}"]`)
+    const button = group.locator(':scope > .work-process-section__toggle')
+    const files = group.locator('.work-file-change-row')
+    await expect(group).toHaveAttribute('data-tool-count', '1')
+    await expect(button).toHaveAttribute('aria-expanded', 'true')
+    await expect(button).toContainText('工具调用 1')
+    await expect(button).toContainText('文件变更 150')
+    await expect(files).toHaveCount(150)
+    const naturalFlow = await viewport().evaluate(element => ({ maxHeight: getComputedStyle(element).maxHeight,
+      overflowY: getComputedStyle(element).overflowY }))
+    expect(naturalFlow).toEqual({ maxHeight: 'none', overflowY: 'visible' })
+    await expect.poll(() => streams.has(bulk)).toBe(true)
+    const publish = (payload: ChatSsePayload): void => {
+      bulkProjections.push(payload)
+      streams.get(bulk)!.write(`id: ${ownedRun(bulk)!.runId}:${bulkProjections.length}\ndata: ${JSON.stringify(payload)}\n\n`)
+    }
+
+    publish({ content: 'BULK_NEXT_NOTE：缓存文件已生成，继续检查运行环境。' })
+    await expect(viewport().locator('.work-message__process-note')).toContainText('BULK_NEXT_NOTE')
+    await expect(button).toHaveAttribute('aria-expanded', 'false')
+    await expect(files).toHaveCount(0)
+    publish({ toolStart: { id: toolId(bulk, 1), name: 'execute_cmd', args: { command: 'mh doctor' } } })
+    await expect(receipt(bulk, 1).locator('button.logline')).toHaveAttribute('aria-expanded', 'true')
+    await expect(button).toHaveAttribute('aria-expanded', 'false')
+
+    await setSectionOpen(group, true)
+    await expect(files).toHaveCount(150)
+    expect(await files.evaluateAll(elements => elements.map(element => element.getAttribute('data-change-id'))))
+      .toEqual(bulkChanges.map(change => change.id))
+    const reader = group.getByRole('region', { name: '阶段过程', exact: true })
+    const first = group.locator('[data-change-id="bulk-change-0"]'), last = group.locator('[data-change-id="bulk-change-149"]')
+    await reader.evaluate(element => { element.dispatchEvent(new Event('work-process-first')) })
+    await expect.poll(() => reader.evaluate(element => element.scrollTop)).toBeLessThanOrEqual(1)
+    await expectContainedReceipt(first); await expect(first).toBeEnabled()
+    await reader.evaluate(element => { element.dispatchEvent(new Event('work-process-latest')) })
+    await expect.poll(() => reader.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(1)
+    await expectContainedReceipt(last); await expect(last).toBeEnabled()
+    publish({ toolEnd: { id: toolId(bulk, 1), name: 'execute_cmd', output: 'Environment healthy', success: true } })
+    publish({ content: 'BULK_FINAL_NOTE：环境检查完成。' })
+    await expect(viewport()).toContainText('BULK_FINAL_NOTE')
+    await expect(button).toHaveAttribute('aria-expanded', 'true')
+    await expect(group).toHaveAttribute('data-tool-count', '1')
+    await expect(button).toContainText('工具调用 1')
+    const path = info.outputPath('bulk-file-receipts.png')
+    await page.screenshot({ path, animations: 'disabled' }); await info.attach('批量文件回执', { path, contentType: 'image/png' })
   })
 
   test('三步直接显示、四步折叠；思考偏好默认隐藏且按会话保留', async ({}, info) => {

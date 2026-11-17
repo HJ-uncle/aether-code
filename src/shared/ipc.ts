@@ -355,7 +355,7 @@ export interface EngineSnapshot {
   buildId?: string | null
   protocolVersion?: number | null
   instanceId?: string | null
-  /** Internal identity is part of the connection boundary, never a credential. */
+  /** Account ID or opaque legacy-credential fingerprint; cache boundary only, never a credential. */
   accountId?: string | null
   /** 数据目录（SQLite 文件路径） */
   dataDir: string | null
@@ -507,6 +507,8 @@ export interface RemoteAuthStatus {
   configured: boolean
   type: RemoteAuthCredential['type'] | null
   source: 'stored' | 'environment' | 'none'
+  /** Saved advanced credentials are not necessarily the active authentication method. */
+  effective?: 'advanced' | 'account' | 'signed-out' | 'none'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

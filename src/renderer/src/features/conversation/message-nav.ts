@@ -2,7 +2,6 @@ import type { ChatMessage } from '@renderer/core/engine/useChat'
 import type { DisplayHistoryTurn } from '@renderer/core/engine/display-history'
 import type { NavTurn } from './shared/MessageNavRail'
 import { userMessageText } from './shared/mention-context'
-import { SESSION_MESSAGE_PAGE_SIZE } from '../sessions/view-performance'
 import { isRootFollowupFor } from '@renderer/core/engine/root-followup-message'
 
 export interface SessionNavigationGroup {
@@ -43,19 +42,4 @@ export function sessionNavigationTurns(groups: readonly SessionNavigationGroup[]
       thinking: '', tools: [], items: [], status: 'done' as const,
       createdAt: turn.createdAt ?? 0, conversationId: turn.conversationId }
   }), ...loaded.filter(turn => !indexed.has(turn.message.id))]
-}
-
-/** Keep the requested turn mounted without expanding the entire transcript. */
-export function sessionNavigationTarget(
-  messages: readonly { id: string }[],
-  groups: readonly SessionNavigationGroup[],
-  turnId: string
-): { turnId: string; firstId: string } | null {
-  const group = groups.find(item => item.id === turnId)
-  if (!group || !group.messages.some(message => message.role === 'user') ||
-    group.startIndex < 0 || group.startIndex >= messages.length) return null
-  // Near the end, retain the latest page so stepping to the last turn does not
-  // leave an unnecessarily small window or hide its preceding question.
-  const first = Math.min(group.startIndex, Math.max(0, messages.length - SESSION_MESSAGE_PAGE_SIZE))
-  return { turnId, firstId: messages[first].id }
 }

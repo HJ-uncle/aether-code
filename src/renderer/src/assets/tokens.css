@@ -18,7 +18,7 @@
  * ── 视觉规范 ──
  * 对齐 Apple Human Interface Guidelines：
  *   - 分层用「系统灰阶」表达深度（基底层 → 内容层 → 抬升层），而非靠描边堆叠
- *   - 圆角偏大且分级（控件 6px / 容器 8px / 卡片 10px / 浮层 12px）
+ *   - 矩形表面统一使用对话输入框的 12px 圆角，形状控件单独定义
  *   - 描边只做「最低限度的分离」，主线是灰阶与留白
  *   - 浮层与标题栏用「磨砂玻璃」材质，模拟 macOS 的 NSVisualEffectView
  *
@@ -42,19 +42,23 @@
     'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
 
-  /* 圆角分级（HIG：控件小而圆、容器大而圆） */
-  --radius-sm: 4px;
-  --radius: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
-  /* 浮层/弹窗专用：比容器更圆，是 macOS 面板的标志性特征 */
-  --radius-panel: 12px;
+  /* The composer is the shared curvature reference for rectangular surfaces.
+     Keep the existing aliases so lazy-loaded pages and controls cannot drift. */
+  --radius: 12px;
+  --radius-sm: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+  --radius-panel: var(--radius);
+  /* Shape cues, not container frames: checkboxes stay distinct from radios;
+     tiny highlights, folder glyphs and chart marks keep their geometry. */
+  --radius-check: 4px;
+  --radius-mark: 2px;
   --radius-pill: 999px;
   --radius-round: 50%;
 
   /* Menus share inset rows without changing form controls or dialog content. */
   --menu-padding: 6px;
-  --menu-row-radius: 8px;
+  --menu-row-radius: var(--radius);
   --menu-row-height: 32px;
   --menu-row-padding: 6px 10px;
   --menu-row-gap: 2px;
@@ -68,7 +72,7 @@
   --control-h-lg: 34px;
   /* Text inputs share their material across forms and compound search fields;
      compact toolbars and multiline editors keep their own layout dimensions. */
-  --input-radius: var(--radius-lg);
+  --input-radius: var(--radius);
   --input-height: 32px;
   --input-font-size: 13px;
   --input-bg: var(--bg-input);
@@ -84,6 +88,7 @@
 
   /* 所有工作区横向 chrome 使用同一条基线，避免三列标题/工具条错位。 */
   --chrome-h: 36px;
+  --chrome-h-compact: 48px;
   /* 横向列表优先滚动，给标题和操作文字保留可读空间。 */
   --horizontal-tab-min-width: 160px;
   --horizontal-option-min-width: 80px;

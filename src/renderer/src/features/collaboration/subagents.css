@@ -112,7 +112,7 @@
 .work-subagents__row-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 160px; color: var(--fg-muted); font-size: 11px; line-height: 16px; text-align: end; }
 .work-subagents__row-chevron { display: flex; align-self: center; color: var(--fg-faint); }
 .work-subagents__row-status { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; line-height: 18px; white-space: nowrap; }
-.work-subagents__row-status::before { content: ''; width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
+.work-subagents__row-status::before { content: ''; width: 5px; height: 5px; flex: 0 0 auto; border-radius: var(--radius-round); background: currentColor; }
 .work-subagents__row-status--active { color: var(--accent); }
 .work-subagents__row-status--error { color: var(--danger-fg); }
 .work-subagents__row-status--complete { color: var(--fg-muted); }

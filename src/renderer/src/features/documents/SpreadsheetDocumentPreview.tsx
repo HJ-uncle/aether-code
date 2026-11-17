@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type JSX, type UIEvent } from 'react'
 import { spreadsheetColumn } from './document-kind'
-import { PreviewCapabilityNotice, PreviewMessage } from './preview-controls'
+import { PreviewMessage } from './preview-controls'
 import type { SheetLayout } from './spreadsheet-preview-contract'
 import { bufferedSpreadsheetRange, buildSpreadsheetAxis, spreadsheetAxisIndex } from './spreadsheet-page'
 import { acquireSpreadsheetSession, getSpreadsheetSession, subscribeSpreadsheetSessions } from './spreadsheet-preview-session'
@@ -118,7 +118,6 @@ export default function SpreadsheetDocumentPreview({ data, sessionKey, onRetry }
   if (!session || !selected) return <PreviewMessage />
   const rangeError = session.getRangeError(sheet, requestRow, requestColumn, requestEndRow, requestEndColumn)
   return <>
-    <PreviewCapabilityNotice kind="xlsx" />
     <div className={`document-preview__body document-preview__body--sheet${focusedChart ? ' document-preview__body--chart' : ''}`} ref={body} onScroll={onScroll}
       id={panelId} role="tabpanel" aria-labelledby={`${panelId}-tab-${sheet}`} data-document-sheet={sheet} data-document-row-start={visibleRow + 1} data-document-row-count={selected.rows}>
       {focusedChart ? <div className="document-preview__chart-focus" data-focused-chart={focusedChart.id}>

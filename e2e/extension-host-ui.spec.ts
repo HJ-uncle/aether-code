@@ -558,9 +558,10 @@ test.describe.serial('外部插件宿主真实贡献与生命周期', () => {
     await expect(activityPanel()).toContainText(noticeTitle(second))
     await expect(activityPanel()).not.toContainText(noticeTitle(first))
     await activityPanel().getByRole('button', { name: '全部标为已读', exact: true }).click()
-    await expect(activity()).toHaveAccessibleName('消息')
-    await expect(activityPanel().locator('.service-tray__row')).toHaveCount(0)
-    await closeActivity()
+    // Empty activity is progressively disclosed: once every notice is read,
+    // the status-bar entry and its now-empty popover leave the chrome.
+    await expect(activity()).toHaveCount(0)
+    await expect(activityPanel()).toHaveCount(0)
 
     const storageKey = sessionStorageKey('aether.activity-history.v1', engineStorageKey({ mode: 'remote', baseUrl: origin }))
     const otherEngineKey = sessionStorageKey('aether.activity-history.v1', engineStorageKey({ mode: 'remote', baseUrl: 'https://other-engine.invalid' }))
@@ -575,7 +576,7 @@ test.describe.serial('外部插件宿主真实贡献与生命周期', () => {
     await page.reload()
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
     await openTask(second)
-    await expect(activity()).toHaveAccessibleName('消息')
+    await expect(activity()).toHaveCount(0)
     await page.locator('.status-bar').getByRole('button', { name: '消息历史', exact: true }).click()
     await expect(historyPanel()).toContainText(noticeTitle(first))
     await expect(historyPanel()).toContainText(noticeTitle(second))

@@ -5,9 +5,11 @@ import { type WorkspaceTab, isExtensionDestination, extensionIcon } from '../../
 /** The persistent heading menu and the mounted pane share destination labels. */
 export function workspaceSurfaceTabs(extensions: readonly ExtensionWorkspaceTab[]): Array<[WorkspaceTab, string, IconName]> {
   return [
+    ['home', '首页', 'dashboard'],
     ['files', '成果', 'file-check'],
     ['workspace', '工作区', 'folder-outline'],
     ['sources', '资料', 'library'],
+    ['browser', '浏览器', 'globe'],
     ['subagents', '子代理', 'users'],
     ['terminal', '终端', 'terminal'],
     ['git', 'Git', 'git'],

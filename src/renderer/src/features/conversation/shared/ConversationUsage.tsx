@@ -32,9 +32,11 @@ export type TurnUsageInfo = {
  * 比不能点本身更让人困惑。明细由调用方传入本轮的汇总行。
  */
 function UsageBreakdown({ summary, total }: { summary: UsageDetailRow[]; total: number }): JSX.Element {
+  // Keep missing-counter metadata for accounting, but omit diagnostic rows from the user-facing breakdown.
+  const rows = summary.filter(row => !row.unknown).map(row => row.label === '子代理（已知用量）' ? { ...row, label: '子代理' } : row)
   return (
     <div className="usage-detail usage-detail--percentages">
-      {summary.map(row => (
+      {rows.map(row => (
         <UsageBreakdownRow key={row.label} row={row} total={total} summary={summary} />
       ))}
     </div>
@@ -53,7 +55,7 @@ function UsageBreakdownRow({ row, total, summary }: { row: UsageDetailRow; total
       <div className="usage-detail-tip__label">{row.label}</div>
       <div className="usage-detail-tip__amount">{tokensKnown ? <>{row.tokens.toLocaleString('en-US')} <span>tokens</span></> : '用量未报告'}</div>
       {percentage.reason ? <p className="usage-detail-tip__note">{percentage.reason}</p> : <>
-        <div className="usage-detail-tip__ratio">占{percentage.basisLabel} <strong>{percentage.value}</strong></div>
+        <div className="usage-detail-tip__ratio">占{percentage.basisLabel === '已知总用量' ? '当前显示用量' : percentage.basisLabel} <strong>{percentage.value}</strong></div>
         <div className="usage-detail-tip__base">计算基数：{percentage.basisTokens?.toLocaleString('en-US')} tokens</div>
       </>}
       {row.title ? <p className="usage-detail-tip__note">{row.title}</p> : null}
@@ -121,7 +123,7 @@ export function TurnUsage({
           <Icon name="model" size={16} />
           <span className="turn-usage__text">
             <span className="turn-usage__value">{formatTokens(tokens)}</span>
-            <span className="turn-usage__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
+            <span className="turn-usage__unit">tokens</span>
             {duration ? <span className="turn-usage__time">{duration}</span> : null}
             {model ? <span className="turn-usage__model">{model}</span> : null}
           </span>
@@ -134,7 +136,7 @@ export function TurnUsage({
       </div>
       <div className="usage-popover__total">
         <span className="usage-popover__total-value" title={`${tokens.toLocaleString('en-US')} tokens`}>{formatTokens(tokens)}</span>
-        <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
+        <span className="usage-popover__total-unit">tokens</span>
         {duration ? <span className="usage-popover__meta">耗时 {duration}</span> : null}
       </div>
       {model ? (
@@ -198,7 +200,7 @@ export function UsageMeter({
 
   const duration = formatElapsedDuration(sessionExecutionDuration(timing, now))
   const durationTitle = '已加载轮次的累计执行用时，含轮内等待，不含轮间空闲；并行时段只计算一次。' +
-    (timing.incomplete ? '部分历史记录缺少起止时间，仅显示已知部分。' : '')
+    (timing.incomplete ? '部分历史记录缺少起止时间，未计入用时。' : '')
 
   return (
     <Popover
@@ -215,7 +217,7 @@ export function UsageMeter({
         >
           <Icon name="model" size={16} />
           <span className="usage-meter__tokens">{formatTokens(total)}</span>
-          <span className="usage-meter__unit">tokens{summary.some((row) => row.unknown) ? '（已知）' : ''}</span>
+          <span className="usage-meter__unit">tokens</span>
           {duration ? <span className="usage-meter__time" title={durationTitle}>{timing.incomplete ? '≥' : ''}{duration}</span> : null}
         </button>
       )}
@@ -223,12 +225,12 @@ export function UsageMeter({
       <div className="usage-popover__head">
         <span className="usage-popover__title">本会话用量</span>
         <span className="usage-popover__meta" title={durationTitle}>
-          已加载 {rounds} 轮{duration ? ` · ${timing.incomplete ? '已知' : '累计'} ${duration}` : ''}
+          已加载 {rounds} 轮{duration ? ` · 累计 ${timing.incomplete ? '≥' : ''}${duration}` : ''}
         </span>
       </div>
       <div className="usage-popover__total">
         <span className="usage-popover__total-value" title={`${total.toLocaleString('en-US')} tokens`}>{formatTokens(total)}</span>
-        <span className="usage-popover__total-unit">tokens{summary.some((row) => row.unknown) ? '（已知部分）' : ''}</span>
+        <span className="usage-popover__total-unit">tokens</span>
       </div>
       <UsageBreakdown summary={summary} total={total} />
     </Popover>

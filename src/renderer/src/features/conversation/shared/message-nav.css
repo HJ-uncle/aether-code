@@ -19,7 +19,7 @@
   height: 36px;
   padding: 0;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius);
   color: var(--fg-muted);
   background: transparent;
   cursor: pointer;
@@ -44,7 +44,7 @@
   position: absolute;
   inset: 0;
   margin: auto;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 .chat__nav-radar i {
@@ -147,7 +147,7 @@
   padding: var(--menu-padding);
   overflow: hidden;
   border: 1px solid var(--material-border);
-  border-radius: 13px;
+  border-radius: var(--radius);
   background: var(--material-bg);
   box-shadow: var(--shadow-card), var(--material-highlight);
   backdrop-filter: blur(var(--material-blur)) saturate(180%);

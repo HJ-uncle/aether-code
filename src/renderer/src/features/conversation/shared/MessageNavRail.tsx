@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from 'react'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import { horizontalWheelTarget } from '@renderer/core/platform/horizontal-scroll'
 import { ContextMenu, type ContextMenuItem } from '@renderer/ui/ContextMenu'
 import { Icon } from '@renderer/ui/icons'
-import { messageNavPanelLayout, resolveActiveNavId } from './message-nav'
+import { messageNavPanelLayout, resolveOrderedNavIndex } from './message-nav'
 import './message-nav.css'
 
 /** 可选的标记颜色（存 localStorage 的是色值本身，换主题也不失真） */
@@ -122,30 +122,28 @@ export function MessageNavRail({
   const syncActive = useCallback(() => {
     const container = containerRef.current
     if (!container) return
-    const probe = container.scrollTop + container.clientHeight / 3
+    const scrollTop = container.scrollTop, viewportHeight = container.clientHeight, scrollHeight = container.scrollHeight
+    const probe = scrollTop + viewportHeight / 3
     const containerTop = container.getBoundingClientRect().top
     // Only the outer turn wrappers are navigation anchors. MessageItem also puts
     // data-turn-id on each article; using querySelectorAll('[data-turn-id]') lets
     // those nested nodes overwrite the real turn id, so no dot can become active.
     const anchors = Array.from(container.querySelectorAll<HTMLElement>(turnSelector))
       .filter((node) => Boolean(node.dataset.turnId))
-      .map((node) => ({
-        id: node.dataset.turnId!,
-        top: node.getBoundingClientRect().top - containerTop + container.scrollTop
-      }))
+    const anchorTop = (node: HTMLElement): number => node.getBoundingClientRect().top - containerTop + scrollTop
     // A deliberate jump must not be replaced by the viewport's reading probe:
     // several short turns may fit below it, or share the same clamped scroll
     // position near the end. Retain that cursor until the reading position moves.
     const requested = selection.current
     if (requested) {
       const turn = currentTurns.current.find(turn => turn.message.id === requested.messageId)
-      const anchor = turn && anchors.find(anchor => anchor.id === turn.id)
+      const anchor = turn && anchors.find(anchor => anchor.dataset.turnId === turn.id)
       if (turn && !anchor) return // Work mounts older history asynchronously.
       if (anchor) {
-        const maximum = Math.max(0, container.scrollHeight - container.clientHeight)
+        const maximum = Math.max(0, scrollHeight - viewportHeight)
         const target = requested.edge === 'top' ? 0
-          : Math.max(0, Math.min(maximum, anchor.top - 8))
-        if (Math.abs(container.scrollTop - target) <= 2) { requested.positioned = true; return }
+          : Math.max(0, Math.min(maximum, anchorTop(anchor) - 8))
+        if (Math.abs(scrollTop - target) <= 2) { requested.positioned = true; return }
         // A restored anchor can exist before Work has fetched its full body.
         // The host owns that asynchronous jump; an old window is not a scroll away.
         if (!requested.positioned) return
@@ -156,10 +154,13 @@ export function MessageNavRail({
     // A short final reply can start below the viewport probe even at the true
     // bottom. Only select the global last turn when its anchor is mounted;
     // the bottom of an older Work history window is not the conversation end.
-    const atEnd = container.scrollHeight > container.clientHeight + 2 &&
-      container.scrollHeight - container.clientHeight - container.scrollTop <= 2 &&
-      anchors.at(-1)?.id === lastTurnId
-    setScrollActiveId(atEnd && lastTurnId ? lastTurnId : resolveActiveNavId(anchors, probe))
+    const atEnd = scrollHeight > viewportHeight + 2 && scrollHeight - viewportHeight - scrollTop <= 2 &&
+      anchors.at(-1)?.dataset.turnId === lastTurnId
+    // Preserve fresh positions after disclosures and streamed text change height;
+    // caching top offsets would make navigation stale. Only the search probes
+    // need geometry, not all 1,000 mounted turns on every scrolling frame.
+    const index = atEnd ? -1 : resolveOrderedNavIndex(anchors.length, probe, index => anchorTop(anchors[index]))
+    setScrollActiveId(atEnd && lastTurnId ? lastTurnId : anchors[index]?.dataset.turnId ?? null)
   }, [containerRef, turnSelector, lastTurnId])
 
   // 监听器只绑一次（turns 每次消息变化都是新数组，放进依赖会让 scroll 监听反复重绑）
@@ -530,18 +531,9 @@ export function MessageNavRail({
             </div>
           </header>
           <div className="chat__nav-entries" ref={listRef}>
-            {turns.map((turn, index) => (
-              <button key={turn.id} type="button"
-                className={`chat__nav-item chat__nav-dot${turn.id === activeId ? ' is-active' : ''}`}
-                data-nav-index={index} tabIndex={expanded && index === focusedIndex ? 0 : -1}
-                title={turn.preview} aria-label={`跳转到：${turn.preview}`}
-                aria-current={turn.id === activeId ? 'true' : undefined}
-                onFocus={() => setFocusedIndex(index)} onClick={() => jumpTo(turn)}
-                onContextMenu={event => openMenu(turn, event)}>
-                <span className="chat__nav-item-dot" style={marks[turn.id] ? { background: marks[turn.id] } : undefined} />
-                <span className="chat__nav-item-text">{turn.preview}</span>
-              </button>
-            ))}
+            {turns.map((turn, index) => <MessageNavEntry key={turn.id} turn={turn} index={index}
+              active={turn.id === activeId} tabIndex={expanded && index === focusedIndex ? 0 : -1}
+              mark={marks[turn.id]} onFocusIndex={setFocusedIndex} onJump={jumpTo} onMenu={openMenu} />)}
           </div>
         </div>
       </> : <div className="chat__nav-waves">
@@ -575,6 +567,27 @@ export function MessageNavRail({
     </nav>
   )
 }
+
+/** Scrolling changes only the previous/current cursor. Keep the other mounted
+ * previews and handlers intact, including while the radar panel is closed. */
+const MessageNavEntry = memo(function MessageNavEntry({ turn, index, active, tabIndex, mark, onFocusIndex, onJump, onMenu }: {
+  turn: NavTurn
+  index: number
+  active: boolean
+  tabIndex: number
+  mark?: string
+  onFocusIndex: (index: number) => void
+  onJump: (turn: NavTurn) => void
+  onMenu: (turn: NavTurn, event: React.MouseEvent<HTMLButtonElement>) => void
+}): JSX.Element {
+  return <button type="button" className={`chat__nav-item chat__nav-dot${active ? ' is-active' : ''}`}
+    data-nav-index={index} tabIndex={tabIndex} title={turn.preview} aria-label={`跳转到：${turn.preview}`}
+    aria-current={active ? 'true' : undefined}
+    onFocus={() => onFocusIndex(index)} onClick={() => onJump(turn)} onContextMenu={event => onMenu(turn, event)}>
+    <span className="chat__nav-item-dot" style={mark ? { background: mark } : undefined} />
+    <span className="chat__nav-item-text">{turn.preview}</span>
+  </button>
+})
 
 /** Only the preview list should scroll; scrollIntoView also moves pane ancestors. */
 function revealNavRow(list: HTMLElement | null, row: HTMLElement | null | undefined): void {

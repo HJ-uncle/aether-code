@@ -7,10 +7,10 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { AccountState } from '../src/shared/account'
 import { IPC } from '../src/shared/ipc'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'account-help')
 const account: AccountState = {
   status: 'signed-out', user: null, providers: [], serviceUrl: 'http://127.0.0.1:12543',
-  persistence: 'none', message: null, registrationEnabled: true, transport: 'local'
+  persistence: 'none', message: null, registrationEnabled: true, transport: 'local', connectionMode: 'embedded'
 }
 const errors: string[] = []
 let app: ElectronApplication | undefined, page: Page, fixture = ''
@@ -19,6 +19,7 @@ const trigger = () => settings().getByRole('button', { name: '查看个人账号
 const tooltip = () => page.getByRole('tooltip', { name: '个人账号登录说明', exact: true })
 
 async function openAccount(appearance: 'dark' | 'light'): Promise<void> {
+  await page.bringToFront()
   await settings().getByRole('tab', { name: '外观', exact: true }).click()
   await settings().getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
   await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
@@ -55,7 +56,7 @@ test.describe.serial('个人账号登录说明', () => {
     await expect(page.locator('.workbench')).toBeVisible()
     await page.evaluate(() => localStorage.setItem('aether.app.mode', 'work'))
     await page.reload(); await expect(page.locator('.work-view')).toBeVisible()
-    await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+    await page.locator('.menu-bar').getByRole('button', { name: '登录账号', exact: true }).click()
     await expect(settings()).toBeVisible()
   })
 
@@ -86,12 +87,12 @@ test.describe.serial('个人账号登录说明', () => {
   for (const appearance of ['dark', 'light'] as const) test(`${appearance}：圆圈感叹号悬浮说明可停留阅读，离开关闭`, async ({}, info) => {
     await openAccount(appearance)
     await expect(tooltip()).toHaveCount(0)
-    await expect(trigger().locator('svg circle')).toHaveCount(1)
-    await expect(trigger().locator('svg path')).toHaveCount(2)
+    await expect(trigger().locator('svg[data-icon="alert-circle"]')).toHaveCount(1)
+    await page.mouse.move(4, 4)
     await trigger().hover()
     await expect(tooltip()).toBeVisible()
-    await expect(tooltip()).toContainText('当前未登录账号')
-    for (const name of ['一键登录', '已有账号', '使用恢复码登录']) await expect(tooltip()).toContainText(name)
+    await expect(tooltip()).toContainText('账号属于当前服务')
+    for (const name of ['登录已有账号', '创建新账号', '恢复文件只保存登录凭证']) await expect(tooltip()).toContainText(name)
     await expect(trigger()).toHaveAttribute('aria-describedby', await tooltip().getAttribute('id') ?? '')
     await tooltip().hover()
     await expect.poll(() => tooltip().evaluate(element => element.matches(':hover'))).toBe(true)
@@ -110,10 +111,12 @@ test.describe.serial('个人账号登录说明', () => {
 
   test('Tab 聚焦显示说明，Escape 只关闭说明并保留设置页', async () => {
     await openAccount('dark'); await page.mouse.move(4, 4)
+    const restingShadow = await trigger().evaluate(element => getComputedStyle(element).boxShadow)
     await settings().getByRole('button', { name: '刷新账号状态', exact: true }).focus()
     await page.keyboard.press('Tab')
     await expect(trigger()).toBeFocused(); await expect(tooltip()).toBeVisible()
-    await expect(trigger()).toHaveCSS('outline-style', 'solid')
+    expect(await trigger().evaluate(element => element.matches(':focus-visible'))).toBe(true)
+    expect(await trigger().evaluate(element => getComputedStyle(element).boxShadow)).not.toBe(restingShadow)
     await page.keyboard.press('Escape')
     await expect(tooltip()).toHaveCount(0); await expect(settings()).toBeVisible(); await expect(trigger()).toBeFocused()
   })

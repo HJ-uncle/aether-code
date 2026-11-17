@@ -41,7 +41,7 @@
 </tr>
 <tr>
 <td><code>file.changed</code></td>
-<td>已接入的文件操作或回退产生变化；不是任意外部文件监听</td>
+<td>已接入的文件操作或回退使文件状态需要重新读取；回退响应未确认时也可能发送，不是任意外部文件监听</td>
 </tr>
 <tr>
 <td><code>editor.selectionChanged</code></td>
@@ -61,6 +61,17 @@
 </tr>
 </tbody></table>
 <p>输入与选择等高频事件会合并。事件不是持久消息队列，不保证每个瞬间都送达；完整消息与运行结果使用相应平台 API 读取。</p>
+<p><code>file.changed</code> 是重新读取文件或目录的提示，不是整轮回退成功的回执。部分文件冲突、已撤回或响应丢失时，不应据此删除本地记录、累加修改次数或重新执行写入。文件可能已删除，也可能恢复为较早版本；在绑定当前会话并授权 <code>workspace.read</code> 后重新读取：</p>
+<pre><code class="language-js">const { sessionId } = await $AE.context();
+const fileSubscription = await $AE.events.subscribe('file.changed', event =&gt; {
+  if (!sessionId || event.sessionId !== sessionId) return;
+  void $AE.workspace.list({ path: '.' }).then(
+    ({ entries }) =&gt; console.log('当前目录', entries),
+    error =&gt; console.error('目录暂时无法读取', error)
+  );
+});
+// 页面不再需要刷新时：await $AE.events.unsubscribe(fileSubscription);
+</code></pre>
 <h2 id="hooks">contributes.hooks</h2>
 <p>指定事件到达时调用插件工具。必要字段：<code>id, title, event, tool</code>；可选 <code>args</code> 及贡献通用字段。权限：<code>events.subscribe</code>。</p>
 <pre><code class="language-json">{

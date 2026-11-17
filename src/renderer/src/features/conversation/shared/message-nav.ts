@@ -22,6 +22,20 @@ export function resolveActiveNavId(
   return current
 }
 
+/** Outer turn wrappers stay in document flow, so their top edges are ordered.
+ * Read geometry lazily: collecting every rect first would keep scrolling O(n)
+ * even if the search over those collected values were binary. Equal top edges
+ * select the last crossed anchor, matching the linear prefix rule above. */
+export function resolveOrderedNavIndex(length: number, probe: number, topAt: (index: number) => number): number {
+  let start = 0, end = length
+  while (start < end) {
+    const middle = start + Math.floor((end - start) / 2)
+    if (topAt(middle) <= probe) start = middle + 1
+    else end = middle
+  }
+  return start - 1
+}
+
 export interface MessageNavBounds {
   left: number
   top: number

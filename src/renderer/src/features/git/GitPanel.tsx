@@ -13,6 +13,8 @@ import { GitChangesPanel } from '@renderer/features/git/GitChangesPanel'
 import { Icon } from '@renderer/ui/icons'
 import { PromptDialog } from '@renderer/ui/PromptDialog'
 import { gitFilePath } from '@renderer/core/git/git-target'
+import { publishGitActivity } from '@renderer/core/git/git-activity'
+import { changeCountOf, totalAdditionsOf, totalDeletionsOf } from '@renderer/core/git/git-store'
 import type { GitCommitFileChange } from '@shared/git-types'
 import { GitDiff } from './GitDiff'
 import './git-panel.css'
@@ -74,6 +76,23 @@ function TaskGitPanel({
     [source, sessionId, cwd, repositoryPath]
   )
   const selectedCwd = repositoryPath ? `${cwd || '.'}/${repositoryPath}` : cwd || '.'
+  const git = store.useGitStore()
+  useEffect(() => {
+    const repository = git.repositoryOperation?.getSnapshot()
+    const busy = git.loading || git.committing || Boolean(git.operation) || git.incomingLoading || git.logLoading || git.timelineLoading || repository?.phase === 'running'
+    const changes = changeCountOf(git)
+    if (!busy && changes === 0) {
+      publishGitActivity(sessionId, null)
+      return
+    }
+    const additions = totalAdditionsOf(git)
+    const deletions = totalDeletionsOf(git)
+    const label = changes > 0 ? `Git · ${changes} 个变更` : repository?.label || git.operation || (git.committing ? '提交更改' : '刷新仓库状态')
+    const detail = git.branch ? `当前分支 ${git.branch}` : selectedCwd
+    const statusLabel = changes > 0 ? `+${additions.toLocaleString()}  -${deletions.toLocaleString()}` : '进行中'
+    publishGitActivity(sessionId, { label, detail, statusLabel, updatedAt: Date.now() })
+    return () => publishGitActivity(sessionId, null)
+  }, [sessionId, selectedCwd, git.files, git.loading, git.committing, git.operation, git.incomingLoading, git.logLoading, git.timelineLoading, git.repositoryOperation, git.branch])
   const [comparison, setComparison] = useState<{
     path: string
     staged: boolean
@@ -139,17 +158,19 @@ function TaskGitPanel({
               </button>
             </div>
           ) : null}
-          <div className="work-git-panel__manager">
-            <GitChangesPanel key={repositoryPath} />
+          <div className="work-git-panel__layout">
+            <div className="work-git-panel__manager">
+              <GitChangesPanel key={repositoryPath} />
+            </div>
+            {comparison ? (
+              <GitDiff
+                store={store}
+                {...comparison}
+                onClose={() => setComparison(null)}
+                onOpenFile={openFile}
+              />
+            ) : null}
           </div>
-          {comparison ? (
-            <GitDiff
-              store={store}
-              {...comparison}
-              onClose={() => setComparison(null)}
-              onOpenFile={openFile}
-            />
-          ) : null}
           {cloneOpen ? (
             <PromptDialog
               title="克隆仓库到任务工作区"

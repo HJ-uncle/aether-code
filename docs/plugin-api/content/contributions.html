@@ -64,6 +64,7 @@
 </code></pre>
 <h2 id="workspace-tabs">workspaceTabs</h2>
 <p>在右侧工作区添加可关闭页签，通过会话标题栏的「更多工作区」菜单打开。收起工作区会保留当前会话已打开的页签及顺序，仍可从该菜单选择插件页签并重新展开；点击页签的关闭按钮才会移除该页签。字段同 <code>navigation</code>。</p>
+<p>工作区首页的「插件」分组也提供插件页签入口；关闭最后一个页签后返回工作区首页。</p>
 <pre><code class="language-json">{ &quot;workspaceTabs&quot;: [{ &quot;id&quot;: &quot;quality&quot;, &quot;title&quot;: &quot;质量检查&quot;, &quot;page&quot;: &quot;main&quot;, &quot;scope&quot;: &quot;session&quot; }] }
 </code></pre>
 <h2 id="commands">commands</h2>
@@ -120,7 +121,7 @@
 </tr>
 <tr>
 <td><code>service.context</code></td>
-<td>会话标题栏服务，以及底部活动、历史条目的右键菜单</td>
+<td>底部活动、历史条目的右键菜单；工作区弹层中的服务条目不提供此菜单</td>
 <td>当前显示区域的上下文；仍有实时实例的条目提供目标 ID</td>
 </tr>
 <tr>
@@ -172,7 +173,8 @@
 <p><code>pattern</code> 为最长 200 字符的内容字面子串，<strong>不是文件 glob 或正则</strong>；每项最多标记 100 处。省略时只显示状态提示。<code>severity</code> 为 <code>info</code>、<code>warning</code> 或 <code>error</code>。</p>
 <h2 id="services">services</h2>
 <p>声明插件服务条目。必要字段：<code>id, title, tool</code>；可选 <code>stopTool, statusTool, page, args</code>。</p>
-<p>会话作用域中运行或等待处理的服务显示在当前会话标题栏的「服务」中；完成、停止或失败的记录在同一弹层的「服务历史」中查看，按会话区分。未运行的 <code>idle</code> 服务不显示在这两个列表中，仍可通过 SDK 读取和启动。全局服务通过插件页面和 SDK 管理。底部「活动」与「历史」承载通知，不汇总服务记录；服务状态变化不会自动产生通知，通知使用 <a href="page.html#notify"><code>$AE.ui.notify</code></a> 发送。</p>
+<p>会话作用域中运行或等待处理的服务显示在当前会话的「更多工作区」弹层与底部「活动」的进行中列表；没有内容的分组自动隐藏。工作区弹层内的「查看服务历史」始终可用，用于查看当前会话已完成、停止或失败的服务记录；重新打开弹层默认显示当前工作区与进行中内容。未运行的 <code>idle</code> 服务不显示在进行中列表或服务历史中，仍可通过 SDK 读取和启动。全局服务通过插件页面和 SDK 管理。底部「活动」同时显示未读通知，「历史」保留已读通知；服务状态变化不会自动产生通知，通知使用 <a href="page.html#notify"><code>$AE.ui.notify</code></a> 发送。</p>
+<p>工作区首页的「运行中」也按类别汇总当前会话的活跃服务；服务没有打开页面时仍计入摘要。</p>
 <pre><code class="language-json">{ &quot;services&quot;: [{ &quot;id&quot;: &quot;timer&quot;, &quot;title&quot;: &quot;计时器&quot;, &quot;tool&quot;: &quot;start_timer&quot;, &quot;stopTool&quot;: &quot;stop_timer&quot;, &quot;statusTool&quot;: &quot;timer_status&quot;, &quot;page&quot;: &quot;main&quot;, &quot;scope&quot;: &quot;session&quot; }] }
 </code></pre>
 <p>页面通过 <a href="page.html#services"><code>$AE.services</code></a> 启动、停止和刷新。工具返回：</p>

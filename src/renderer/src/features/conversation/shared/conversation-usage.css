@@ -7,7 +7,7 @@
   min-height: 24px;
   margin-inline: -6px;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   cursor: default;
 }
 

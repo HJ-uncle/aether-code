@@ -70,7 +70,7 @@ export function SessionRegenerateReplyButton(props: MessageActionProps): JSX.Ele
   </button>
 }
 
-export function UserMessageActions({ content, ...props }: MessageActionProps & { content: string }): JSX.Element {
+export function UserMessageActions({ content, readOnly = false, ...props }: MessageActionProps & { content: string; readOnly?: boolean }): JSX.Element {
   const { working, run } = useMessageAction(props)
   const { busy, canMutate } = props
   const [copied, setCopied] = useState(false)
@@ -85,14 +85,14 @@ export function UserMessageActions({ content, ...props }: MessageActionProps & {
     } catch { toast.error('复制失败，请重试') }
   }
   return <div className="work-message__actions" role="group" aria-label="用户消息操作" aria-busy={working || busy}>
-    {actions.map(action => <button key={action.id} type="button" className="message__action"
+    {!readOnly && actions.map(action => <button key={action.id} type="button" className="message__action"
       title={action.detail} aria-label={action.name} disabled={working || busy || (action.id !== 'add' && !canMutate)}
       onClick={() => void run(action.id)}><Icon name={action.icon} size={15} aria-hidden="true" /></button>)}
     <button type="button" className="message__action" title={copied ? '已复制' : '复制正文'} aria-label="复制"
       onClick={() => void copy()}><Icon name={copied ? 'check' : 'copy'} size={15} aria-hidden="true" /></button>
-    <button type="button" className="message__action message__action--danger" title="删除本轮问答，保留后续轮次与文件"
+    {!readOnly && <button type="button" className="message__action message__action--danger" title="删除本轮问答，保留后续轮次与文件"
       aria-label="删除本轮" disabled={working || busy || !canMutate} onClick={() => void run('delete')}>
       <Icon name="trash" size={15} aria-hidden="true" />
-    </button>
+    </button>}
   </div>
 }

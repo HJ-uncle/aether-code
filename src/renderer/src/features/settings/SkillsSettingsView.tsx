@@ -124,7 +124,56 @@ export function SkillsSettingsView(): JSX.Element {
   const workspace = useWorkspace()
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   const projectRoot = engine.snapshot.mode === 'remote' ? settings.remoteWorkspaceRoot.trim() : workspace.root
-  return <SkillsSettingsContent key={JSON.stringify([source, projectRoot])} source={source} projectRoot={projectRoot} />
+  return <SkillsAccessView key={JSON.stringify([source, projectRoot])} source={source} projectRoot={projectRoot} />
+}
+
+function SkillsAccessView({ source, projectRoot }: { source: number; projectRoot: string | null }): JSX.Element {
+  const { ready } = useApp()
+  const [catalogue, setCatalogue] = useState<{ list: SkillListItem[]; canManage: boolean } | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [revision, setRevision] = useState(0)
+  useEffect(() => {
+    if (!ready) return
+    let cancelled = false
+    setLoading(true); setError('')
+    void requestOrThrow<{ list: unknown[]; permissions?: { canManage: boolean } }>({
+      method: 'GET', path: '/skills', query: { available: 1, path: projectRoot || undefined }, expectedEngine: getExpectedEngine()
+    }).then(value => {
+      if (!cancelled && source === getEngineSource()) setCatalogue({ list: normalizeList(value), canManage: value.permissions?.canManage === true })
+    }).catch(reason => {
+      if (!cancelled && source === getEngineSource()) setError(errorMessage(reason))
+    }).finally(() => { if (!cancelled && source === getEngineSource()) setLoading(false) })
+    return () => { cancelled = true }
+  }, [source, projectRoot, ready, revision])
+  useEffect(() => subscribeResourceCatalogueChanges(['skill'], () => setRevision(value => value + 1)), [])
+
+  // The server determines management access, including API Key / JWT users who
+  // have no account profile. Reading the available catalogue never needs it.
+  if (catalogue?.canManage) return <SkillsSettingsContent source={source} projectRoot={projectRoot} />
+  return <div className="settings-view settings-view--skills resource-settings">
+    <ResourceSettingsHeader title="可用技能" count={catalogue?.list.length}
+      description="技能由服务管理员维护，当前账号可使用以下技能。">
+      <button type="button" className="resource-icon-button" disabled={!ready || loading} aria-label="刷新技能" title="刷新技能" onClick={() => setRevision(value => value + 1)}>
+        {loading ? <Spinner size={16} /> : <Icon name="refresh" size={16} />}
+      </button>
+    </ResourceSettingsHeader>
+    {error ? <p className="resource-feedback is-error" role="alert">{error}</p> : null}
+    <div className="resource-list skills-list" role="list" aria-label="可用技能" aria-busy={loading}>
+      {!catalogue?.list.length ? <ResourceSettingsEmpty icon="package-variant-closed" loading={loading}
+        title={loading ? '正在读取技能…' : error ? '技能暂未加载' : '暂无可用技能'}
+        description={error ? '请刷新重试。' : '管理员添加并启用后会显示在这里。'} /> : catalogue.list.map(skill => (
+        <div className="resource-row skills-row" key={skillIdentity(skill)} role="listitem">
+          <div className="resource-row__main">
+            <span className="resource-row__icon"><Icon name="package-variant-closed" size={18} /></span>
+            <span className="resource-row__copy"><strong>{skill.name}</strong>
+              {skill.description ? <span className="skills-row__description">{skill.description}</span> : null}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
 }
 
 function SkillsSettingsContent({ source, projectRoot }: { source: number; projectRoot: string | null }): JSX.Element {

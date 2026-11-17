@@ -1,4 +1,5 @@
 .work-sidebar__history {
+  --work-sidebar-row-height: 32px;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -31,7 +32,151 @@
 .work-sidebar__history-tab:focus-visible,
 .work-sidebar__recent:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .work-sidebar__history .work-sidebar__recent > p { padding-block: var(--space-2); }
-.work-sidebar__history-sentinel { height: 1px; }
+.work-sidebar__project-group + .work-sidebar__project-group { margin-top: var(--space-2); }
+.work-sidebar__project-group[data-collapsed='true'] + .work-sidebar__project-group { margin-top: 0; }
+.work-sidebar__project-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  height: var(--work-sidebar-row-height);
+  min-height: var(--work-sidebar-row-height);
+  margin: 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: start;
+  cursor: pointer;
+  transition: color var(--motion-hover) var(--motion-ease), background var(--motion-hover) var(--motion-ease);
+}
+.work-sidebar__project-heading-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
+  height: var(--work-sidebar-row-height);
+  border-radius: var(--radius);
+  background: transparent;
+  transition: background var(--motion-hover) var(--motion-ease);
+}
+.work-sidebar__project-heading-row:is(:hover, :has(button:focus-visible)) { background: var(--bg-hover); }
+.work-sidebar__project-heading:hover,
+.work-sidebar__project-heading:focus-visible { color: var(--fg); }
+.work-sidebar__project-heading:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.work-sidebar__project-heading > svg { flex: 0 0 auto; color: var(--fg-faint); }
+.work-sidebar__project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-sidebar__project-pin { flex: 0 0 auto; color: var(--accent); }
+/* Status and creation share the trailing slot without shifting the title. */
+.work-sidebar__project-heading:not(:has(.work-sidebar__project-status))::after {
+  content: '';
+  flex: 0 0 var(--control-h-compact);
+  margin-inline-start: auto;
+}
+.work-sidebar__project-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  min-width: var(--control-h-compact);
+  height: var(--control-h-compact);
+  margin-inline-start: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: opacity var(--motion-hover) var(--motion-ease);
+}
+.work-sidebar__project-status[data-project-status='running'],
+.work-sidebar__project-status[data-project-status='unread'] { color: var(--accent); }
+.work-sidebar__project-status[data-project-status='permission'],
+.work-sidebar__project-status[data-project-status='question'],
+.work-sidebar__project-status[data-project-status='disconnected'] { color: var(--warn); }
+.work-sidebar__project-status[data-project-status='error'],
+.work-sidebar__project-status[data-project-status='interrupted'] { color: var(--danger-fg); }
+.work-sidebar__project-create {
+  position: absolute;
+  inset-inline-end: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--control-h-compact);
+  width: var(--control-h-compact);
+  height: var(--control-h-compact);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease), background var(--motion-hover) var(--motion-ease);
+}
+.work-sidebar__project-heading-row:is(:hover, :has(button:focus-visible)) .work-sidebar__project-create { opacity: 1; pointer-events: auto; }
+.work-sidebar__project-heading-row:has(.work-sidebar__project-create):is(:hover, :has(button:focus-visible)) .work-sidebar__project-status { opacity: 0; pointer-events: none; }
+.work-sidebar__project-create > svg { flex: none; }
+.work-sidebar__project-create:hover { color: var(--fg); background: var(--bg-hover); }
+.work-sidebar__project-create:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.work-sidebar__project-content {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 180ms var(--ease-out);
+}
+.work-sidebar__project-content > div { min-height: 0; overflow: hidden; }
+.work-sidebar__project-content[data-collapsed='true'] { grid-template-rows: 0fr; }
+/* Indent the text, keeping selection and hover surfaces aligned with the group. */
+.work-sidebar__project-content .work-sidebar__task-row .work-sidebar__task {
+  padding-inline-start: calc(var(--space-4) + var(--space-2));
+}
+.work-sidebar__project-more {
+  display: block;
+  width: 100%;
+  height: var(--work-sidebar-row-height);
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1) var(--space-2);
+  padding-inline-start: calc(var(--space-4) + var(--space-2));
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: start;
+  cursor: pointer;
+}
+.work-sidebar__project-more:hover,
+.work-sidebar__project-more:focus-visible { background: var(--bg-hover); }
+.work-sidebar__project-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.work-sidebar__history-more {
+  display: block;
+  width: 100%;
+  height: var(--work-sidebar-row-height);
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: start;
+  cursor: pointer;
+}
+.work-sidebar__history-more:hover,
+.work-sidebar__history-more:focus-visible { background: var(--bg-hover); }
+.work-sidebar__history-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .work-sidebar__recent > .work-sidebar__history-end {
   padding-block: var(--space-3);
   text-align: center;

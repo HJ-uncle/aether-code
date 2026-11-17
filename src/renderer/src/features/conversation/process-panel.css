@@ -25,7 +25,7 @@
   height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
@@ -39,9 +39,6 @@
 
 .work-message__process-viewport {
   min-width: 0;
-  max-height: min(400px, 48vh);
-  overflow: auto;
-  overscroll-behavior: contain;
   /* Explicit position restoration must not compete with anchoring as groups animate. */
   overflow-anchor: none;
   scrollbar-width: none;
@@ -69,7 +66,7 @@
 .work-message__process-viewport:is([data-scroll-edges='bottom'], [data-scroll-edges='both']) {
   --work-process-fade-bottom: min(24px, 20%);
 }
-.work-message__process-content { min-width: 0; padding: 4px 0 8px; }
+.work-message__process-content { min-width: 0; padding: 4px 0 32px; }
 .work-process-section { min-width: 0; margin: 4px 0 8px; }
 .work-process-section__toggle {
   display: flex;
@@ -86,7 +83,7 @@
   cursor: pointer;
 }
 .work-process-section__toggle:hover { color: var(--fg); }
-.work-process-section__dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.work-process-section__dot { width: 5px; height: 5px; border-radius: var(--radius-round); background: currentColor; flex: 0 0 auto; }
 .work-process-section__count { font-variant-numeric: tabular-nums; }
 .work-process-section__count::before { content: '·'; margin-right: 7px; }
 .work-process-section__chevron { flex: 0 0 auto; margin-left: auto; transition: transform var(--duration-fast) var(--ease-out); }
@@ -103,7 +100,7 @@
   scrollbar-width: auto;
   scroll-padding: 12px;
 }
-.work-process-section__viewport > .work-message__process-content { padding: 2px 8px 6px 0; }
+.work-process-section__viewport > .work-message__process-content { padding: 2px 8px 20px 0; }
 .work-process-section__content { min-width: 0; }
 .work-message__process .work-subagent-card__name,
 .work-message__process .command-job-card[data-surface='work'] .command-job-card__toggle > strong { color: var(--fg-muted); }
@@ -140,7 +137,7 @@
   min-height: 30px;
   padding: 4px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--fg-muted);
   font: 12px/1.5 var(--font-ui);

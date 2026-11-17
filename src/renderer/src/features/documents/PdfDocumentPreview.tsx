@@ -5,7 +5,7 @@ import { cachePdfPageSize, cachedPdfPageSize, retainPdfPageBitmap, restorePdfPag
 import { pdfPreviewRenderIdentity } from './pdf-preview-render'
 import { startPdfTextLayer, type PdfTextStatus } from './pdf-preview-text'
 import { DOCUMENT_LIMITS, ensureMapGetOrInsertComputed, pdfCanvasSize, previewErrorMessage } from './document-kind'
-import { PreviewCapabilityNotice, PreviewMessage, PreviewZoom, usePreviewVisibility, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
+import { PreviewMessage, PreviewPageCount, PreviewToolbar, PreviewZoom, usePreviewVisibility, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
 
 type PdfPreviewProps = { data: ArrayBuffer; name: string; sessionKey: string; active?: boolean; onRetry?: () => void }
 
@@ -166,11 +166,10 @@ export default function PdfDocumentPreview({ data, name, sessionKey, active = tr
   if (error) return <PreviewMessage error={error} onRetry={onRetry} />
   if (!pdf) return <PreviewMessage />
   return <>
-    <div className="document-preview__toolbar document-preview__toolbar--pdf-tools">
+    <PreviewToolbar>
       <PreviewZoom zoom={zoom} onZoom={setZoom} />
-      <span className="document-preview__page-label">{pdf.numPages} 页 · 连续滚动</span>
-    </div>
-    <PreviewCapabilityNotice kind="pdf" />
+      <PreviewPageCount pages={pdf.numPages} />
+    </PreviewToolbar>
     <div className="document-preview__body document-preview__body--pdf document-preview__body--continuous" ref={body} data-document-pages={pdf.numPages}>
       {layoutReady ? Array.from({ length: pdf.numPages }, (_, index) => <PdfPage key={index + 1} pdf={pdf} name={name} page={index + 1} zoom={zoom} width={stableWidth} active={active}
         onFailure={failure} onActive={onPageActive} />) : <PreviewMessage />}

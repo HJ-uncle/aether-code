@@ -162,7 +162,6 @@ export function FileChangeCard({
         </div>
       ) : (
         <>
-          {stats?.approximate ? <div className="diff-card__notice">{DIFF_APPROXIMATION_HINT}</div> : null}
           {embedded ? <VirtualFileChangeDiff key={change.id} rows={previewRows} language={language} displayPath={displayPath} /> : <>
           <div className="diff-card__body" tabIndex={0} aria-label={`${displayPath} 文件差异`}>
             <div className="diff-card__lines">

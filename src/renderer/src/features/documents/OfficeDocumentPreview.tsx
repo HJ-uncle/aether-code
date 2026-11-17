@@ -3,7 +3,7 @@ import { DOCUMENT_LIMITS, previewErrorMessage } from './document-kind'
 import { prepareOfficeArchiveOffThread } from './office-archive-client'
 import { cacheOfficePreview, getOfficePreview, type CachedOfficePreview } from './office-preview-cache'
 import { documentFrame, passiveDocumentHtml } from './document-html'
-import { PreviewCapabilityNotice, PreviewMessage, PreviewZoom, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
+import { PreviewMessage, PreviewToolbar, PreviewZoom, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
 import { readPptxNotesForPreview, type PptxNotesPreview } from './pptx-notes'
 import { bridgeFrameSelection } from './document-selection'
 import { officeVisiblePage } from './office-visible-page'
@@ -189,10 +189,9 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
   if (state.error) return <PreviewMessage error={state.error} onRetry={onRetry} />
   if (!pages.length) return <PreviewMessage />
   return <>
-    <div className="document-preview__header">
-      <PreviewCapabilityNotice kind={kind} />
+    <PreviewToolbar>
       <PreviewZoom zoom={zoom} onZoom={setZoom} />
-    </div>
+    </PreviewToolbar>
     <div className="document-preview__body document-preview__body--continuous" ref={body}
       data-document-pages={kind === 'pptx' ? pages.length : undefined} data-document-sections={kind === 'docx' ? pages.length : undefined}>
       {layoutReady ? <div className="document-preview__continuous-content" style={{ minHeight: totalHeight }}>

@@ -168,6 +168,16 @@ export function mergeDisplayHistory(cache: DisplayHistoryCache | null, current: 
   const groupedRoots = cache.page.grouping === 'root'
   const admissions = new Map<string, DisplayAdmission>()
   const rootKey = (runId?: string, turnId?: string): string => JSON.stringify([runId, turnId])
+  const runsByUser = new Map<string, RootRun[]>()
+  const liveRoots = new Set<string>()
+  // A complete transcript may contain thousands of turns. Index the run
+  // ledger once instead of scanning it again for every cached body.
+  for (const run of runs) {
+    const owned = runsByUser.get(run.userMessageId) ?? []
+    owned.push(run)
+    runsByUser.set(run.userMessageId, owned)
+    if (liveTurnIds.has(run.userMessageId)) liveRoots.add(rootKey(run.runId, run.turnId))
+  }
   const remember = (message: DisplayAdmission): void => {
     if (message.role === 'user' && !message.rootFollowup && message.runId && message.conversationId)
       admissions.set(rootKey(message.runId, message.conversationId), message)
@@ -200,13 +210,13 @@ export function mergeDisplayHistory(cache: DisplayHistoryCache | null, current: 
     const stored = cache.bodies.get(id)
     // Old engines still index supplements separately. Protect their live tail
     // through the admitted root without treating a supplement as a new run.
-    const live = liveTurnIds.has(id) || !groupedRoots && present.some(message => message.rootFollowup && runs.some(run =>
-      run.runId === message.rootFollowup!.rootRunId && run.turnId === message.rootFollowup!.turnId && liveTurnIds.has(run.userMessageId)))
+    const live = liveTurnIds.has(id) || !groupedRoots && present.some(message => message.rootFollowup &&
+      liveRoots.has(rootKey(message.rootFollowup.rootRunId, message.rootFollowup.turnId)))
     if (!stored) {
       if (!cache.invalidatedTurnIds.has(id) || live) result.push(...present)
       continue
     }
-    const complete = applyRootRuns(stored, runs.filter(run => run.userMessageId === id))
+    const complete = applyRootRuns(stored, runsByUser.get(id) ?? [])
     if (live && present.length) {
       // A live projection is tied to its stream cursor; disk may already be ahead.
       // Restore a missing old prefix only before its earliest observed tool.

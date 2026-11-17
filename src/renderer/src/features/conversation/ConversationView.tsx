@@ -38,7 +38,6 @@ import { buildSessionInlineFileResolver } from './inline-file-references'
 import { MessageContent } from './MessageContent'
 import { useExtensionMessageEvents } from './useExtensionMessageEvents'
 import { serializeMessages, buildMessageExportDocument } from './shared/message-export'
-import { sessionMessageRange, SESSION_MESSAGE_PAGE_SIZE } from '../sessions/view-performance'
 import { sessionConversationAwayFromBottom } from './conversation-scroll'
 import { useSessionConversationScrollIntent } from './useSessionConversationScrollIntent'
 import { ErrorNotice } from './ErrorNotice'
@@ -51,13 +50,13 @@ import { type SessionController, type ActivitySelection, type ArtifactNavigation
 import { SessionTurnFeedback, SessionRunStatus } from './SessionFeedback'
 import { RootFollowupReceipt, useRootFollowupReceipts } from './RootFollowupReceipts'
 
-const conversationPositions = new Map<string, { top: number; follow: boolean; firstId?: string | null; expanded?: boolean }>()
+const conversationPositions = new Map<string, { top: number; follow: boolean }>()
 
 const pendingDrafts = new Map<string, { values: string[][]; freeText: string[] }>()
 
 const MAX_SESSION_VIEW_CACHE = 256
 
-function rememberConversationPosition(id: string, value: { top: number; follow: boolean; firstId?: string | null; expanded?: boolean }): void {
+function rememberConversationPosition(id: string, value: { top: number; follow: boolean }): void {
   conversationPositions.delete(id)
   conversationPositions.set(id, value)
   while (conversationPositions.size > MAX_SESSION_VIEW_CACHE) {
@@ -145,14 +144,39 @@ export function Conversation({
   useExtensionMessageEvents(task.id, task.workspacePath, controller.messages, controller.ready && controller.historyReady, active)
   const taskRunning = controller.streaming || controller.launching || ['running', 'waiting'].includes(task.status)
   const positionKey = `${getEngineSource()}:${task.id}`
+  const conversationGroups = useMemo(() => sessionConversationGroups(controller.messages), [controller.messages])
   const scrollRef = useRef<HTMLDivElement>(null)
+  const readingAnchor = useRef<{ messageId: string; offset: number; scrollTop: number; navigation?: boolean; top?: boolean } | null>(null)
+  const previousFirstMessageId = useRef<string | undefined>(controller.messages[0]?.id)
+  const rememberReadingAnchor = useCallback((): void => {
+    const element = scrollRef.current
+    if (!element) return
+    const previous = readingAnchor.current
+    // A deliberate target may be clamped in a short recovery snapshot. Its
+    // intended alignment still matters when earlier history arrives later.
+    if (previous?.navigation && Math.abs(previous.scrollTop - element.scrollTop) <= 1) return
+    const messages = element.querySelectorAll<HTMLElement>('.work-conversation__content > .work-conversation-turn > .work-message[data-message-id]')
+    const viewportTop = element.getBoundingClientRect().top
+    let low = 0, high = messages.length
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      if (messages[middle].getBoundingClientRect().bottom <= viewportTop) low = middle + 1
+      else high = middle
+    }
+    const message = messages[Math.min(low, messages.length - 1)]
+    readingAnchor.current = message ? { messageId: message.dataset.messageId!,
+      offset: message.getBoundingClientRect().top - viewportTop, scrollTop: element.scrollTop } : null
+  }, [])
+  const rememberNavigationAnchor = useCallback((messageId: string, top: boolean): void => {
+    const element = scrollRef.current
+    if (element) readingAnchor.current = { messageId, offset: 8, scrollTop: element.scrollTop, navigation: true, top }
+  }, [])
   const followRef = useRef(conversationPositions.get(positionKey)?.follow ?? true)
   const [following, setFollowing] = useState(followRef.current)
   const [awayFromBottom, setAwayFromBottom] = useState(false)
   const [inlineFeedbackVisible, setInlineFeedbackVisible] = useState(true)
   const latestRequest = useRef(false)
   const [latestPending, setLatestPending] = useState(false)
-  const hasNewerContentRef = useRef(false)
   const [bottomRequest, setBottomRequest] = useState(0)
   const measureScrollPosition = useCallback((): boolean | null => {
     const element = scrollRef.current
@@ -167,8 +191,6 @@ export function Conversation({
     setFollowing(false)
   }, [])
   const resumeFollowing = useCallback((): void => {
-    // The bottom of a loaded archive page is not necessarily the latest turn.
-    if (hasNewerContentRef.current) return
     followRef.current = true
     setFollowing(true)
   }, [])
@@ -182,7 +204,7 @@ export function Conversation({
     if (!element || !active || !followRef.current || !element.clientHeight) return
     element.scrollTop = element.scrollHeight
     const away = measureScrollPosition()
-    if (latestRequest.current && !hasNewerContentRef.current && away === false) {
+    if (latestRequest.current && away === false) {
       latestRequest.current = false
       setLatestPending(false)
     }
@@ -217,30 +239,18 @@ export function Conversation({
   }, [controller.messages, controller.nextTurnQueue.state, controller.nextTurnQueue.error, controller.historyError, task.id])
   const restartableMessageId = !controller.streaming && !controller.launching && !controller.pending.length
     ? controller.messages.findLast(message => message.role === 'assistant')?.id : undefined
-  const [firstId, setFirstId] = useState<string | null>(() => conversationPositions.get(positionKey)?.firstId ?? null)
-  const lastMountedStart = useRef<number | undefined>(undefined)
   // Keep selection local to a task. Work selects complete conversation turns
   // (the user request together with the Agent response), so exporting one
   // item never produces a contextless half of a turn.
   const [selectMode, setSelectMode] = useState(false)
   const [selection, setSelection] = useState<{ all: boolean; ids: ReadonlySet<string> }>({ all: false, ids: new Set() })
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
-  const expandedHistory = useRef(conversationPositions.get(positionKey)?.expanded ?? false)
-  const [historyBrowsing, setHistoryBrowsing] = useState(expandedHistory.current)
-  const setExpandedHistory = useCallback((value: boolean): void => {
-    expandedHistory.current = value
-    setHistoryBrowsing(value)
-  }, [])
-  const { start, end, newer } = useMemo(() => sessionMessageRange(controller.messages, following ? null : firstId, following ? undefined : lastMountedStart.current), [controller.messages, firstId, following])
-  lastMountedStart.current = start
-  const hasNewerContent = newer > 0 || Boolean(controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages)
-  hasNewerContentRef.current = hasNewerContent
-  const showLatest = latestPending || hasNewerContent || awayFromBottom
+  const showLatest = latestPending || awayFromBottom
   useEffect(() => {
     // Reading old turns (or retaining this component in Code mode) is not
     // seeing the new result. Reuse the conversation's existing scroll state.
     if (!task.completionUnread || task.status !== 'done' || !active || !following ||
-      hasNewerContent || awayFromBottom || !controller.historyReady || controller.historyError ||
+      awayFromBottom || !controller.historyReady || controller.historyError ||
       controller.displayHistoryLoading || controller.displayHistoryError ||
       task.activity && (controller.currentRun?.runId !== task.activity.runId || controller.currentRun.status !== 'succeeded')) return
     const acknowledge = (): void => {
@@ -255,12 +265,15 @@ export function Conversation({
       window.removeEventListener('focus', acknowledge)
       document.removeEventListener('visibilitychange', acknowledge)
     }
-  }, [task.id, task.completionUnread, task.status, task.activity, active, following, hasNewerContent, awayFromBottom,
+  }, [task.id, task.completionUnread, task.status, task.activity, active, following, awayFromBottom,
     controller.historyReady, controller.historyError, controller.displayHistoryLoading, controller.displayHistoryError,
     controller.currentRun?.runId, controller.currentRun?.status, controller.draftSource])
   const showPinnedFeedback = showLatest && !inlineFeedbackVisible
   const conversationDate = useSessionConversationDate(active)
-  const conversationGroups = useMemo(() => sessionConversationGroups(controller.messages), [controller.messages])
+  // Scroll/follow state changes do not change a turn's timeline. Reusing its
+  // segments lets memoized messages skip rendering the entire loaded history.
+  const conversationEntries = useMemo(() => new Map(conversationGroups.map(group =>
+    [group.id, sessionConversationEntries(group)])), [conversationGroups])
   const followupReceipts = useRootFollowupReceipts(task.id, controller.messages)
   const turnTodos = useMemo(() => controller.assignTodos(conversationGroups.map(group => ({
     id: group.id, identity: group.identity,
@@ -276,55 +289,18 @@ export function Conversation({
   const turnChanges = useMemo(() => sessionTurnProgressChanges(task.id, conversationGroups, progress.changes, task.workspacePath),
     [task.id, conversationGroups, progress.changes, task.workspacePath])
   const displayTurns = useMemo(() => sessionGroupedDisplayTurns(conversationGroups, controller.displayTurns, controller.displayLoadedTurnIds), [conversationGroups, controller.displayTurns, controller.displayLoadedTurnIds])
-  const historyGaps = useMemo(() => {
-    const index = displayTurns
-    const result = new Map<string, { count: number; anchor: string }>()
-    if (!index) return result
-    const positions = new Map(index.map((turn, position) => [turn.userMessageId, position]))
-    let previous = -1
-    for (const group of conversationGroups) {
-      const user = group.messages.find(message => message.role === 'user')
-      const position = user ? positions.get(user.id) : undefined
-      if (position === undefined) continue
-      if (position > previous + 1) result.set(group.id, {
-        count: position - previous - 1,
-        anchor: index[previous < 0 ? Math.max(0, position - 2) : previous + 1].userMessageId
-      })
-      previous = position
-    }
-    return result
-  }, [displayTurns, conversationGroups])
-  // A short gap is an implementation detail of the display-history index:
-  // loading the latest two complete turns avoids a large first response, but
-  // leaving a one-turn button in the transcript makes a normal conversation
-  // look incomplete. Fill a few small gaps in the background and retain the
-  // explicit affordance only for genuinely large history jumps.
-  const autoDisplayAnchorsRef = useRef(new Set<string>())
-  const autoDisplayLoadsRef = useRef(0)
-  useEffect(() => {
-    autoDisplayAnchorsRef.current.clear()
-    autoDisplayLoadsRef.current = 0
-  }, [positionKey])
   const selectableGroups = useMemo(() => conversationGroups.filter(group => sessionConversationComplete(group, controller.displayTurns, controller.displayLoadedTurnIds)),
     [conversationGroups, controller.displayTurns, controller.displayLoadedTurnIds])
+  const selectableGroupIds = useMemo(() => new Set(selectableGroups.map(group => group.id)), [selectableGroups])
   // Keep the user's all/except choice as older turns finish loading, without
   // reselecting a turn they explicitly unchecked or eagerly mounting history.
   const selectedIds = useMemo(() => new Set(selectMode ? selectableGroups.filter(group =>
     selection.all ? !selection.ids.has(group.id) : selection.ids.has(group.id)).map(group => group.id) : []),
   [selectMode, selectableGroups, selection])
   const turnUsage = useMemo(() => new Map(conversationGroups.map(group => [group.id, summarizeTurnUsage(group.messages)])), [conversationGroups])
-  const visibleConversationGroups = useMemo(
-    () => conversationGroups.filter((group) => group.endIndex > start && group.startIndex < end),
-    [conversationGroups, end, start]
-  )
   useLayoutEffect(() => {
-    if (!activitySelection) return
-    const index = controller.messages.findIndex(message => message.tools?.some(tool => tool.id === activitySelection.toolId))
-    if (index < 0) return
-    pauseReading()
-    setExpandedHistory(true)
-    setFirstId(controller.messages[Math.min(index, Math.max(0, controller.messages.length - SESSION_MESSAGE_PAGE_SIZE))].id)
-  }, [activitySelection])
+    if (activitySelection) pauseReading()
+  }, [activitySelection, pauseReading])
   useEffect(() => {
     const container = scrollRef.current
     if (!activitySelection || !container || !active) return
@@ -383,26 +359,8 @@ export function Conversation({
     const observer = new MutationObserver(() => { if (reveal()) observer.disconnect() })
     if (!reveal()) observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'data-motion-state'] })
     return () => { disposed = true; observer.disconnect() }
-  }, [activitySelection, firstId, active, onActivityRevealed])
-  const firstIdRef = useRef(firstId)
-  firstIdRef.current = controller.messages[start]?.id ?? firstId
-  const prependAnchor = useRef<{ id: string; offset: number } | null>(null)
-  const archiveNavigation = useRef<'older' | 'newer' | 'latest' | null>(null)
-  const pendingDisplayTurn = useRef<string | null>(null)
-  const lastDisplayRequest = useRef<string | undefined>(undefined)
-  const [displayRequest, setDisplayRequest] = useState(0)
+  }, [activitySelection, controller.messages, active, onActivityRevealed])
   const restoredPosition = useRef(false)
-  useLayoutEffect(() => {
-    if (!firstId && controller.messages.length) setFirstId(controller.messages[start].id)
-    // The tail stays bounded, but a manual upward scroll freezes this prefix.
-    // Replacing an optimistic message ID must not itself move the reader.
-    const selection = window.getSelection()
-    const copying = selection && !selection.isCollapsed && selection.anchorNode && scrollRef.current?.contains(selection.anchorNode)
-    if (!expandedHistory.current && followRef.current && !copying && controller.messages.length > SESSION_MESSAGE_PAGE_SIZE) {
-      const next = controller.messages[controller.messages.length - SESSION_MESSAGE_PAGE_SIZE].id
-      if (next !== firstId) setFirstId(next)
-    }
-  }, [controller.messages, firstId, start, following])
   useLayoutEffect(() => {
     const element = scrollRef.current
     if (!element || controller.loading || restoredPosition.current) return
@@ -414,21 +372,32 @@ export function Conversation({
   }, [positionKey, controller.loading, controller.messages.length])
   useLayoutEffect(() => () => {
     const element = scrollRef.current
-    if (element) rememberConversationPosition(positionKey, { top: element.scrollTop, follow: followRef.current, firstId: firstIdRef.current, expanded: expandedHistory.current })
+    if (element) rememberConversationPosition(positionKey, { top: element.scrollTop, follow: followRef.current })
   }, [positionKey])
   useLayoutEffect(() => {
-    const anchor = prependAnchor.current, element = scrollRef.current
-    if (!anchor || !element) return
-    const message = element.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.id)}"]`)
-    if (message) element.scrollTop += message.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
-    prependAnchor.current = null
-  }, [firstId])
+    const previous = previousFirstMessageId.current
+    previousFirstMessageId.current = controller.messages[0]?.id
+    const element = scrollRef.current, anchor = readingAnchor.current
+    // Only a newly prepended prefix needs compensation. Appended stream text,
+    // disclosure changes and ordinary scrolling retain their existing intent.
+    if (element && anchor && previous && previous !== controller.messages[0]?.id && !followRef.current &&
+      controller.messages.findIndex(message => message.id === previous) > 0) {
+      const message = element.querySelector<HTMLElement>(`.work-conversation__content > .work-conversation-turn > .work-message[data-message-id="${CSS.escape(anchor.messageId)}"]`)
+      if (message) {
+        const target = anchor.navigation ? message.closest<HTMLElement>('.work-conversation-turn') ?? message : message
+        element.scrollTop = anchor.top ? 0 : element.scrollTop + target.getBoundingClientRect().top -
+          element.getBoundingClientRect().top - anchor.offset
+        anchor.scrollTop = element.scrollTop
+      }
+    }
+    rememberReadingAnchor()
+  }, [controller.messages, rememberReadingAnchor])
   useLayoutEffect(() => {
     const element = scrollRef.current
     if (!element || !active) return
     followBottom()
     measureScrollPosition()
-  }, [controller.messages, controller.todos, controller.loading, controller.streaming, controller.launching, firstId, historyBrowsing, bottomRequest, active, followBottom, measureScrollPosition])
+  }, [controller.messages, controller.todos, controller.loading, controller.streaming, controller.launching, bottomRequest, active, followBottom, measureScrollPosition])
   useEffect(() => {
     const element = scrollRef.current
     if (!element || !active) return
@@ -452,85 +421,18 @@ export function Conversation({
   }, [active, measureScrollPosition, followBottom])
   const latest = (): void => {
     scrollIntent.reset()
-    pendingDisplayTurn.current = null
-    prependAnchor.current = null
     latestRequest.current = true
     setLatestPending(true)
     followRef.current = true
     setFollowing(true)
-    // Start the actual navigation now; the following layout pass and resize
-    // observer finish it if archive/window/Markdown changes grow the content.
+    // Keep every loaded turn mounted while returning to the live tail.
     followBottom()
-    if (controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages) {
-      archiveNavigation.current = 'latest'
-      void controller.loadArchive('latest')
-      return
-    }
-    setExpandedHistory(false)
-    followRef.current = true
-    setFollowing(true)
-    setFirstId(controller.messages[Math.max(0, controller.messages.length - SESSION_MESSAGE_PAGE_SIZE)]?.id ?? null)
     setBottomRequest(value => value + 1)
   }
-  const loadEarlier = (): void => {
-    setExpandedHistory(true)
-    const element = scrollRef.current
-    const anchor = controller.messages[start]
-    const article = anchor && element?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.id)}"]`)
-    if (element && article) prependAnchor.current = { id: anchor.id, offset: article.getBoundingClientRect().top - element.getBoundingClientRect().top }
-    pauseReading()
-    setFirstId(controller.messages[Math.max(0, start - SESSION_MESSAGE_PAGE_SIZE)].id)
-  }
-  const loadNewer = (): void => {
-    const nextStart = Math.min(Math.max(0, controller.messages.length - SESSION_MESSAGE_PAGE_SIZE), start + SESSION_MESSAGE_PAGE_SIZE)
-    const anchor = controller.messages[nextStart]
-    const element = scrollRef.current
-    const article = anchor && element?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.id)}"]`)
-    if (element && article) prependAnchor.current = { id: anchor.id, offset: article.getBoundingClientRect().top - element.getBoundingClientRect().top }
-    setExpandedHistory(true)
-    pauseReading()
-    setFirstId(anchor?.id ?? null)
-  }
-  const loadArchivePage = (action: 'older' | 'newer'): void => {
-    if (controller.archiveLoading) return
-    archiveNavigation.current = action
-    setExpandedHistory(true)
-    pauseReading()
-    void controller.loadArchive(action)
-  }
-  const loadDisplayHistory = (userMessageId?: string): void => {
+  const loadDisplayHistory = (): void => {
     if (controller.displayHistoryLoading) return
-    setExpandedHistory(true)
-    pauseReading()
-    pendingDisplayTurn.current = userMessageId ?? null
-    lastDisplayRequest.current = userMessageId
-    void controller.loadDisplayTurn(userMessageId).then(ok => {
-      if (ok) setDisplayRequest(value => value + 1)
-    })
+    void controller.loadDisplayTurn()
   }
-  useEffect(() => {
-    if (!active || !following || !controller.displayTurns || controller.displayHistoryLoading ||
-      controller.displayHistoryError || autoDisplayLoadsRef.current >= 3) return
-    const candidate = [...historyGaps.values()].find(gap => gap.count > 0 && gap.count <= 2)
-    if (!candidate || autoDisplayAnchorsRef.current.has(candidate.anchor)) return
-    autoDisplayAnchorsRef.current.add(candidate.anchor)
-    autoDisplayLoadsRef.current += 1
-    lastDisplayRequest.current = candidate.anchor
-    void controller.loadDisplayTurn(candidate.anchor).then(ok => {
-      if (!ok) autoDisplayAnchorsRef.current.delete(candidate.anchor)
-    })
-  }, [active, following, historyGaps, controller.displayTurns, controller.displayHistoryLoading, controller.displayHistoryError, controller.loadDisplayTurn])
-  useLayoutEffect(() => {
-    const id = pendingDisplayTurn.current
-    if (!id || !controller.displayLoadedTurnIds.includes(id)) return
-    const group = conversationGroups.find(group => group.messages.some(message => message.id === id))
-    if (!group) return
-    const node = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`)
-    if (node && scrollRef.current) {
-      scrollRef.current.scrollTop += node.getBoundingClientRect().top - scrollRef.current.getBoundingClientRect().top - 8
-      pendingDisplayTurn.current = null
-    } else setFirstId(group.messages[0].id)
-  }, [displayRequest, controller.displayLoadedTurnIds, conversationGroups, firstId])
   const toggleSelectMode = useCallback(() => {
     setSelectMode(!selectMode)
     setSelection({ all: !selectMode, ids: new Set() })
@@ -604,19 +506,6 @@ export function Conversation({
     const timer = window.setTimeout(() => setSelectionNotice(null), 1800)
     return () => window.clearTimeout(timer)
   }, [selectionNotice])
-  useLayoutEffect(() => {
-    const action = archiveNavigation.current
-    if (!action || !controller.archivePage) return
-    scrollIntent.reset()
-    archiveNavigation.current = null
-    prependAnchor.current = null
-    const atLatest = action === 'latest'
-    setExpandedHistory(!atLatest)
-    followRef.current = atLatest
-    setFollowing(atLatest)
-    setFirstId(controller.messages[atLatest ? Math.max(0, controller.messages.length - SESSION_MESSAGE_PAGE_SIZE) : 0]?.id ?? null)
-    if (scrollRef.current) scrollRef.current.scrollTop = atLatest ? scrollRef.current.scrollHeight : 0
-  }, [controller.archivePage])
   const inspectActivity = (target: EventTarget | null): void => {
     // Opening details is reading intent. Copy, preview, permission and closing
     // controls must not silently disable following the next streamed result.
@@ -665,33 +554,27 @@ export function Conversation({
       ) : null}
       <div className="work-conversation__body">
         <MessageNav sessionKey={positionKey} messages={controller.messages} groups={conversationGroups}
-          historyIndex={displayTurns} loadedTurnIds={controller.displayLoadedTurnIds} onLoadTurn={(id) => {
-            lastDisplayRequest.current = id
-            return controller.loadDisplayTurn(id)
-          }}
-          firstId={firstId} scrollRef={scrollRef} onWindowChange={setFirstId} onLatest={latest}
-          onInspectHistory={() => {
-            pendingDisplayTurn.current = null
-            setExpandedHistory(true)
-            pauseReading()
-          }} />
+          historyIndex={displayTurns} loadedTurnIds={controller.displayLoadedTurnIds} onLoadTurn={controller.loadDisplayTurn}
+          scrollRef={scrollRef} onLatest={latest} onInspectHistory={pauseReading} onPositioned={rememberNavigationAnchor} />
       <div
         className="work-conversation__scroll"
-        data-browsing-history={historyBrowsing ? 'true' : undefined}
         ref={scrollRef}
         {...scrollIntent.handlers}
+        onScroll={event => {
+          scrollIntent.handlers.onScroll?.(event)
+          if (event.target === event.currentTarget) rememberReadingAnchor()
+        }}
         onClickCapture={(event) => inspectActivity(event.target)}
         onKeyDownCapture={(event) => {
           if (event.key === 'Enter' || event.key === ' ') inspectActivity(event.target)
           scrollIntent.handlers.onKeyDownCapture?.(event)
         }}
       >
-        <div className="work-conversation__content" data-history-start={start} data-history-end={end}>
-          {controller.displayHistoryError ? <div className="work-history-notice" role="alert"><span>{controller.displayHistoryError}</span><button type="button" className="btn btn--sm" disabled={controller.displayHistoryLoading} onClick={() => loadDisplayHistory(lastDisplayRequest.current)}>重新加载完整记录</button></div> : null}
-          {controller.displayHistoryLoading ? <p className="work-history-status" role="status">正在加载完整对话…</p> : null}
+        <div className="work-conversation__content" data-history-start={0} data-history-end={controller.messages.length}>
+          {controller.displayHistoryError ? <div className="work-history-notice" role="alert"><span>{controller.displayHistoryError}</span><button type="button" className="btn btn--sm" disabled={controller.displayHistoryLoading} onClick={loadDisplayHistory}>重新加载完整记录</button></div> : null}
+          {controller.displayHistoryLoading && !controller.messages.length ? <p className="work-history-status" role="status">正在加载完整对话…</p> : null}
           {controller.displayHistoryCompleteness === 'sqlite_compacted' ? <p className="work-history-notice" role="status">此会话的部分早期记录已被旧版存储清理，以下仅显示仍保留的原始对话。</p> : null}
           {!controller.displayTurns && !controller.displayHistoryLoading && !controller.displayHistoryError && controller.historyCompacted ? <div className="work-history-notice" role="status"><span>当前记录经过压缩，正在显示的内容可能不完整。</span><button type="button" className="btn btn--sm" onClick={() => loadDisplayHistory()}>加载完整对话</button></div> : null}
-          {start > 0 && <button type="button" className="btn btn--sm work-history-load" onClick={loadEarlier}>查看更早消息（{start} 条）</button>}
           {controller.loading && !controller.launching && (
             <div className="work-loading">
               <Spinner />
@@ -701,11 +584,11 @@ export function Conversation({
           {!controller.loading && !controller.streaming && !controller.launching && !controller.messages.length && (
             <EmptyState
               icon="chat"
-              title="一起完成这项工作"
-              description="在下方描述目标。执行过程、需要补充的问题和最终结果都会出现在这里。"
+              title={task.archived ? '此会话已归档' : '一起完成这项工作'}
+              description={task.archived ? '暂无对话记录。恢复会话后可继续输入。' : '在下方描述目标。执行过程、需要补充的问题和最终结果都会出现在这里。'}
             />
           )}
-          {visibleConversationGroups.map((group, index) => {
+          {conversationGroups.map((group, index) => {
             const selected = selectedIds.has(group.id)
             const finalMessage = group.messages.findLast(message => message.role === 'assistant')
             // Results belong to the settled turn, including when a later turn is running.
@@ -715,12 +598,10 @@ export function Conversation({
             const originalMessage = group.messages.find(message => message.role === 'user' && !message.rootFollowup &&
               (!finalMessage?.run?.userMessageId || message.id === finalMessage.run.userMessageId))
             const finalResult = finalMessage ? getMessageFinalResult(finalMessage, task.id) : undefined
-            const gap = historyGaps.get(group.id)
-            const complete = selectableGroups.includes(group)
+            const complete = selectableGroupIds.has(group.id)
             const time = formatSessionConversationTime(sessionConversationStartedAt(group), conversationDate)
             return (
               <section key={group.id} data-turn-id={group.id} className={`work-conversation-turn${selectMode ? ' is-selectable' : ''}${selected ? ' is-selected' : ''}`}>
-                {gap && (gap.count > 2 || !following) ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.displayHistoryLoading} onClick={() => loadDisplayHistory(gap.anchor)}>加载前面的 {gap.count} 轮对话</button> : null}
                 {time ? <div className="work-conversation-turn__timestamp"><time dateTime={time.dateTime} title={time.title}>{time.label}</time></div> : null}
                 <MotionPresence show={selectMode}>
                   <header className="work-conversation-turn__header">
@@ -736,7 +617,7 @@ export function Conversation({
                     <span className="work-conversation-turn__summary" title={sessionConversationSummary(group.messages)}>{sessionConversationSummary(group.messages)}</span>
                   </header>
                 </MotionPresence>
-                {sessionConversationEntries(group).map(({ key, message, segments, processKey }) => (
+                {conversationEntries.get(group.id)!.map(({ key, message, segments, processKey }) => (
                   <SessionMessage
                     key={key}
                     message={message}
@@ -759,12 +640,13 @@ export function Conversation({
                     userMessageAction={userMessageAction}
                     regenerateMessageId={message === finalMessage && !sessionMessageRunning(message) ? originalMessage?.id : undefined}
                     showUserActions={!selectMode}
+                    readOnly={Boolean(task.archived)}
                     messageActionBusy={controller.messageActionBusy}
                     canMutateMessage={controller.ready && controller.historyReady && !controller.uploading && !controller.streaming && !controller.launching && !controller.pending.length && !['running', 'waiting'].includes(task.status)}
                     taskId={task.id}
-                    canRecover={message.id === recoverableMessageId}
-                    canRetry={controller.ready && controller.historyReady && !controller.uploading && (!controller.messageActionBusy || controller.restartPending)}
-                    canRespond={controller.ready && controller.historyReady}
+                    canRecover={!task.archived && message.id === recoverableMessageId}
+                    canRetry={!task.archived && controller.ready && controller.historyReady && !controller.uploading && (!controller.messageActionBusy || controller.restartPending)}
+                    canRespond={!task.archived && controller.ready && controller.historyReady}
                     openChange={openChange}
                     revealTool={activitySelection && (segments
                       ? segments.some(segment => segment.kind === 'tools' && segment.tools.some(tool => tool.id === activitySelection.toolId))
@@ -779,13 +661,16 @@ export function Conversation({
                   changes={turnChanges.get(group.id)!} workspacePath={task.workspacePath}
                   streaming={taskRunning} sync={progress}
                   onDisclosureLayout={followBottom}
-                  scopedToTurn={sessionProgressTurnScope(task.id, group).kind === 'turn'} onOpenFile={openActivityFile} onOpenChange={openChange}
+                  scopedToTurn={sessionProgressTurnScope(task.id, group).kind === 'turn'} onOpenFile={openActivityFile}
+                  onOpenChange={change => {
+                    const turnScope = sessionProgressTurnScope(task.id, group)
+                    if (turnScope.kind === 'turn') onOpenArtifacts({ sessionId: task.id, path: change.path, view: 'turn', turnScope })
+                    else openChange(change)
+                  }}
                   onShowChanges={() => onOpenArtifacts({ sessionId: task.id, turnScope: sessionProgressTurnScope(task.id, group) })} /> : null}
               </section>
             )
           })}
-          {newer > 0 ? <button type="button" className="btn btn--sm work-history-load" onClick={loadNewer}>查看较新消息（{newer} 条）</button> : null}
-          {newer === 0 && controller.archivePage?.unversioned && controller.archivePage.lastPage < controller.archivePage.totalPages ? <button type="button" className="btn btn--sm work-history-load" disabled={controller.archiveLoading} onClick={() => loadArchivePage('newer')}>查看较新归档页</button> : null}
           <SessionTurnFeedback controller={controller} announce={!showPinnedFeedback} openActivity={openActivity}
             onVisibilityChange={setInlineFeedbackVisible} />
           {receiptGroups.length ? <SessionProgressSync state={progress} /> : null}
@@ -795,23 +680,28 @@ export function Conversation({
       </div>
       {selectionNotice ? <div className="chat__toast" role="status">{selectionNotice}</div> : null}
       <div className="work-conversation__footer">
+        <div className="work-conversation__floating">
+          {showPinnedFeedback && <SessionRunStatus controller={controller} />}
         <MotionPresence show={showLatest} asChild>
-          <button className="work-follow-latest" type="button" disabled={controller.archiveLoading} onClick={latest}>
-            <Icon name="chevron-down" size={14} />
-            回到最新
-          </button>
-        </MotionPresence>
-        {showPinnedFeedback && <SessionRunStatus controller={controller} />}
-        <NextTurnQueuePanel key={`queue:${controller.draftSource}:${task.id}`} scopeKey={`${controller.draftSource}:${task.id}`} queue={controller.nextTurnQueue} />
+            <button className="work-follow-latest" type="button" disabled={controller.archiveLoading} onClick={latest}>
+              <Icon name="chevron-down" size={14} />
+              回到最新
+            </button>
+          </MotionPresence>
+        </div>
+        {!task.archived && <NextTurnQueuePanel key={`queue:${controller.draftSource}:${task.id}`} scopeKey={`${controller.draftSource}:${task.id}`} queue={controller.nextTurnQueue} />}
         <SessionConnectionNotice key={`connection:${controller.draftSource}:${task.id}`} ready={controller.ready} sessionId={task.id}
           source={getEngineSource()} connection={controller.historyRecovery}
           active={controller.streaming || ['running', 'waiting'].includes(task.status)}
           error={controller.historyError} onRetry={controller.retryHistory} />
-        <ComposerV2 controller={controller} onPreserveReading={() => {
+        {task.archived ? <div className="work-history-notice" role="status">
+          <span>此会话已归档，恢复后可继续对话。</span>
+          <button type="button" className="btn btn--sm" onClick={() => controller.archiveTask(task.id, false)}>恢复会话</button>
+        </div> : <ComposerV2 controller={controller} onPreserveReading={() => {
           // A card or composer resize can briefly create a gap before the
           // ResizeObserver catches up. Preserve intent, not that transient gap.
           if (!followRef.current) pauseReading()
-        }} />
+        }} />}
       </div>
     </section>
   )
@@ -838,6 +728,7 @@ const SessionMessage = memo(function SessionMessage({
   userMessageAction,
   regenerateMessageId,
   showUserActions,
+  readOnly,
   messageActionBusy,
   canMutateMessage,
   taskId,
@@ -867,6 +758,7 @@ const SessionMessage = memo(function SessionMessage({
   userMessageAction: SessionController['userMessageAction']
   regenerateMessageId?: string
   showUserActions: boolean
+  readOnly: boolean
   messageActionBusy: boolean
   canMutateMessage: boolean
   taskId: string
@@ -877,9 +769,9 @@ const SessionMessage = memo(function SessionMessage({
   revealTool: ActivitySelection | null
 }): JSX.Element {
   const pending = useMemo(() =>
-    (message.interactions ?? (message.pending ? [message.pending] : [])).filter(item =>
+    (readOnly ? [] : message.interactions ?? (message.pending ? [message.pending] : [])).filter(item =>
       actionablePending.some(current => current.runId === item.runId && current.requestId === item.requestId && current.toolCallId === item.toolCallId)),
-    [message.interactions, message.pending, actionablePending])
+    [readOnly, message.interactions, message.pending, actionablePending])
   return (
     <MessageContent
       message={message}
@@ -894,10 +786,10 @@ const SessionMessage = memo(function SessionMessage({
       processKey={processKey}
       deliveryResult={deliveryResult}
       usage={usage ? <TurnUsage {...usage} /> : null}
-      replyActions={showUserActions && regenerateMessageId ? <SessionRegenerateReplyButton taskId={taskId} messageId={regenerateMessageId}
+      replyActions={showUserActions && !readOnly && regenerateMessageId ? <SessionRegenerateReplyButton taskId={taskId} messageId={regenerateMessageId}
         canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
       userActions={showUserActions ? <UserMessageActions taskId={taskId} messageId={message.id} content={message.content}
-        canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
+        readOnly={readOnly} canMutate={canMutateMessage} busy={messageActionBusy} onAction={userMessageAction} /> : null}
     >
       {message.error || canRestart || restart?.busy ? <ErrorNotice error={message.error || '任务已停止'} context={message.run} compact
         resolved={restart?.resolved} busy={restart?.busy} busyLabel={restart?.label}

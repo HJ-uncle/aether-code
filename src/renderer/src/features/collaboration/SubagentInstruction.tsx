@@ -8,11 +8,12 @@ import { SessionUserMessageBody } from '../conversation/MessageContent'
 import type { SubagentTranscriptMemory } from './SubagentTranscript'
 import { sessionSubagentInstructionParts, sessionSubagentInstructionPreview, sessionSubagentInstructionTime } from './subagent-instruction'
 
-export function SubagentInstruction({ message, memory, redraw, fileContext }: {
+export function SubagentInstruction({ message, memory, redraw, fileContext, senderLabel }: {
   message: ChatMessage
   memory: SubagentTranscriptMemory
   redraw: () => void
   fileContext: ChatFileContext
+  senderLabel?: string
 }): JSX.Element {
   const container = useRef<HTMLElement>(null)
   const collapseTop = useRef<number | null>(null)
@@ -50,7 +51,9 @@ export function SubagentInstruction({ message, memory, redraw, fileContext }: {
   return <article ref={container} className={`work-message work-message--user work-subagent-instruction${open ? ' is-open' : ''}`}
     data-message-id={message.id} data-delegated={parts ? 'true' : undefined} aria-label="用户消息">
     <div className="work-subagent-instruction__meta">
-      <span>用户</span>
+      {message.collaborationOrigin ? <span title={message.collaborationOrigin.participantId}>
+        {senderLabel?.trim() ? `子代理 · ${senderLabel.trim()}` : `其他会话 · ${message.collaborationOrigin.participantId}`}
+      </span> : null}
       {time ? <time dateTime={time.dateTime} title={time.title}>{time.label}</time> : null}
       {preview.truncated ? <button type="button" className="work-subagent-instruction__toggle" aria-expanded={open}
         aria-controls={`${id}-body`} aria-label={open ? '收起用户消息' : '展开用户消息全文'} onClick={() => toggle(message.id)}>

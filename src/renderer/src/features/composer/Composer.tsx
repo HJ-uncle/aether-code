@@ -30,7 +30,7 @@ import { getEngineSource, isRemoteEngine, subscribeEngineSource } from '@rendere
 import { LazyAgentManager as AgentManager } from '../agents/LazyAgentManager'
 import { CompletionPopover } from '@renderer/ui/CompletionPopover'
 import type { useSessionController } from '../sessions/runtime'
-import { flushSessionDrafts, getSessionDraft, useSessionDraft, type SessionDraft } from '../sessions/state'
+import { flushSessionDrafts, getSessionDraft, useSessionDraft } from '../sessions/state'
 import {
   AttachmentPreviewDialog,
   type AttachmentPreview
@@ -73,7 +73,6 @@ export function Composer({
   const references = useSessionReferenceNavigation()
   const imageConversation = useImageConversation()
   const draftState = useSessionDraft(controller.draftSource, controller.activeTask?.id ?? null)
-  const userDraftRef = useRef<SessionDraft | null>(null)
   const restoredToolkitDraftScopes = useRef(new Set<string>())
   const mentionsRef = useRef<Mention[]>(draftState.mentions)
   const [mentionRevision, refreshMentionLabels] = useState(0)
@@ -221,7 +220,7 @@ export function Composer({
     const next = preserveMentions(action.endsWith('insert') ? draftLiveRef.current + args.text : args.text, mentionsRef.current)
     if (!controller.editDraft(next.text, next.mentions)) throw new Error('草稿无法更新，原内容已保留。')
     inputRef.current?.setDraft(next.text, next.mentions)
-    draftRevisionRef.current++; draftLiveRef.current = next.text; mentionsRef.current = next.mentions; userDraftRef.current = next
+    draftRevisionRef.current++; draftLiveRef.current = next.text; mentionsRef.current = next.mentions
     return { text: next.text, mentions: next.mentions }
   }
   useEffect(() => {
@@ -231,22 +230,11 @@ export function Composer({
     setMentionQuery(null)
     setResourceQuery(null)
     setAgentsOpen(false)
-    inputRef.current?.setDraft(controller.draft, mentionsRef.current)
     return () => {
       polishEpoch.current += 1
       flushSessionDrafts(controller.draftSource)
     }
   }, [controller.activeTask?.id, controller.draftSource, home])
-  useEffect(() => {
-    // Rebuild chips only for an external edit; rebuilding typed text would reset the caret.
-    if (
-      userDraftRef.current?.text === draftState.text &&
-      userDraftRef.current.mentions === draftState.mentions
-    )
-      return
-    userDraftRef.current = null
-    inputRef.current?.setDraft(draftState.text, draftState.mentions)
-  }, [draftState])
   useEffect(() => {
     if (!inputRef.current || controller.workspaceSelectionBusy) return
     controller.inlinePendingFiles(file => {
@@ -390,6 +378,7 @@ export function Composer({
         <ComposerInput
           ref={inputRef}
           value={draft}
+          mentions={draftState.mentions}
           attachmentReferences={currentAttachmentReferences}
           attachmentRoot={controller.workspacePath ?? null}
           attachmentSessionId={controller.securitySessionId ?? undefined}
@@ -414,7 +403,6 @@ export function Composer({
             draftRevisionRef.current += 1
             draftLiveRef.current = text
             mentionsRef.current = mentions
-            userDraftRef.current = { text, mentions }
             // Finishing or cancelling IME can leave the text unchanged while uploads await insertion.
             refreshMentionLabels(revision => revision + 1)
           }}

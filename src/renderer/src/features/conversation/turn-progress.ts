@@ -3,6 +3,7 @@ import type { ChatMessage } from '@renderer/core/engine/useChat'
 import type { SessionArtifactTurnScope } from '../artifacts/session-artifacts'
 import { sessionChangePathKey } from '../artifacts/file-changes'
 import { sessionProgressChanges, type SessionProgressChange } from './progress-state'
+import { turnFileChangeSummaries } from '../artifacts/turn-file-changes'
 
 export interface SessionTurnProgressGroup {
   id: string
@@ -119,6 +120,11 @@ export function sessionTurnProgressChanges(
     changes.push({ ...change, sessionId })
     assigned.set(owner, changes)
   }
-  for (const [owner, changes] of assigned) result.set(groups[owner].id, sessionProgressChanges(sessionId, [], changes, root))
+  for (const [owner, changes] of assigned) {
+    const scope = sessionProgressTurnScope(sessionId, groups[owner])
+    const files = sessionProgressChanges(sessionId, [], changes, root).filter(file => file.records.some(change => change.status !== 'reverted'))
+    result.set(groups[owner].id, scope.kind === 'turn' ? files.map(file => ({ ...file,
+      summaries: turnFileChangeSummaries(sessionId, scope.turnId, file.records) })) : files)
+  }
   return result
 }

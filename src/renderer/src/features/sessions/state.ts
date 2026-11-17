@@ -17,6 +17,8 @@ export const SESSION_TASK_LABEL_COLORS: readonly SessionTaskLabelColor[] = ['red
 /** Only the execution watermark and waiting counts belong in the task list. */
 export interface SessionTaskActivity {
   runId: string
+  /** Continuing a stopped root preserves runId but starts a new execution. */
+  attemptId?: string
   seq: number
   version: number
   status: RootRunStatus
@@ -343,8 +345,9 @@ export function updateSessionState(source: string, update: (state: SessionState)
     if (!oldTask || oldTask.draft !== task.draft || oldTask.mentions !== task.mentions)
       publishDraft(source, task.id, { text: task.draft, mentions: task.mentions ?? [] })
   }
+  const nextTaskIds = new Set(next.tasks.map(task => task.id))
   for (const id of originalTasks.keys()) {
-    if (next.tasks.some(task => task.id === id)) continue
+    if (nextTaskIds.has(id)) continue
     // A removed task must not retain an editor snapshot that a late autosave
     // or a mounted draft subscriber can read back after the structural delete.
     drafts.get(source)?.delete(id)

@@ -307,6 +307,7 @@ export function remoteRequestError(mode: 'embedded' | 'remote', method: string, 
   // Truncation only removes engine-owned conversation rows. It is the remote
   // counterpart of retrying a turn; no local workspace path is resolved here.
   if (method === 'POST' && pathname === '/api/v1/conversation/truncate') return null
+  if (method === 'POST' && pathname === '/api/v1/conversation/rollback') return null
   // Change snapshots are stored by the engine. A remote revert therefore
   // operates on the remote engine workspace and does not require a local path.
   if (method === 'POST' && /^\/api\/v1\/changes\/revert-(?:preview|batch)$/.test(pathname)) return null

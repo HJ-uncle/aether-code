@@ -1,6 +1,7 @@
 /** Fresh isolated Electron acceptance for Work's document preview toolbar.
  * A generated DOCX crosses real IPC, archive worker and iframe rendering.
- * Covers version menus, zoom, keyboard focus and theme/narrow layout. No model,
+ * Historical scopes never read current bytes; explicit current preview covers
+ * version menus, zoom, keyboard focus and theme/narrow layout. No model,
  * export/save dialog, production profile, or existing E2E suite is used. */
 import { _electron as electron, expect, test, type ElectronApplication, type Page, type Locator } from '@playwright/test'
 import { createServer } from 'node:http'
@@ -24,7 +25,7 @@ const history = [{ id: run.userMessageId, role: 'user', content: title, createdA
 const changes: EngineFileChange[] = [{ id: 'document-toolbar-change', sessionId, runId: run.runId, turnId: run.turnId,
   path: filePath, kind: 'write', oldContent: null, newContent: null, isNew: true, oldHash: 'missing', newHash: 'a'.repeat(64),
   truncated: false, status: 'pending', createdAt: now + 500 }]
-let app: ElectronApplication | undefined, page: Page, fixture = '', bytes = Buffer.alloc(0)
+let app: ElectronApplication | undefined, page: Page, fixture = '', bytes: Buffer = Buffer.alloc(0)
 const errors: string[] = [], mutations: string[] = [], reads: string[] = []
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 const server = createServer((request, response) => { void (async () => {
@@ -79,6 +80,13 @@ async function expectDocument(): Promise<void> {
   await expect(detail().locator('iframe.document-preview__frame').first().contentFrame().getByText('DOCUMENT_TOOLBAR_REAL_CONTENT')).toBeVisible()
   await expect(detail().locator('[data-document-capability="docx"]')).toContainText('只读预览')
 }
+async function expectHistoricalDocument(label: string, readCount: number): Promise<void> {
+  await expect(scope()).toContainText(label)
+  await expect(detail().locator('.work-session-artifacts__notice')).toContainText('此类文件的历史内容无法在修改记录中预览')
+  await expect(detail().locator('[data-artifact-view="current"]')).toHaveCount(0)
+  await expect(detail().locator('iframe.document-preview__frame')).toHaveCount(0)
+  expect(reads, `${label} must not read the current workspace file`).toHaveLength(readCount)
+}
 
 test.beforeAll(async () => {
   mkdirSync(tempRoot, { recursive: true }); fixture = mkdtempSync(join(tempRoot, 'document-toolbar-profile-'))
@@ -106,7 +114,8 @@ test.beforeAll(async () => {
   }, { key: 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin })), sessionId, title, modelId, now })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   await page.locator('.work-progress-panel__review-summary').click()
-  await expect(scope()).toContainText('当前内容'); await expectDocument()
+  await expectHistoricalDocument('本轮改动', 0)
+  await choose(scope(), '当前内容'); await expectDocument()
 })
 test.afterEach(async ({}, info) => {
   if (page && !page.isClosed()) await page.screenshot({ path: info.outputPath(`${info.status}.png`), animations: 'allow' })
@@ -121,15 +130,16 @@ test.afterAll(async () => {
   }
 })
 
-test('当前内容、待确认改动、修改记录保留真实文档预览；缩放改变文档而非仅更新标签', async () => {
+test('历史范围不冒充当前文档；显式预览当前内容后缩放改变真实文档', async () => {
   await expect(detail().locator('.work-session-artifacts__file-header').getByRole('button', { name: '差异范围', exact: true })).toBeVisible()
   await expect(detail().locator('.work-session-artifacts__scope')).toHaveCount(0)
   await expect(detail().locator('.document-preview__header > .document-preview__format-note')).toBeVisible()
   await expect(detail().locator('.document-preview__header > .document-preview__toolbar--zoom')).toBeVisible()
-  for (const label of ['待确认改动', '修改记录', '当前内容']) {
-    await choose(scope(), label); await expectDocument()
-    if (label !== '当前内容') await expect(detail().locator('.work-session-artifacts__notice')).toContainText('不代表所选历史版本')
+  const initialReads = reads.length
+  for (const label of ['待确认改动', '修改记录', '本轮改动']) {
+    await choose(scope(), label); await expectHistoricalDocument(label, initialReads)
   }
+  await choose(scope(), '当前内容'); await expectDocument()
   const frame = detail().locator('iframe.document-preview__frame').first().contentFrame()
   const initialScale = await frame.locator('main.document-page').evaluate(element => Number(element.style.zoom))
   await choose(zoom(), '100%')

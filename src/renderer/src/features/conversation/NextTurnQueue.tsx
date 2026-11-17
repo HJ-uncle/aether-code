@@ -27,7 +27,7 @@ export function NextTurnQueuePanel({ queue, scopeKey }: { queue: NextTurnQueue; 
     return () => { scope.current = false }
   }, [scopeKey, source])
   useEffect(() => { setEditing(null); setError(null); setExpanded(false) }, [scopeKey])
-  useEffect(() => { if (current && current.phase === 'pending') { editor.current?.setDraft(current.envelope.draft.text, current.envelope.draft.mentions); editor.current?.focus() } }, [editing])
+  useEffect(() => { if (current && current.phase === 'pending') editor.current?.focus() }, [editing])
   const run = async (operation: () => Promise<unknown>) => { try { setError(null); await operation() } catch (cause) {
     setError(cause instanceof Error ? cause.message : '操作未保存'); requestAnimationFrame(() => errorRef.current?.focus())
   } }
@@ -95,7 +95,7 @@ export function NextTurnQueuePanel({ queue, scopeKey }: { queue: NextTurnQueue; 
               <IconButton icon="trash" label="取消这条待发消息" disabled={queue.saving} onClick={() => void run(() => queue.mutate({ kind: 'remove', id: entry.id, entryRevision: entry.revision, at: Date.now() }))} />
             </div> : null}</div>
             <MotionPresence show={active && canEdit}><div className="work-next-turn__editor" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); closeEditor() } }}>
-              <ComposerInput ref={editor} value={text} ariaLabel="编辑待发消息正文" disabled={queue.saving} onChange={(value, refs) => { setText(value); setMentions(refs) }} onSubmit={save} onPasteFiles={() => setError('文件请在主输入框添加；此处编辑正文，现有附件会保留')} />
+              <ComposerInput ref={editor} value={text} mentions={mentions} ariaLabel="编辑待发消息正文" disabled={queue.saving} onChange={(value, refs) => { setText(value); setMentions(refs) }} onSubmit={save} onPasteFiles={() => setError('文件请在主输入框添加；此处编辑正文，现有附件会保留')} />
               <div className="work-next-turn__editor-actions"><button className="btn btn--sm" type="button" disabled={queue.saving} onClick={closeEditor}>取消</button><button className="btn btn--primary btn--sm" type="button" disabled={queue.saving || !text.trim()} onClick={save}>{queue.saving ? '保存中…' : '保存正文'}</button></div>
             </div></MotionPresence>
           </li> })}

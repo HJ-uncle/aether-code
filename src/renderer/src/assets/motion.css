@@ -75,9 +75,9 @@
 }
 
 /* Hover tools keep their existing visibility rules. The always-visible Work
- * reply footer is excluded so its usage text and controls stay in place. */
+ * reply footer and workspace tab close buttons stay in place. */
 :root :is(.message__actions, .work-user-message-actions,
-  .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
+  .editor-tab__close, .work-resource-tabs__close,
   .welcome__recent-remove, .recent-dialog__remove,
   .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
   .logline__chevron, .work-agent-card__actions) {
@@ -86,11 +86,11 @@
     background-color var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease);
   translate: -2px 0;
 }
-:root :is(.message, .work-message, .editor-tab, .work-workspace__tab, .work-resource-tabs__item,
+:root :is(.message, .work-message, .editor-tab, .work-resource-tabs__item,
   .welcome__recent, .recent-dialog__item, .git-panel__group-head,
   .git-panel__stash-row, .explorer__recent-row, .work-sidebar__task, .logline-wrap, .work-agent-card):is(:hover, :focus-within)
   :is(.message__actions, .work-user-message-actions,
-    .editor-tab__close, .work-workspace__tab-close, .work-resource-tabs__close,
+    .editor-tab__close, .work-resource-tabs__close,
     .welcome__recent-remove, .recent-dialog__remove,
     .git-panel__group-btn, .git-panel__stash-actions, .explorer__recent-del,
     .logline__chevron, .work-agent-card__actions),

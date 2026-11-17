@@ -42,7 +42,8 @@ import type { MemoryScope } from './memory'
 import { ARCHIVE_PAGE_SIZE, loadArchiveWindow, archiveDisplayHistory, type ArchiveWindow, type ArchivePageAction, type ArchivePageInfo } from './archive-pages'
 import { createIdleRootDiscovery } from './idle-root-discovery'
 import { createHistoryMutationGuard } from './history-mutation'
-import { cacheDisplayHistory, checkDisplayHistory, mergeDisplayHistory, type DisplayHistoryCache, type DisplayHistoryCompleteness, type DisplayHistoryTurn } from './display-history'
+import { mergeDisplayHistory, type DisplayHistoryCache, type DisplayHistoryCompleteness, type DisplayHistoryTurn } from './display-history'
+import { DisplayHistoryUnsupportedError, loadCompleteDisplayHistory } from './complete-display-history'
 import { normalizeRootFollowupMessage, type RootFollowupMessage } from './root-followup-message'
 import { applyProjectedFinalResult } from './final-result'
 import { applyProjectedUserMessage, applyProjectedAssistantSegment, bindProjectedAssistantId, applyProjectedUsage } from './chat-timeline'
@@ -137,6 +138,8 @@ export interface ChatMessage {
   contextUsageEstimated?: boolean
   /** 所属轮次 id（引擎 conversations 表的 conversation_id）；历史回放合并同轮 assistant 行用 */
   conversationId?: string
+  /** Authenticated peer delivery origin for child transcript user rows. */
+  collaborationOrigin?: { kind: 'peer'; participantId: string; body: string }
 }
 
 /**
@@ -1244,43 +1247,32 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
       displayReadTokenRef.current = token
       setDisplayHistoryLoading(true)
       setDisplayHistoryError(null)
-      let anchor = userMessageId, missingAnchor = false
       try {
-        // Only a destructive mutation needs a second tail read. Ordinary appends
-        // keep old complete bodies and can refresh the index in a single request.
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const result = await engine.request<unknown>({ method: 'GET', path: '/conversation/display',
-            query: { sessionId, limit: '2', groupRootFollowups: 'true', ...(anchor ? { anchorMessageId: anchor } : {}) } })
-          if (!current() || displayReadTokenRef.current !== token) return false
-          if (!result.ok) {
-            if (anchor && result.code === 40400 && attempt === 0) { anchor = undefined; missingAnchor = true; continue }
-            if (result.code === 404 || result.code === 405 || result.code === 501 || result.code === 50101) {
-              displayUnsupportedRef.current = true
-              throw new Error('当前引擎暂不支持完整对话浏览，当前显示的是可恢复记录；请更新引擎后重新加载')
-            }
-            throw new Error(result.message || '加载完整对话失败，请重试')
-          }
-          const page = checkDisplayHistory(result.data, anchor)
-          displayUnsupportedRef.current = false
-          const previous = displayHistoryRef.current
-          const mutated = previous?.sessionId === sessionId && previous.page.mutationRevision !== page.mutationRevision
-          const cache = cacheDisplayHistory(sessionId, page, previous)
-          if (mutated) {
-            // An externally edited/deleted old turn cannot stay authoritative
-            // merely because this viewer observed it before the mutation.
-            const running = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
-            for (const turn of previous.page.turns) if (turn.userMessageId !== running?.userMessageId ||
-              !['running', 'waiting'].includes(running.status)) displayLiveTurnIdsRef.current.delete(turn.userMessageId)
-          }
-          displayHistoryRef.current = cache
-          setDisplayHistory(cache)
-          if (mutated && anchor && attempt === 0) { anchor = undefined; continue }
-          if (missingAnchor) setDisplayHistoryError('这轮对话已被删除或回退，已刷新对话列表')
-          return !missingAnchor && (!userMessageId || cache.bodies.has(userMessageId))
+        const previous = displayHistoryRef.current
+        const loaded = await loadCompleteDisplayHistory({ sessionId, previous, userMessageId,
+          current: () => current() && displayReadTokenRef.current === token,
+          request: (anchor, limit) => engine.request<unknown>({ method: 'GET', path: '/conversation/display',
+            query: { sessionId, limit: String(limit), groupRootFollowups: 'true', ...(anchor ? { anchorMessageId: anchor } : {}) } }) })
+        if (!loaded || !current() || displayReadTokenRef.current !== token) return false
+        const { cache, missingAnchor } = loaded
+        displayUnsupportedRef.current = false
+        const mutated = previous?.sessionId === sessionId && previous.page.mutationRevision !== cache.page.mutationRevision
+        if (mutated) {
+          // An externally edited/deleted old turn cannot stay authoritative
+          // merely because this viewer observed it before the mutation.
+          const running = activeRunIdRef.current ? rootRunsRef.current.get(activeRunIdRef.current) : undefined
+          for (const turn of previous.page.turns) if (turn.userMessageId !== running?.userMessageId ||
+            !['running', 'waiting'].includes(running.status)) displayLiveTurnIdsRef.current.delete(turn.userMessageId)
         }
-        return false
+        displayHistoryRef.current = cache
+        setDisplayHistory(cache)
+        if (missingAnchor) setDisplayHistoryError('这轮对话已被删除或回退，已刷新对话列表')
+        return !missingAnchor && (!userMessageId || cache.bodies.has(userMessageId))
       } catch (cause) {
-        if (current() && displayReadTokenRef.current === token) setDisplayHistoryError(cause instanceof Error ? cause.message : '加载完整对话失败，请重试')
+        if (current() && displayReadTokenRef.current === token) {
+          displayUnsupportedRef.current = cause instanceof DisplayHistoryUnsupportedError
+          setDisplayHistoryError(cause instanceof Error ? cause.message : '加载完整对话失败，请重试')
+        }
         return false
       } finally {
         if (displayReadTokenRef.current === token) { displayReadTokenRef.current = null; setDisplayHistoryLoading(false) }
@@ -1884,9 +1876,11 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
       const mutation = historyMutationGuard.begin(scope)
       const previousReport = getRevertReport(sessionId)
       let historyRemoved = false
+      let rollbackAttempted = false
       try {
         const report = await revertConversationFrom(async <T,>(input: Parameters<typeof engine.requestOrThrow>[0]) => {
           assertEngineSource(source)
+          if (input.path === '/conversation/rollback') rollbackAttempted = true
           const result = await engine.requestOrThrow<T>(input)
           assertEngineSource(source)
           return result
@@ -1916,7 +1910,10 @@ export function useChat(options: { commandOwner?: 'work' } = {}): {
         // Reload its projection even though the transcript must remain intact.
         try {
           const report = getRevertReport(sessionId)
-          if (!historyRemoved && report && report !== previousReport && scopeIsCurrent(scope)) {
+          if (!historyRemoved && (rollbackAttempted || report && report !== previousReport) && scopeIsCurrent(scope)) {
+            invalidateHistoryRuntimeCache(sessionId)
+            setSessionModel(null)
+            onHistoryChanged?.()
             resetDisplayHistory()
             await restoreSession(sessionId)
           }

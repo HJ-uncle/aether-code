@@ -26,6 +26,7 @@ export interface ChangeReviewActionsProps {
   mode?: SessionChangeReviewMode
   presentation?: 'buttons' | 'menu'
   compact?: boolean
+  iconOnly?: boolean
   /** A surrounding toolbar may already explain why all its actions are unavailable. */
   showBlockedHint?: boolean
 }
@@ -42,7 +43,7 @@ export function ChangeReviewActions(props: ChangeReviewActionsProps): JSX.Elemen
   return <ScopedSessionChangeReviewActions key={`${source}:${props.sessionId}`} {...props} source={source} />
 }
 
-function ScopedSessionChangeReviewActions({ sessionId, workspacePath, changes, streaming, disabled = false, refreshing = false, onChanged, mode = 'batch', presentation = 'buttons', compact = false, showBlockedHint = true, source }: ChangeReviewActionsProps & { source: number }): JSX.Element | null {
+function ScopedSessionChangeReviewActions({ sessionId, workspacePath, changes, streaming, disabled = false, refreshing = false, onChanged, mode = 'batch', presentation = 'buttons', compact = false, iconOnly = false, showBlockedHint = true, source }: ChangeReviewActionsProps & { source: number }): JSX.Element | null {
   const { ready } = useApp()
   const scope = `${source}:${sessionId}`
   const locked = useSyncExternalStore(subscribeLocks, () => locks.has(scope))
@@ -168,11 +169,11 @@ function ScopedSessionChangeReviewActions({ sessionId, workspacePath, changes, s
           ...(keepTargets.length ? [{ id: 'keep', label: keepLabel, icon: 'check' as const, onSelect: () => void act('keep') }] : []),
           ...(revertTargets.length ? [{ id: 'revert', label: revertLabel, icon: 'undo' as const, danger: true, onSelect: () => void act('revert') }] : [])
         ]} /> : null) : <>
-      {keepTargets.length ? <button type="button" aria-label={keepLabel} disabled={!canAct} onClick={() => void act('keep')}>
-        {working === 'keep' ? <Spinner size={13} /> : <Icon name="check" size={13} />}{compact ? '保留' : keepLabel}
+      {keepTargets.length ? <button type="button" className={iconOnly ? 'work-change-review__icon work-change-review__icon--keep' : undefined} aria-label={keepLabel} title={blockedReason ?? keepLabel} disabled={!canAct} onClick={() => void act('keep')}>
+        {working === 'keep' ? <Spinner size={iconOnly ? 15 : 13} /> : <Icon name="check" size={iconOnly ? 15 : 13} />}{iconOnly ? null : compact ? '保留' : keepLabel}
       </button> : null}
-      {revertTargets.length ? <button type="button" aria-label={revertLabel} disabled={!canAct} onClick={() => void act('revert')}>
-        {working === 'revert' ? <Spinner size={13} /> : <Icon name="undo" size={13} />}{mode === 'turn' && working === 'revert' ? '处理中' : compact ? '撤回' : revertLabel}
+      {revertTargets.length ? <button type="button" className={iconOnly ? 'work-change-review__icon work-change-review__icon--revert' : undefined} aria-label={revertLabel} title={blockedReason ?? revertLabel} disabled={!canAct} onClick={() => void act('revert')}>
+        {working === 'revert' ? <Spinner size={iconOnly ? 15 : 13} /> : <Icon name="undo" size={iconOnly ? 15 : 13} />}{iconOnly ? null : mode === 'turn' && working === 'revert' ? '处理中' : compact ? '撤回' : revertLabel}
       </button> : null}
       </>}
       {showBlockedHint && mode !== 'turn' && streaming && (keepTargets.length || revertTargets.length) ? <span className="work-change-review__hint">任务结束后可确认</span> : null}

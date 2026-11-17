@@ -20,6 +20,8 @@ export interface AccountUser {
   createdAt: string
   identities: AccountIdentity[]
   sessionId?: string
+  authenticatedAt?: string
+  roles?: string[]
 }
 export interface AccountProvider {
   id: string
@@ -35,6 +37,8 @@ export interface AccountState {
   message: string | null
   registrationEnabled: boolean
   transport?: 'secure' | 'local' | 'http-trusted' | 'http-untrusted'
+  connectionMode?: 'embedded' | 'remote'
+  recovery?: { available: boolean; exportedAt: string | null }
 }
 export interface AccountProfileInput {
   name?: string
@@ -55,13 +59,16 @@ export interface AccountApi {
   setHttpTrust(serviceUrl: string, trusted: boolean): Promise<AccountState>
   register(): Promise<AccountState>
   login(recoveryKey: string): Promise<AccountState>
+  reauthenticate(recoveryKey: string): Promise<AccountState>
   updateProfile(input: AccountProfileInput): Promise<AccountState>
   logout(all?: boolean): Promise<AccountState>
   sessions(): Promise<AccountSession[]>
   revokeSession(id: string): Promise<void>
   exportRecovery(): Promise<boolean>
+  regenerateRecovery(): Promise<AccountState>
+  copyRecovery(): Promise<void>
   importRecovery(): Promise<AccountState | null>
-  externalLogin(providerId: string, mode: 'login' | 'link', credential?: string): Promise<AccountState>
+  externalLogin(providerId: string, mode: 'login' | 'link' | 'reauth', credential?: string): Promise<AccountState>
   cancelExternalLogin(): Promise<void>
   unlink(providerId: string): Promise<AccountState>
   onChanged(listener: (state: AccountState) => void): () => void

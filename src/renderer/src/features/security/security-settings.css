@@ -7,7 +7,7 @@
 .security-mode__copy { display: grid; flex: 1; gap: 4px; min-width: 0; }
 .security-mode__copy strong { color: var(--fg-strong); font-size: 13px; font-weight: 500; }
 .security-mode__copy > span { color: var(--fg-muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
-.security-mode__radio { display: grid; place-items: center; flex: 0 0 18px; width: 18px; height: 18px; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: 50%; }
+.security-mode__radio { display: grid; place-items: center; flex: 0 0 18px; width: 18px; height: 18px; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: var(--radius-round); }
 .security-mode[aria-checked='true'] .security-mode__radio { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 .security-mode-status { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-height: 20px; color: var(--fg-muted); font-size: 11px; line-height: 1.55; }
 .security-mode-status > svg { flex: none; }

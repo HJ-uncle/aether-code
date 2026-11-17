@@ -3,9 +3,10 @@
 .work-session-artifacts button:disabled { cursor: default; opacity: 0.5; }
 .work-session-artifacts button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .work-session-artifacts__control-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.work-session-artifacts__toolbar { flex: 0 0 auto; padding: var(--space-2) var(--space-3) var(--space-1); background: var(--bg-sidebar); }
-.work-session-artifacts__controls { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(160px, 1fr) var(--control-h); align-items: center; gap: var(--space-2); }
+.work-session-artifacts__toolbar { flex: 0 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) auto var(--control-h); align-items: center; gap: var(--space-1) var(--space-2); min-height: 44px; max-height: 35%; overflow: auto; padding: var(--space-2) var(--space-3); box-sizing: border-box; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
+.work-session-artifacts__controls { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
 .work-session-artifacts__turn, .work-session-artifacts .select, .work-session-artifacts .popover__trigger { min-width: 0; }
+.work-session-artifacts__turn { flex: 0 1 auto; max-width: 360px; }
 .work-session-artifacts__turn .select { display: block; }
 /* The inline-flex popover wrapper must shrink too, or a long request escapes
  * its grid column before the value's ellipsis can take effect. */
@@ -13,20 +14,24 @@
 .work-session-artifacts__turn .popover__trigger,
 .work-session-artifacts__turn .select__trigger { width: 100%; min-width: 0; max-width: 100%; }
 .work-session-artifacts .select__trigger { width: 100%; min-width: 0; min-height: var(--control-h); height: var(--control-h); border: 0; border-radius: var(--radius); font-size: 12px; box-shadow: none; background: transparent; }
+:root .work-session-artifacts .work-session-artifacts__turn .select .select__trigger { padding-inline: var(--space-2); border: 0; background: transparent; box-shadow: none; font-size: 12px; font-weight: 500; }
+:root .work-session-artifacts .work-session-artifacts__turn .select .select__trigger:is(:hover, [aria-expanded='true']) { background: var(--bg-hover); }
 .work-session-artifacts .select__trigger:hover:not(:disabled) { background: var(--bg-hover); }
 .work-session-artifacts__search { position: relative; min-width: 0; display: flex; align-items: center; }
-.work-session-artifacts__search input { width: 100%; box-sizing: border-box; min-width: 0; height: var(--control-h); padding: 0 var(--space-2) 0 28px; border: 0; border-radius: var(--radius); background: var(--bg-hover); color: var(--fg); }
+.work-session-artifacts__search input { width: 100%; box-sizing: border-box; min-width: 0; height: var(--control-h); padding: 0 var(--space-2) 0 28px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--fg); }
 .work-session-artifacts__search > svg { position: absolute; left: var(--space-2); color: var(--fg-muted); pointer-events: none; }
 .work-session-artifacts__search input::placeholder { color: var(--fg-muted); }
-.work-session-artifacts__refresh, .work-session-artifacts__file-header button, .work-session-artifacts__error > button { display: inline-flex; align-items: center; justify-content: center; width: var(--control-h); height: var(--control-h); flex: 0 0 auto; border: 0; border-radius: var(--radius); padding: 0; background: transparent; color: var(--fg-muted); cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
-.work-session-artifacts__refresh:hover:not(:disabled), .work-session-artifacts__file-header button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
-.work-session-artifacts__header { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.work-session-artifacts__refresh, .work-session-artifacts__back, .work-session-artifacts__file-header button, .work-session-artifacts__error > button { display: inline-flex; align-items: center; justify-content: center; width: var(--control-h); height: var(--control-h); flex: 0 0 auto; border: 0; border-radius: var(--radius); padding: 0; background: transparent; color: var(--fg-muted); cursor: pointer; transition: background var(--duration-fast) var(--ease-out); }
+.work-session-artifacts__refresh { grid-column: 3; grid-row: 1; }
+.work-session-artifacts__refresh:hover:not(:disabled), .work-session-artifacts__back:hover, .work-session-artifacts__file-header button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.work-session-artifacts__header { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); flex: 0 0 auto; min-height: 22px; padding-inline: var(--space-1); color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.work-session-artifacts__header > .work-session-artifacts__mode { color: var(--fg); font-weight: 600; }
+.work-session-artifacts__header > span[aria-label] { margin-left: auto; }
 .work-session-artifacts__activity { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
-.work-session-artifacts__batch { flex: 0 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-3); min-height: var(--control-h); max-height: 35%; overflow: auto; padding: 0 var(--space-3) var(--space-1); border-bottom: 1px solid var(--border); background: var(--bg-sidebar); }
-.work-session-artifacts__batch > .work-session-artifacts__header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-height: var(--control-h); }
-/* The receipt spans the toolbar, so expanding it never moves the file count. */
+.work-session-artifacts__batch { display: contents; }
+/* Reports stay outside titles and span the toolbar without narrowing its controls. */
 .work-session-artifacts__batch > .work-change-review { display: contents; }
-.work-session-artifacts__batch .work-change-review__actions { grid-column: 2; grid-row: 1; }
+.work-session-artifacts__batch .work-change-review__actions { grid-column: 2; grid-row: 1; flex-wrap: nowrap; }
 .work-session-artifacts__batch .change-revert-report,
 .work-session-artifacts__batch .work-change-review__error,
 .work-session-artifacts__batch .work-change-review__notice { grid-column: 1 / -1; margin: 0 0 var(--space-1); }
@@ -35,8 +40,10 @@
 .work-session-artifacts .work-change-review__actions button { min-height: var(--control-h); padding: 0 var(--space-2); border-radius: var(--radius); box-shadow: none; background: transparent; color: var(--fg-muted); }
 .work-session-artifacts .work-change-review__actions button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
 .work-session-artifacts .work-change-review__menu .action-menu__trigger { width: auto; gap: var(--space-1); }
-.work-session-artifacts__split { flex: 1; display: grid; grid-template-columns: clamp(192px, 29%, 264px) minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
-.work-session-artifacts__tree { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-2) 0; border-right: 1px solid var(--border); background: var(--bg-sidebar); }
+.work-session-artifacts__split { flex: 1; display: grid; grid-template-columns: clamp(208px, 29%, 264px) minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
+.work-session-artifacts__navigation { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--border); background: var(--bg-sidebar); }
+.work-session-artifacts__navigation-head { flex: 0 0 auto; display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-2) var(--space-1); }
+.work-session-artifacts__tree { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 0 var(--space-1) var(--space-2); }
 .work-session-artifacts__tree .tree-row { gap: var(--space-1); padding-right: var(--space-2); border-radius: var(--radius); }
 .work-session-artifacts__tree .tree-row.is-selected { background: var(--bg-selected-inactive); color: var(--fg-strong); }
 .work-session-artifacts__tree:focus-within .tree-row.is-selected { background: var(--accent-soft); color: var(--fg-strong); }
@@ -49,10 +56,16 @@
 .work-session-artifacts__file-status { margin-left: auto; flex: 0 0 auto; min-width: 12px; text-align: center; color: var(--git-modified); font: 500 11px/1.5 var(--font-mono); }
 .work-session-artifacts__file-status[data-file-status="U"] { color: var(--git-added); }
 .work-session-artifacts__file-status[data-file-status="D"] { color: var(--git-deleted); }
-.work-session-artifacts__detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
-.work-session-artifacts__file-header { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--chrome-h); padding: var(--space-1) var(--space-3); }
-.work-session-artifacts__file-header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; line-height: 18px; }
+.work-session-artifacts__detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; container: artifact-detail / inline-size; }
+.work-session-artifacts__file-chrome { flex: 0 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-1); min-width: 0; min-height: 40px; padding: var(--space-1) var(--space-2); box-sizing: border-box; }
+.work-session-artifacts__file-header { display: flex; align-items: center; gap: var(--space-1); min-width: 0; min-height: var(--control-h); }
+.work-session-artifacts__identity { display: flex; flex: 1; align-items: center; gap: var(--space-2); min-width: 0; }
+.work-session-artifacts__identity > svg { flex: 0 0 auto; }
+.work-session-artifacts__identity strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; line-height: 18px; }
+.work-session-artifacts__identity .work-session-artifacts__count,
+.work-session-artifacts__identity .work-session-artifacts__file-status { margin-left: 0; }
 .work-session-artifacts__view-select { flex: 0 0 auto; }
+.work-session-artifacts__view-select .select__trigger-icon { display: none; }
 /* These choose a preview view, rather than accepting form input. Keep the
  * local toolbar treatment above the shared input baseline in every state. */
 :root .work-session-artifacts .work-session-artifacts__view-select.select .select__trigger,
@@ -60,10 +73,19 @@
 :root .work-session-artifacts .work-session-artifacts__view-select.select .select__trigger:is(:hover, [aria-expanded='true']),
 :root .work-session-artifacts .work-session-artifacts__scope .select .select__trigger:is(:hover, [aria-expanded='true']) { color: var(--fg); }
 .work-session-artifacts__info { flex: 0 0 auto; }
-.work-session-artifacts__scope { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); padding: 0 var(--space-3) var(--space-1); }
-.work-session-artifacts__versions { flex: 0 1 88px; }
-.work-session-artifacts__version-status { color: var(--fg-muted); font-size: 11px; }
-.work-session-artifacts__scope > .work-change-review { flex: 0 1 auto; margin-left: auto; padding: 0; }
+.work-session-artifacts__scope { display: contents; }
+.work-session-artifacts__scope:empty { display: none; }
+.work-session-artifacts__versions, .work-session-artifacts__version-status { grid-column: 2; grid-row: 1; }
+.work-session-artifacts__versions .select__compact-value { display: none; }
+.work-session-artifacts__version-status { color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
+.work-session-artifacts__scope > .work-change-review { display: contents; }
+.work-session-artifacts__scope .work-change-review__actions { grid-column: 3; grid-row: 1; flex-wrap: nowrap; gap: 0; }
+.work-session-artifacts__scope .work-change-review__error,
+.work-session-artifacts__scope .work-change-review__notice { grid-column: 1 / -1; }
+.work-session-artifacts__scope .work-change-review__icon { justify-content: center; width: var(--control-h); height: var(--control-h); padding: 0; }
+.work-session-artifacts__scope .work-change-review__icon--keep > svg { color: var(--git-added); }
+.work-session-artifacts__scope .work-change-review__icon--revert > svg { color: var(--danger-fg); }
+.work-session-artifacts__open-in-info { margin-top: var(--space-3); }
 .work-session-artifacts__notice { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; line-height: 1.5; margin: 0; padding: 0 var(--space-3) var(--space-2); overflow-wrap: anywhere; }
 .work-session-artifacts__diff { flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; border-top: 1px solid var(--border); }
 .work-session-artifacts__diff .diff-card { margin: 0; border: 0; border-radius: 0; background: transparent; }
@@ -87,13 +109,21 @@
 :root .work-session-artifacts__popover[data-motion-state],
 :root .work-change-review__menu-panel[data-motion-state] { opacity: 1; transition-property: translate, grid-template-rows; }
 .work-session-artifacts details::details-content { opacity: 1; transition-property: block-size, translate, content-visibility; }
+/* Compact secondary controls before the file identity loses its reading space. */
+@container artifact-detail (max-width: 540px) {
+  .work-session-artifacts__view-select .select__trigger-icon { display: block; }
+  .work-session-artifacts__view-select .select__value,
+  .work-session-artifacts__versions .select__value { display: none; }
+  .work-session-artifacts__versions .select__compact-value { display: inline; }
+  .work-session-artifacts__file-header > .work-session-artifacts__open-file { display: none; }
+  .work-session-artifacts__identity { gap: var(--space-1); }
+}
 @container (max-width: 560px) {
-  .work-session-artifacts__split { grid-template-columns: minmax(0, 1fr); grid-template-rows: clamp(96px, 24%, 180px) minmax(0, 1fr); }
-  .work-session-artifacts__tree { border-right: 0; border-bottom: 1px solid var(--border); }
-  .work-session-artifacts__controls { grid-template-columns: minmax(0, 1fr) var(--control-h); }
-  .work-session-artifacts__turn { grid-column: 1; }
-  .work-session-artifacts__refresh { grid-column: 2; grid-row: 1; }
-  .work-session-artifacts__search { grid-column: 1 / -1; grid-row: 2; }
+  .work-session-artifacts__split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .work-session-artifacts__navigation { max-height: 196px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .work-session-artifacts__tree { flex: 0 1 auto; max-height: 144px; }
+  .work-session-artifacts__navigation-head { padding: var(--space-2); }
+  .work-session-artifacts__toolbar { gap: var(--space-1); padding-inline: var(--space-2); }
 }
 @media (prefers-reduced-motion: reduce) {
   .work-session-artifacts button, .work-session-artifacts__tree .tree-row { transition: none; }

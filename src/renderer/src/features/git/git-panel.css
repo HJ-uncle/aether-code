@@ -5,11 +5,20 @@
   min-height: 0;
   height: 100%;
   color: var(--fg);
-  background: var(--bg-app);
+  overflow: hidden;
+  background: var(--bg-panel);
   container-type: inline-size;
 }
-.work-git-panel__manager {
+.work-git-panel__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.work-git-panel__manager {
   min-height: 0;
   min-width: 0;
   display: flex;
@@ -56,26 +65,32 @@
   max-width: 36ch;
   font-size: 12px;
 }
-.work-git-panel--comparing .work-git-panel__manager {
-  flex: 1 1 48%;
+.work-git-panel--comparing > .work-git-panel__layout {
+  grid-template-rows: minmax(0, 44fr) minmax(0, 56fr);
 }
 .work-git-diff {
   display: flex;
   flex-direction: column;
-  flex: 1 1 52%;
-  min-height: 200px;
+  height: 100%;
+  box-sizing: border-box;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
   border-top: 1px solid var(--border);
-  background: var(--bg-app);
+  background: var(--bg-panel);
+  container-type: inline-size;
 }
 .work-git-diff__header {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
+  min-height: var(--chrome-h);
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  box-sizing: border-box;
 }
 .work-git-diff__identity {
   min-width: 0;
@@ -84,19 +99,23 @@
   gap: 2px;
 }
 .work-git-diff__identity strong {
-  font: 12px var(--font-mono);
+  font: 500 12px/18px var(--font-ui);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .work-git-diff__identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--fg-muted);
 }
 .work-git-diff__actions {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   gap: var(--space-1);
 }
 .work-git-diff__actions button {
@@ -110,6 +129,7 @@
   border-radius: var(--radius);
   font: inherit;
   font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
   background: transparent;
   color: var(--fg-muted);
@@ -137,8 +157,52 @@
 .work-git-diff__notice[role='alert'] {
   color: var(--danger-fg);
 }
-@container (min-width: 900px) {
-  .work-git-panel--comparing > .work-git-panel__manager {
-    flex-basis: 38%;
+/* The outer panel owns the breakpoint. A child layout lets a wide task pane
+ * become a master/detail browser without basing the split on window width. */
+@container (min-width: 760px) {
+  .work-git-panel--comparing > .work-git-panel__layout {
+    grid-template-columns: clamp(280px, 32%, 320px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
+  .work-git-panel--comparing .work-git-diff {
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+}
+
+/* Keep the shared Git manager compact inside the task's navigation pane.
+ * Existing menus and commands remain available; only duplicated spacing and
+ * section decoration are reduced here. */
+.work-git-panel .git-panel__toolbar {
+  min-height: 36px;
+  padding: var(--space-1) var(--space-2);
+}
+.work-git-panel .git-panel__toolbar > .git-panel__spacer { display: none; }
+.work-git-panel .git-panel__branch-area {
+  padding: 0 var(--space-2) var(--space-2);
+}
+.work-git-panel .git-panel__commit-area {
+  padding: var(--space-2);
+}
+.work-git-panel .git-panel__section {
+  margin-inline: var(--space-2);
+}
+.work-git-panel .git-panel__list > * + * { border-top: 0; }
+.work-git-panel .git-panel__group-head {
+  min-height: 30px;
+  font-weight: 500;
+}
+.work-git-panel .git-panel__count {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 11px;
+}
+
+@container (max-width: 480px) {
+  .work-git-diff__header { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  .work-git-diff__identity { flex-direction: row; align-items: baseline; gap: var(--space-2); }
+  .work-git-diff__identity strong { flex: 1; min-width: 0; }
+  .work-git-diff__identity span { flex: 0 1 auto; }
+  .work-git-diff__actions { justify-content: flex-end; }
 }

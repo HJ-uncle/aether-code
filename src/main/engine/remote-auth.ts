@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path'
 import type { RemoteAuthCredential, RemoteAuthStatus } from '../../shared/ipc'
 import { remoteAuthTarget, validateRemoteAuth } from './remote-auth-contract'
+import { readAccountCredential, withExplicitAdvancedAuth } from '../account/credential-store'
 
 function credentialPath(url: string): string {
   const target = remoteAuthTarget(url)
@@ -38,9 +39,21 @@ export function getRemoteAuth(url: string): { credential: RemoteAuthCredential |
 }
 
 export function remoteAuthStatus(url: string): RemoteAuthStatus {
-  if (!url.trim()) return { configured: false, type: null, source: 'none' }
+  if (!url.trim()) return { configured: false, type: null, source: 'none', effective: 'none' }
   const { credential, source } = getRemoteAuth(url)
-  return { configured: !!credential, type: credential?.type ?? null, source }
+  const account = readAccountCredential(remoteAuthTarget(url))
+  return { configured: !!credential, type: credential?.type ?? null, source,
+    effective: account.credential ? 'account' : account.managed ? 'signed-out' : credential ? 'advanced' : 'none' }
+}
+
+/** Cache/transport identity only; this digest is never accepted as authentication.
+ * Legacy API keys/JWTs need a boundary too, even though they expose no account user ID. */
+export function authenticationIdentity(scope: string): string | null {
+  const account = readAccountCredential(scope)
+  if (account.credential) return account.credential.user.id
+  if (scope === 'embedded' || account.managed) return null
+  const credential = getRemoteAuth(scope).credential
+  return credential ? 'advanced-' + createHash('sha256').update(JSON.stringify(['aether-auth-cache-v1', scope, credential.type, credential.value])).digest('hex') : null
 }
 
 /** Roll back encrypted bytes when the combined connection-settings save fails. */
@@ -57,7 +70,7 @@ export function withRemoteAuthChange<T>(url: string, value: RemoteAuthCredential
       writeFileSync(temporary, JSON.stringify({ version: 1, encrypted: true, value: safeStorage.encryptString(JSON.stringify(credential)).toString('base64') }), { mode: 0o600 })
       renameSync(temporary, file)
     } else rmSync(file, { force: true })
-    try { return save() } catch (error) {
+    try { return credential ? withExplicitAdvancedAuth(remoteAuthTarget(url), save) : save() } catch (error) {
       if (previous === null) rmSync(file, { force: true })
       else { writeFileSync(temporary, previous, { mode: 0o600 }); renameSync(temporary, file) }
       throw error

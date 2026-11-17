@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test'
 import type { ChatMessage, ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import type { CommandJobStatus } from '../src/shared/command-job'
 import type { RootRun } from '../src/shared/root-run'
+import type { EngineFileChange } from '../src/shared/ipc'
 import { finalAnswerForMessage } from '../src/renderer/src/core/engine/final-result'
 import { captureSessionCollaborationMembership, sessionMessagePresentation, sessionMessageTimeline, sessionTranscriptPresentation, type SessionPresentationSegment } from '../src/renderer/src/features/conversation/message-timeline'
 import { sessionMessageRunning } from '../src/renderer/src/features/conversation/tool-presentation'
@@ -68,6 +69,43 @@ test('streaming from three to four tools keeps the same section key and includes
     { kind: 'tool', key: 'standalone', tool: tools[3] }
   ])
   expect(collaboration).toMatchObject([{ kind: 'section', key: 'reasoning', toolCount: 4, thinkingCount: 0 }])
+})
+
+function fileChange(index: number, sessionId = 'work-task'): EngineFileChange {
+  return { id: `receipt-${index}`, sessionId, path: `D:/project/package-${index}/LICENSE`, kind: 'write',
+    oldContent: null, newContent: `Package ${index}`, isNew: true, status: 'pending', truncated: false, createdAt: 10 }
+}
+
+test('one command with 150 file receipts counts visible activities without inventing tool calls', () => {
+  const changes = Array.from({ length: 150 }, (_, index) => fileChange(index))
+  const tool: ToolActivity = { id: 'install', name: 'execute_cmd', args: '{"command":"npm install"}',
+    result: 'Installed', state: 'done', change: changes[0], changes: [...changes, changes[0]] }
+  const items: ProcessItem[] = [{ kind: 'tools', key: 'install', tools: [tool] }]
+  const original = structuredClone(items)
+  expect(sessionProcessSections(items, 'work-task')).toMatchObject([
+    { kind: 'section', toolCount: 1, activityCount: 150, fileChangeCount: 150 }
+  ])
+  expect(items).toEqual(original)
+})
+
+test('receipt activity counts match child ownership and exclude changes hidden by standalone cards', () => {
+  const changes: EngineFileChange[] = [fileChange(0, 'child'),
+    { ...fileChange(1, 'parent'), producerChildSessionId: 'child' },
+    { ...fileChange(2, 'parent'), producerChildSessionId: 'sibling' }, fileChange(3, 'another-session')]
+  const changed: ToolActivity = { id: 'files', name: 'execute_cmd', args: '{}', result: '', state: 'done', changes }
+  const items: ProcessItem[] = [{ kind: 'tools', key: 'files', tools: [changed] }]
+  expect(sessionProcessSections(items, 'child', 'parent')).toMatchObject([
+    { kind: 'section', toolCount: 1, activityCount: 2, fileChangeCount: 2 }
+  ])
+  expect(sessionProcessSections(items, 'child')).toMatchObject([
+    { kind: 'section', toolCount: 1, activityCount: 1, fileChangeCount: 1 }
+  ])
+  const standalone = { ...command('running'), changes }
+  const subagent: ToolActivity = { ...changed, id: 'child-card', name: 'subagent' }
+  expect(sessionProcessSections([{ kind: 'tools', key: 'cards', tools: [standalone, subagent] }], 'child', 'parent'))
+    .toMatchObject([{ kind: 'section', toolCount: 2, activityCount: 2, fileChangeCount: 0 }])
+  expect(sessionProcessSections([{ kind: 'tools', key: 'archive', tools: [{ ...standalone, metadata: { archiveOutputOnly: true } }] }], 'child', 'parent'))
+    .toMatchObject([{ kind: 'section', toolCount: 1, activityCount: 2, fileChangeCount: 2 }])
 })
 
 test('child full transcript keeps every prose segment in order and folds even live command output', () => {

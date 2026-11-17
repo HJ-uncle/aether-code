@@ -9,6 +9,11 @@ import { Popover } from '../../ui/Popover'
 import { Spinner } from '../../ui/ui-primitives'
 import { getExtensionContext, useExtensionMenuItems, useExtensionServices } from '../extensions'
 import { extensionIcon } from '@renderer/app/navigation'
+import { useServiceTrayContext } from './tray-context'
+import { subscribeSubagents, getSubagentRuns } from '@renderer/core/engine/subagent-store'
+import { sessionSubagentGroups, sessionSubagentStats, formatSessionSubagentDuration } from '../collaboration/subagents'
+import { toolDisplayName } from '@renderer/core/engine/tool-labels'
+import { getGitActivity, subscribeGitActivity } from '@renderer/core/git/git-activity'
 import { buildServiceItems, getActiveServiceItems, getHistoryServiceItems, getNotificationServiceItems, getSessionServiceItems, readAllServiceNotifications, reconcileServiceNotifications, SERVICE_NOTIFICATION_LIMIT, serviceNotificationToItem, setServiceNotificationRead, type ServiceItem, type ServiceNotification, type ServiceNotificationState } from './service-model'
 import { ServiceNotificationStore } from './notification-store'
 import { getActivityHistory, getPersistedHistoryEntries, historyEntryToServiceItem, rememberNotificationHistory, rememberServiceHistory, subscribeActivityHistory } from './activity-history'
@@ -36,7 +41,14 @@ export function ServiceTray(props: ServiceTrayProps): JSX.Element {
 }
 
 function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity', placement = 'up', onOpenTerminal, onOpenJob, source }: ServiceTrayProps & { source: number }): JSX.Element {
-  const contributions = useExtensionServices({ sessionId })
+  const trayContext = useServiceTrayContext()
+  // The status bar lives outside the active task surface. Feed it the current
+  // task's command jobs so a running background command remains discoverable
+  // after the user moves away from the task header.
+  const contextSessionId = !sessionId && variant === 'activity' ? trayContext.sessionId : sessionId
+  const contextJobs = !sessionId && variant === 'activity' ? trayContext.jobs : jobs
+  const contextOpenTerminal = onOpenTerminal ?? trayContext.onOpenTerminal
+  const contributions = useExtensionServices({ sessionId: contextSessionId })
   const owner = `service-tray:${useId()}`
   const [, redraw] = useState(0)
   const [globalMemory] = useState(() => notificationsStore.scope(source, null))
@@ -60,10 +72,42 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
     setSelectedId(null)
     if (variant === 'services') setServicesView('running')
   }
-  const items = buildServiceItems([...jobs, ...getCommandJobs(sessionId ?? null)].filter(job => !isCommandJobDeleted(job.sessionId, job.jobId)), sessionId ?? '', contributions)
-  // Services are owned by the active session. Global trays never receive
-  // command jobs or session history, even when a stale snapshot is available.
-  const sessionItems = getSessionServiceItems(items, sessionId ?? null)
+  const baseItems = buildServiceItems([...contextJobs, ...getCommandJobs(contextSessionId ?? null)].filter(job => !isCommandJobDeleted(job.sessionId, job.jobId)), contextSessionId ?? '', contributions)
+  const liveActivityItems: ServiceItem[] = variant === 'activity' && contextSessionId ? [
+    ...sessionSubagentGroups(contextSessionId, trayContext.tools, getSubagentRuns(contextSessionId)).filter(group => group.active).map(group => {
+      const stats = sessionSubagentStats(group)
+      return {
+        id: `subagent:${group.key}`,
+        kind: 'plugin' as const,
+        label: group.label,
+        detail: stats.latestTool ? `正在${toolDisplayName(stats.latestTool.name)}` : '正在执行任务',
+        status: 'running',
+        statusLabel: formatSessionSubagentDuration(stats.durationMs) ?? '进行中',
+        active: true,
+        attention: false,
+        tone: 'active' as const,
+        updatedAt: stats.updatedAt ?? stats.startedAt ?? Date.now(),
+        revision: 0,
+        openDirect: true,
+        icon: 'account-outline' as const,
+        contribution: { id: `subagent:${group.key}`, pluginId: 'aether-live', instanceId: contextSessionId, revision: 0,
+          label: group.label, status: 'running' as const, detail: stats.latestTool ? `正在${toolDisplayName(stats.latestTool.name)}` : '正在执行任务',
+          updatedAt: stats.updatedAt ?? stats.startedAt ?? Date.now(), sessionId: contextSessionId,
+          open: trayContext.onOpenSubagents }
+      }
+    }),
+    ...(() => {
+      const git = getGitActivity(contextSessionId)
+      return git ? [{ id: `git:${git.sessionId}`, kind: 'plugin' as const, label: git.label, detail: git.detail, status: 'running', statusLabel: '进行中',
+        active: true, attention: false, tone: 'active' as const, updatedAt: git.updatedAt, revision: 0, openDirect: true, icon: 'git' as const,
+        contribution: { id: `git:${git.sessionId}`, pluginId: 'aether-live', instanceId: contextSessionId, revision: 0, label: git.label,
+          status: 'running' as const, detail: git.detail, updatedAt: git.updatedAt, sessionId: contextSessionId, open: trayContext.onOpenGit } }] : []
+    })()
+  ] : []
+  const items = [...baseItems, ...liveActivityItems]
+  // Services are owned by the active session. The global activity tray may
+  // borrow the current task's live jobs; message history remains global.
+  const sessionItems = getSessionServiceItems(items, contextSessionId ?? null)
   const serviceItems = getActiveServiceItems(sessionItems)
   const notificationItems = getNotificationServiceItems(items)
   const globalNotices = reconcileServiceNotifications(globalNotifications, notificationItems.filter(item => item.contribution && !item.contribution.sessionId))
@@ -82,10 +126,23 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
     variant === 'services' ? entry.kind === 'service' && entry.sessionId === (sessionId ?? null) : variant === 'history' && entry.kind === 'notification')
   const historyServices = [...liveHistoryServices, ...persistedHistoryItems.map(historyEntryToServiceItem)]
   const noticeItems = notices.map(serviceNotificationToItem)
+  // The global activity list is a jump surface: opening a live terminal row
+  // should go straight to its output instead of requiring a second detail click.
+  const directActivityItems = serviceItems.map(item => item.kind === 'command' ? { ...item, openDirect: true } : item)
+  const activityItems = [...directActivityItems, ...noticeItems.filter(item => activityNotices.some(notification => notification.serviceId === item.id))]
+    .sort((left, right) => Number(right.active) - Number(left.active) || right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+  const activitySections = variant === 'activity'
+    ? ([
+      ['subagents', '子代理', activityItems.filter(item => item.id.startsWith('subagent:'))],
+      ['terminal', '终端', activityItems.filter(item => Boolean(item.job))],
+      ['git', 'Git', activityItems.filter(item => item.id.startsWith('git:'))],
+      ['services', '服务消息', activityItems.filter(item => !item.id.startsWith('subagent:') && !item.job && !item.id.startsWith('git:'))]
+    ] as const).filter(([, , entries]) => entries.length > 0)
+    : []
   const displayItems = variant === 'services'
     ? [...sessionItems, ...historyServices.filter(item => !sessionItems.some(current => current.id === item.id))]
     : variant === 'activity'
-      ? noticeItems.filter(item => activityNotices.some(notification => notification.serviceId === item.id))
+      ? activityItems
       : [...noticeItems.filter(item => historyNotices.some(notification => notification.serviceId === item.id)), ...historyServices]
   const selected = displayItems.find(item => item.id === selectedId)
   const live = useRef({ items: displayItems, active, pending })
@@ -104,6 +161,8 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
     }
   }, [items, liveHistoryServices, historyNotices, sessionId])
   useEffect(() => subscribeCommandJobs(() => redraw(value => value + 1)), [])
+  useEffect(() => subscribeSubagents(() => redraw(value => value + 1)), [])
+  useEffect(() => subscribeGitActivity(() => redraw(value => value + 1)), [])
   useLayoutEffect(() => {
     if (!active || !sessionId) return
     activateCommandSession(sessionId, owner)
@@ -141,13 +200,13 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
     setError('')
     try {
       if (action === 'stop') {
-        if (item.job?.status === 'running' && sessionId) await cancelCommandJob(sessionId, item.job.jobId)
+        if (item.job?.status === 'running' && contextSessionId) await cancelCommandJob(contextSessionId, item.job.jobId)
         else if (item.contribution?.stop && item.active) await item.contribution.stop()
       } else if (action === 'copy') {
         await navigator.clipboard.writeText(item.job ? commandJobInvocation(item.job) : [item.label, item.detail].filter(Boolean).join('\n'))
       } else {
         read(id)
-        if (item.job) { closePopover(); (onOpenJob ?? onOpenTerminal)?.(item.job.jobId) }
+        if (item.job) { closePopover(); (onOpenJob ?? contextOpenTerminal)?.(item.job.jobId) }
         else if (item.contribution?.open) { await item.contribution.open(); if (mounted.current) closePopover() }
       }
     } catch (failure) {
@@ -157,7 +216,7 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
     }
   }
   const canStop = (item: ServiceItem): boolean => item.job ? item.job.status === 'running' : item.active && Boolean(item.contribution?.stop)
-  const canOpen = (item: ServiceItem): boolean => item.job ? Boolean(onOpenJob || onOpenTerminal) : Boolean(item.contribution?.open)
+  const canOpen = (item: ServiceItem): boolean => item.job ? Boolean(onOpenJob || contextOpenTerminal) : Boolean(item.contribution?.open)
   const showMenu = (id: string, x: number, y: number, anchor: HTMLElement): void => {
     // Coordinates can repeat while the previous menu is still animating out.
     setMenu({ id, x, y, anchor, revision: ++menuRevision.current })
@@ -182,13 +241,13 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
       icon: item.icon ? <Icon name={extensionIcon(item.icon)} size={14} /> : undefined }))
   ] : []
   const row = (item: ServiceItem, notification?: ServiceNotification): JSX.Element => <div className="service-tray__row" key={item.id} data-service-id={item.id} data-service-status={item.status} data-unread={notification ? !notification.read : undefined} onContextMenu={event => openMenu(event, item.id)}>
-    <button ref={element => { if (element && restoreRow.current === item.id) { restoreRow.current = null; element.focus({ preventScroll: true }) } }} className="service-tray__row-main" type="button" aria-busy={pending?.id === item.id} aria-label={`${notification && !notification.read ? '未读，' : ''}${item.label}，${item.statusLabel}`} onClick={() => details(item.id)} onKeyDown={event => {
+    <button ref={element => { if (element && restoreRow.current === item.id) { restoreRow.current = null; element.focus({ preventScroll: true }) } }} className="service-tray__row-main" type="button" aria-busy={pending?.id === item.id} aria-label={`${notification && !notification.read ? '未读，' : ''}${item.label}，${item.statusLabel}`} onClick={() => item.openDirect && canOpen(item) ? void runAction(item.id, 'open') : details(item.id)} onKeyDown={event => {
       if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
       event.preventDefault()
       const rect = event.currentTarget.getBoundingClientRect()
       showMenu(item.id, rect.left + 12, rect.bottom, event.currentTarget)
     }}>
-      <span className="service-tray__glyph" data-tone={item.tone}>{pending?.id === item.id ? <Spinner size={15} /> : <Icon name={item.kind === 'command' ? 'terminal' : 'plug'} size={15} />}</span>
+      <span className="service-tray__glyph" data-tone={item.tone}>{pending?.id === item.id ? <Spinner size={15} /> : <Icon name={item.icon ?? (item.kind === 'command' ? 'terminal' : 'plug')} size={15} />}</span>
       <span className="service-tray__row-label">{item.label}</span>
       <span className="service-tray__status" data-tone={item.tone}>{item.statusLabel}</span>
       {notification && !notification.read ? <span className="service-tray__unread-dot" aria-hidden="true" /> : null}
@@ -209,16 +268,28 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
       return row(items.find(value => value.id === entry.notification.serviceId) ?? serviceNotificationToItem(entry.notification), entry.notification)
     })())}</>
   }
-  const title = selected ? '详情' : variant === 'services' ? servicesView === 'history' ? '服务历史' : '服务' : variant === 'history' ? '消息历史' : '消息'
-  const triggerIcon = variant === 'services' ? 'terminal' : variant === 'history' ? 'clock-outline' : 'bell'
-  const triggerLabel = variant === 'services' ? `服务，${running} 个运行中` : variant === 'history' ? '消息历史' : `消息${unread ? `，${unread} 条未读` : ''}`
+  const title = selected ? '详情' : variant === 'services' ? servicesView === 'history' ? '服务历史' : '服务' : variant === 'history' ? '消息历史' : serviceItems.length ? '进行中' : '消息'
+  // Keep the trigger semantically aligned with what is inside the global
+  // tray: an active run is an activity surface, while a read/unread-only
+  // stream remains a notification surface.  Reusing the bell for running
+  // work made the new GPT-style activity list look like an unrelated inbox.
+  const triggerIcon = variant === 'services' ? 'terminal' : variant === 'history' ? 'clock-outline' : serviceItems.length ? 'activity' : 'bell'
+  const triggerLabel = variant === 'services' ? `服务，${running} 个运行中` : variant === 'history' ? '消息历史' : serviceItems.length ? `进行中，${serviceItems.length} 项${unread ? `，${unread} 条未读` : ''}` : `消息${unread ? `，${unread} 条未读` : ''}`
+  const hasContent = variant === 'services'
+    ? serviceItems.length > 0 || historyServices.length > 0
+    : variant === 'activity' ? activityItems.length > 0 : displayItems.length > 0
+
+  // Keep the chrome quiet when there is no activity to inspect. The trigger
+  // reappears as soon as a notification, command or service is published.
+  if (!active || !hasContent) return <></>
 
   return <div className={`service-tray service-tray--${variant}`}>
-    {active ? <span className="service-tray__announcement" role="status" aria-atomic="true">{variant === 'services' ? `${running} 个服务运行中` : variant === 'activity' ? `${unread} 条未读消息` : '消息历史'}</span> : null}
-    <Popover open={open && active} onOpenChange={next => { if (next) setOpen(true); else closePopover() }} disabled={!active} placement={placement} align="start" width={360} flush label={title} panelClassName="service-tray__popover" trigger={({ open: expanded }) => <button type="button" className={`service-tray__button${expanded ? ' is-open' : ''}`} disabled={!active}
+    {active ? <span className="service-tray__announcement" role="status" aria-atomic="true">{variant === 'services' ? `${running} 个服务运行中` : variant === 'activity' && serviceItems.length ? `${serviceItems.length} 项正在进行` : variant === 'activity' ? `${unread} 条未读消息` : '消息历史'}</span> : null}
+    <Popover open={open && active} onOpenChange={next => { if (next) setOpen(true); else closePopover() }} disabled={!active} placement={placement} align="start" width={variant === 'activity' ? 392 : 360} flush label={title} panelClassName="service-tray__popover" trigger={({ open: expanded }) => <button type="button" className={`service-tray__button${expanded ? ' is-open' : ''}`} disabled={!active}
       aria-label={triggerLabel} title={title} aria-expanded={expanded} aria-haspopup="dialog">
       <Icon name={triggerIcon} size={16} />
       {variant === 'services' && running ? <span className="service-tray__count" aria-hidden="true">{running > 99 ? '99+' : running}</span> : null}
+      {variant === 'activity' && serviceItems.length ? <span className="service-tray__count" aria-hidden="true">{serviceItems.length > 99 ? '99+' : serviceItems.length}</span> : null}
       {variant === 'activity' && unread ? <span className="service-tray__badge" aria-hidden="true" /> : null}
     </button>}>
       <section className="service-tray__panel" aria-label={`${title}列表`}>
@@ -228,18 +299,19 @@ function ScopedServiceTray({ sessionId, jobs, active = true, variant = 'activity
           <span className="service-tray__header-spacer" />
           {!selected && variant === 'activity' && unread ? <button type="button" className="service-tray__icon" aria-label="全部标为已读" title="全部标为已读" onClick={() => updateNotices(readAllServiceNotifications)}><Icon name="check-all" size={15} /></button> : null}
           {!selected && variant === 'services' ? <button type="button" className="service-tray__icon" aria-label={servicesView === 'history' ? '返回运行中服务' : '查看服务历史'} title={servicesView === 'history' ? '返回运行中服务' : '查看服务历史'} onClick={() => setServicesView(value => value === 'history' ? 'running' : 'history')}><Icon name={servicesView === 'history' ? 'terminal' : 'clock-outline'} size={15} /></button> : null}
-          {variant !== 'activity' && onOpenTerminal && sessionId ? <button type="button" className="service-tray__icon" aria-label="打开终端" title="打开终端" onClick={() => { closePopover(); onOpenTerminal() }}><Icon name="terminal" size={15} /></button> : null}
+          {variant !== 'activity' && contextOpenTerminal && contextSessionId ? <button type="button" className="service-tray__icon" aria-label="打开终端" title="打开终端" onClick={() => { closePopover(); contextOpenTerminal() }}><Icon name="terminal" size={15} /></button> : null}
           <button type="button" className="service-tray__icon" aria-label={`关闭${title}`} title="关闭" onClick={closePopover}><Icon name="close" size={14} /></button>
         </header>
         {!selected ? <div className="service-tray__body">
           {variant === 'services' ? servicesView === 'history' ? historyServices.length ? historyServices.map(item => row(item)) : <p className="service-tray__empty">暂无服务历史</p>
             : serviceItems.length ? serviceItems.map(item => row(item)) : <p className="service-tray__empty">暂无运行中的服务</p>
-            : variant === 'activity' ? activityNotices.length ? activityNotices.map(notification => {
-              return row(items.find(value => value.id === notification.serviceId) ?? serviceNotificationToItem(notification), notification)
-            }) : <p className="service-tray__empty">暂无未读消息</p>
+            : variant === 'activity' ? activitySections.length ? activitySections.map(([key, label, entries]) => <section className="service-tray__section" key={key} aria-label={label}>
+              <div className="service-tray__section-heading"><span>{label}</span><span aria-hidden="true">{entries.length}</span></div>
+              {entries.map(item => row(item, notices.find(notification => notification.serviceId === item.id)))}
+            </section>) : <p className="service-tray__empty">暂无进行中的内容</p>
             : renderHistory()}
         </div> : <div className="service-tray__detail" data-service-id={selected.id}>
-          <div className="service-tray__detail-title"><Icon name={selected.kind === 'command' ? 'terminal' : 'plug'} size={16} /><strong>{selected.label}</strong></div>
+          <div className="service-tray__detail-title"><Icon name={selected.icon ?? (selected.kind === 'command' ? 'terminal' : 'plug')} size={16} /><strong>{selected.label}</strong></div>
           <span className="service-tray__status" data-tone={selected.tone}>{selected.statusLabel}</span>
           {selected.detail ? <p className="service-tray__detail-text">{selected.detail}</p> : null}
           {selected.job && selected.job.error ? <p className="service-tray__detail-path">{selected.job.cwd}</p> : null}

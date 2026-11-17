@@ -1,4 +1,4 @@
-.spreadsheet-chart { display:flex; flex-direction:column; box-sizing:border-box; margin:0; overflow:hidden; color-scheme:light; color:var(--document-ink); background:var(--document-paper); border:1px solid var(--document-grid); border-radius:4px; font-family:var(--font-ui); }
+.spreadsheet-chart { display:flex; flex-direction:column; box-sizing:border-box; margin:0; overflow:hidden; color-scheme:light; color:var(--document-ink); background:var(--document-paper); border:1px solid var(--document-grid); border-radius:var(--radius); font-family:var(--font-ui); }
 .spreadsheet-chart__heading { display:flex; flex:none; align-items:center; gap:8px; min-width:0; min-height:44px; padding:6px 12px; box-sizing:border-box; }
 .spreadsheet-chart__heading strong { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:600; }
 .spreadsheet-chart__actions { display:flex; flex:none; gap:4px; }
@@ -11,7 +11,7 @@
 .spreadsheet-chart__baseline { stroke:var(--document-header-fg); stroke-width:1; }
 .spreadsheet-chart__legend { display:flex; flex:none; gap:16px; align-items:center; min-width:0; min-height:28px; max-height:34px; margin:0; padding:2px 12px 6px; overflow:auto hidden; list-style:none; font-size:12px; }
 .spreadsheet-chart__legend li { display:flex; flex:none; align-items:center; gap:6px; white-space:nowrap; }
-.spreadsheet-chart__legend li > span { width:10px; height:10px; border-radius:2px; }
+.spreadsheet-chart__legend li > span { width:10px; height:10px; border-radius:var(--radius-mark); }
 .spreadsheet-chart__empty { display:flex; flex:1; align-items:center; justify-content:center; padding:24px; text-align:center; color:var(--document-header-fg); font-size:13px; }
 .spreadsheet-chart__warnings { flex:none; max-height:96px; overflow:auto; padding:0 12px 6px; color:var(--document-header-fg); font-size:12px; }
 .spreadsheet-chart__warnings summary { cursor:pointer; padding:3px 0; }

@@ -10,6 +10,7 @@ export interface AccountCredential {
   refreshToken: string
   expiresAt: string
   recoveryKey?: string
+  exportedAt?: string | null
   refreshRequestId?: string
 }
 interface Entry { credential: AccountCredential | null; persistence: 'encrypted' | 'session' | 'none'; managed: boolean }
@@ -44,6 +45,7 @@ export function validCredential(value: unknown): value is AccountCredential {
   return typeof v.accessToken === 'string' && /^[\x21-\x7e]{16,16384}$/.test(v.accessToken) &&
     typeof v.refreshToken === 'string' && /^[\x21-\x7e]{16,16384}$/.test(v.refreshToken) &&
     typeof v.expiresAt === 'string' && Number.isFinite(Date.parse(v.expiresAt)) &&
+    (v.exportedAt === undefined || v.exportedAt === null || (typeof v.exportedAt === 'string' && Number.isFinite(Date.parse(v.exportedAt)))) &&
     validAccountUser(v.user)
 }
 export function validAccountUser(value: unknown): value is AccountUser {
@@ -54,6 +56,8 @@ export function validAccountUser(value: unknown): value is AccountUser {
   return typeof user.id === 'string' && !!user.id && typeof user.tenantId === 'string' && !!user.tenantId &&
     typeof user.name === 'string' && optionalText(user.email) && optionalText(user.avatarUrl) && optionalText(user.bio) &&
     typeof user.createdAt === 'string' && Number.isFinite(Date.parse(user.createdAt)) && data(user.userData) &&
+    (user.authenticatedAt === undefined || (typeof user.authenticatedAt === 'string' && Number.isFinite(Date.parse(user.authenticatedAt)))) &&
+    (user.roles === undefined || (Array.isArray(user.roles) && user.roles.every(role => typeof role === 'string'))) &&
     Array.isArray(user.identities) && user.identities.every(identity => !!identity && typeof identity.providerId === 'string' &&
       typeof identity.subject === 'string' && (identity.userData === undefined || data(identity.userData)))
 }
@@ -74,4 +78,26 @@ export function saveAccountCredential(scope: string, credential: AccountCredenti
   } finally { rmSync(temporary, { force: true }) }
   cache.set(scope, entry)
   return entry
+}
+
+/** An explicit advanced-credential save can replace a signed-out tombstone;
+ * ordinary logout/restart must never reactivate an old API key. */
+export function withExplicitAdvancedAuth<T>(scope: string, save: () => T): T {
+  const previous = readAccountCredential(scope)
+  if (previous.credential || !previous.managed) return save()
+  const path = file(scope)
+  const bytes = existsSync(path) ? readFileSync(path) : null
+  const temporary = `${path}.${process.pid}.tmp`
+  try {
+    rmSync(path, { force: true })
+    cache.set(scope, { credential: null, persistence: 'none', managed: false })
+    return save()
+  } catch (error) {
+    cache.set(scope, previous)
+    if (bytes !== null) {
+      writeFileSync(temporary, bytes, { mode: 0o600 })
+      renameSync(temporary, path)
+    }
+    throw error
+  } finally { rmSync(temporary, { force: true }) }
 }

@@ -44,7 +44,7 @@
 .work-error-notice__meta span {
   padding: 1px 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-surface);
 }
 .work-error-notice details {

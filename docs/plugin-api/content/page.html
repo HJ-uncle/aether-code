@@ -22,8 +22,9 @@
 </code></pre>
 <p><code>fileName</code> 是文件名，不能带目录；<code>content</code> 为字符串；<code>encoding</code> 为 <code>utf8</code>（默认）或 <code>base64</code>。返回 <code>{ saved, bytes? }</code>，取消时 <code>saved: false</code>，不返回本机路径。</p>
 <h2 id="services">services</h2>
-<p>管理本插件通过 <code>contributes.services</code> 声明的服务。会话作用域中运行或等待处理的服务显示在当前会话标题栏的「服务」中；完成、停止或失败的记录在同一弹层的「服务历史」中查看。未运行的 <code>idle</code> 服务不显示在这两个列表中，仍可通过 SDK 读取和启动。参数 <code>id</code> 使用 <code>contributes.services[].id</code>，不要传带平台前缀的快照 ID。</p>
-<p>服务实例遵循声明的 <code>scope</code>，全局服务可通过插件页面和 SDK 管理。服务历史按会话区分，历史摘要不等同于可继续操作的服务实例。底部「活动」与「历史」承载通知，不汇总服务记录。</p>
+<p>管理本插件通过 <code>contributes.services</code> 声明的服务。会话作用域中运行或等待处理的服务显示在当前会话的「更多工作区」弹层中；点击弹层内的「查看服务历史」可查看完成、停止或失败的记录。没有运行中的服务时，历史入口仍然可用；重新打开弹层时默认显示当前工作区与进行中内容。未运行的 <code>idle</code> 服务不显示在这两个列表中，仍可通过 SDK 读取和启动。参数 <code>id</code> 使用 <code>contributes.services[].id</code>，不要传带平台前缀的快照 ID。</p>
+<p>服务实例遵循声明的 <code>scope</code>，全局服务可通过插件页面和 SDK 管理。服务历史按会话区分，历史摘要不等同于可继续操作的服务实例。底部「活动」显示当前会话运行或等待处理的服务及未读通知；底部「历史」保留已读通知，服务历史仍在会话内查看。</p>
+<p>工作区首页的「运行中」按类别汇总当前会话的活跃服务；服务没有打开页面时仍计入摘要。</p>
 <table>
 <thead>
 <tr>
