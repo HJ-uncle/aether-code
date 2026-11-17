@@ -1,4 +1,4 @@
-/** Real Electron: Code/Work message navigation advances through short turns,
+/** Real Electron: Default workspace message navigation advances through short turns,
  * loads all Work history before ordinary navigation, respects boundaries and keyboard operation,
  * and keeps its compact popover within the reading pane in both appearances.
  * The isolated HTTP fixture does not send prompts or mutate conversation data. */
@@ -10,23 +10,17 @@ import type { RootRun } from '../src/shared/root-run'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
-type Mode = 'code' | 'work'
+type Mode = 'work'
 const root = resolve(__dirname, '..'), fixtures = join(root, '.e2e-tmp')
-const codeId = 'message-nav-code', longCodeId = 'message-nav-code-long', nestedCodeId = 'message-nav-code-nested', followCodeId = 'message-nav-code-follow'
 const sessionId = 'work-message-nav', model = 'message-nav-fixture'
 const token = 'disposable-message-navigation-token', workspaceRoot = '/remote/message-navigation'
-const count = 12, longCount = 156, now = Date.now() - 180_000
-const session = (mode: Mode): string => mode === 'work' ? sessionId : codeId
+const count = 12, now = Date.now() - 180_000
+const session = (_mode: Mode): string => sessionId
 const prompt = (index: number): string => `导航第 ${String(index + 1).padStart(2, '0')} 条：检查这一项。`
 const userId = (id: string, index: number): string => `${id}-user-${index}`
-const nestedTable = [
-  `| ${Array.from({ length: 40 }, (_, index) => `C${index + 1}`).join(' | ')} |`,
-  `| ${Array.from({ length: 40 }, () => '---').join(' | ')} |`,
-  `| ${Array.from({ length: 40 }, () => '是').join(' | ')} |`
-].join('\n')
 const histories = new Map<string, EngineHistoryRow[]>(), runs = new Map<string, RootRun[]>()
-for (const id of [codeId, longCodeId, nestedCodeId, followCodeId, sessionId]) {
-  const roots = Array.from({ length: id === longCodeId ? longCount : count }, (_, index): RootRun => ({
+for (const id of [sessionId]) {
+  const roots = Array.from({ length: count }, (_, index): RootRun => ({
     schemaVersion: 1, runId: `${id}-run-${index}`, sessionId: id, turnId: `${id}-turn-${index}`,
     userMessageId: userId(id, index), assistantMessageId: `${id}-assistant-${index}`,
     seq: index + 1, version: 2, status: 'succeeded', modelId: model, pending: [], workspacePaths: [workspaceRoot],
@@ -36,8 +30,7 @@ for (const id of [codeId, longCodeId, nestedCodeId, followCodeId, sessionId]) {
   histories.set(id, roots.flatMap((run, index) => [
     { id: run.userMessageId, role: 'user', content: prompt(index), createdAt: run.createdAt,
       conversationId: run.turnId, metadata: { rootRunId: run.runId } },
-    { id: run.assistantMessageId, role: 'assistant', content: id === nestedCodeId && index === count - 2
-      ? `ANSWER_${index + 1}：已检查。\n\n${nestedTable}` : `ANSWER_${index + 1}：已检查。`, createdAt: run.updatedAt,
+    { id: run.assistantMessageId, role: 'assistant', content: `ANSWER_${index + 1}：已检查。`, createdAt: run.updatedAt,
       conversationId: run.turnId, metadata: { rootRunId: run.runId } }
   ]))
 }
@@ -94,9 +87,7 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/chat/status' ? { running: false, finished: true, run: current, lastEventId: null }
     : path === '/api/v1/chat/runs' ? { runs: ownRuns }
     : path === '/api/v1/conversation/history' ? (id === sessionId ? rows.slice(-4) : rows)
-    : path === '/api/v1/conversation/sessions' ? [codeId, longCodeId, nestedCodeId, followCodeId].map(sessionId => ({ sessionId,
-      title: sessionId === longCodeId ? 'Code 长会话消息导航' : sessionId === nestedCodeId ? 'Code 内层滚动导航'
-        : sessionId === followCodeId ? 'Code 追加消息导航' : 'Code 消息导航', lastAt: now, messageCount: histories.get(sessionId)!.length }))
+    : path === '/api/v1/conversation/sessions' ? [{ sessionId, title: '消息导航', lastAt: now, messageCount: histories.get(sessionId)!.length }]
     : path === '/api/v1/chat/admission/context' ? { protocolVersion: 1, tenantId: 'nav-test', sessionId: id,
       namespace: { id: 'nav-test-db', generation: 'one' }, transport: { toolProfile: request.headers['x-aether-tool-profile'] === 'code' ? 'code' : 'general', runLifetime: 'durable', subagentProtocol: 2 }, root: null, predecessor: null }
     : path === '/api/v1/workspace/directory' ? { root: workspaceRoot, bindingEpoch: 'one', entries: [] }
@@ -112,29 +103,23 @@ const server = createServer((request, response) => { void (async () => {
 })().catch(error => { errors.push(String(error)); if (!response.headersSent) response.writeHead(500); response.end(String(error)) }) })
 
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = ''
-const surface = (mode: Mode): Locator => mode === 'work' ? page.locator('.work-view') : page.locator(`#mode-${mode}`)
+const surface = (_mode: Mode): Locator => page.locator('.work-view')
 const nav = (mode: Mode): Locator => surface(mode).getByRole('navigation', { name: '消息导航', exact: true })
-const scroller = (mode: Mode): Locator => surface(mode).locator(mode === 'work' ? '.work-conversation__scroll' : '.chat__messages')
+const scroller = (mode: Mode): Locator => surface(mode).locator('.work-conversation__scroll')
 const row = (mode: Mode, index: number): Locator => nav(mode).locator(`[data-nav-index="${index}"]`)
-const turnId = (mode: Mode, index: number, targetSessionId = session(mode)): string => `${mode === 'work' ? 'message:' : ''}${userId(targetSessionId, index)}`
+const turnId = (mode: Mode, index: number, targetSessionId = session(mode)): string => `message:${userId(targetSessionId, index)}`
 
 async function seed(mode: Mode, targetSessionId = session(mode), initialHold?: string): Promise<void> {
   releaseRead(initialHold)
   await app!.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 900) })
-  await page.evaluate(({ key, mode, id, model, workspaceRoot, now }) => {
+  await page.evaluate(({ key, id, model, workspaceRoot, now }) => {
     localStorage.setItem(key, JSON.stringify({ tasks: [{ id, title: 'Work 消息导航', status: 'done', draft: '', mentions: [],
       createdAt: now, updatedAt: now, workspacePath: workspaceRoot, modelId: model, attachments: [], sources: [] }], activeTaskId: id, homeSources: [] }))
-    localStorage.setItem('aether.app.mode', mode)
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 56 }))
-  }, { key: storageKey, mode, id: sessionId, model, workspaceRoot, now })
+  }, { key: storageKey, id: sessionId, model, workspaceRoot, now })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
-  if (mode === 'code') {
-    const history = surface(mode).getByRole('button', { name: '会话历史', exact: true })
-    if (await history.getAttribute('aria-pressed') !== 'true') await history.click()
-    await surface(mode).locator(`[data-session-id="${targetSessionId}"]`).click()
-  }
   const expectedCount = runs.get(targetSessionId)!.length
-  if (initialHold && mode === 'work') {
+  if (initialHold) {
     await expect.poll(() => Boolean(held)).toBe(true)
     await expect(nav(mode)).toHaveAttribute('data-variant', 'waves')
     await expect(nav(mode).locator('[data-nav-index]')).toHaveCount(2)
@@ -173,7 +158,7 @@ async function select(mode: Mode, index: number, targetSessionId = session(mode)
   await openNav(mode); await row(mode, index).click(); await assertTarget(mode, index, targetSessionId)
 }
 
-test.describe.serial('Code / Work 消息导航', () => {
+test.describe.serial('默认工作台消息导航', () => {
   test.beforeAll(async () => {
     await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done) })
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port')
@@ -181,7 +166,7 @@ test.describe.serial('Code / Work 消息导航', () => {
     storageKey = 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin }))
     mkdirSync(fixtures, { recursive: true }); fixture = mkdtempSync(join(fixtures, 'message-navigation-profile-'))
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: workspaceRoot,
-      autoStartEngine: true, lastSessionId: codeId, lastFolder: '', lastModelId: model, appearance: 'light', thinkingMode: 'off' }))
+      autoStartEngine: true, lastSessionId: sessionId, lastFolder: '', lastModelId: model, appearance: 'light', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
@@ -210,46 +195,6 @@ test.describe.serial('Code / Work 消息导航', () => {
     }
   })
 
-  // Retired Code surface; Work navigation is covered below.
-  test.skip('Code 短轮次连续上一条/下一条移动真实滚动位置，首尾禁用', async () => {
-    await seed('code'); await select('code', 7)
-    let previous = await scroller('code').evaluate(element => element.scrollTop)
-    for (const index of [6, 5, 4, 3]) {
-      await nav('code').getByRole('button', { name: '上一条', exact: true }).click(); await assertTarget('code', index)
-      const current = await scroller('code').evaluate(element => element.scrollTop)
-      expect(current).toBeLessThan(previous - 20); previous = current
-    }
-    for (const index of [4, 5, 6, 7]) {
-      await nav('code').getByRole('button', { name: '下一条', exact: true }).click(); await assertTarget('code', index)
-      const current = await scroller('code').evaluate(element => element.scrollTop)
-      expect(current).toBeGreaterThan(previous + 20); previous = current
-    }
-    await select('code', 0); await expect(nav('code').getByRole('button', { name: '上一条', exact: true })).toBeDisabled()
-    await select('code', count - 1); await expect(nav('code').getByRole('button', { name: '下一条', exact: true })).toBeDisabled()
-    // The last few short turns can share one clamped scrollTop. Their cursor
-    // must still step individually instead of snapping back to the last item.
-    for (const index of [count - 2, count - 3]) {
-      await nav('code').getByRole('button', { name: '上一条', exact: true }).click(); await assertTarget('code', index)
-    }
-    await select('code', 6)
-    await page.keyboard.press('Escape'); await expect(nav('code')).toHaveAttribute('data-state', 'closed')
-    const beforeWheel = await scroller('code').evaluate(element => element.scrollTop)
-    const box = await scroller('code').boundingBox()
-    if (!box) throw new Error('Missing Code reading pane')
-    const point = { x: box.x + box.width * 0.8, y: box.y + box.height / 2 }
-    await page.mouse.move(point.x, point.y)
-    // The popup can overlap a narrow Code pane. Prove the wheel reaches the
-    // transcript instead of scrolling the navigation list above it.
-    await expect.poll(() => scroller('code').evaluate((element, point) => element.contains(document.elementFromPoint(point.x, point.y)), point)).toBe(true)
-    await page.mouse.wheel(0, -500)
-    await expect.poll(() => scroller('code').evaluate(element => element.scrollTop)).toBeLessThan(beforeWheel - 100)
-    await expect(row('code', 6)).not.toHaveAttribute('aria-current', 'true')
-    await openNav('code')
-    const readingIndex = Number(await nav('code').locator('[aria-current="true"]').getAttribute('data-nav-index'))
-    expect(readingIndex).toBeGreaterThan(0)
-    await nav('code').getByRole('button', { name: '上一条', exact: true }).click(); await assertTarget('code', readingIndex - 1)
-  })
-
   test('Work 初次自动加载全部12轮，上一条下一条直接定位且不再读取分页', async () => {
     const beforeSeed = reads.length
     await seed('work')
@@ -270,28 +215,6 @@ test.describe.serial('Code / Work 消息导航', () => {
     await select('work', count - 1); await expect(nav('work').getByRole('button', { name: '下一条', exact: true })).toBeDisabled()
     expect(reads.slice(beforeNavigation).filter(read => read.sessionId === sessionId && read.anchor !== null)).toEqual([])
     await expect(scroller('work').locator('.work-conversation__content > .work-conversation-turn')).toHaveCount(count)
-  })
-
-  test.skip('Code 超过300条消息时导航挂载早期轮次，尾部追加不挤出正在阅读的锚点', async () => {
-    await seed('code', longCodeId)
-    const first = scroller('code').locator(`[data-turn-id="${turnId('code', 0, longCodeId)}"]`)
-    const second = scroller('code').locator(`[data-turn-id="${turnId('code', 1, longCodeId)}"]`)
-    await expect(first).toHaveCount(0); await expect(second).toHaveCount(0)
-    await expect(nav('code').locator('[data-nav-index]')).toHaveCount(longCount)
-    await select('code', 1, longCodeId)
-    await expect(scroller('code')).toContainText('ANSWER_2：已检查。')
-    await nav('code').getByRole('button', { name: '上一条', exact: true }).click()
-    await assertTarget('code', 0, longCodeId)
-    await expect(nav('code').getByRole('button', { name: '上一条', exact: true })).toBeDisabled()
-    await nav('code').getByRole('button', { name: '下一条', exact: true }).click()
-    await assertTarget('code', 1, longCodeId)
-    const readingTop = await scroller('code').evaluate(element => element.scrollTop)
-    appendServerTurn(longCodeId)
-    await expect(nav('code').locator('[data-nav-index]')).toHaveCount(longCount + 1)
-    await expect(second).toHaveCount(1)
-    await expect(row('code', 1)).toHaveAttribute('aria-current', 'true')
-    await expect.poll(() => scroller('code').evaluate((element, previous) => Math.abs(element.scrollTop - previous), readingTop)).toBeLessThanOrEqual(2)
-    await assertTarget('code', 1, longCodeId)
   })
 
   test('Work 冷历史加载期间切换目标，迟到的完整响应保留最新导航意图', async () => {
@@ -387,39 +310,6 @@ test.describe.serial('Code / Work 消息导航', () => {
       histories.set(sessionId, originalHistory)
       runs.set(sessionId, originalRuns)
     }
-  })
-
-  test.skip('Code 内层表格滚轮只移动表格，不解除底部主动选择', async () => {
-    await seed('code', nestedCodeId); await select('code', count - 2, nestedCodeId)
-    await page.keyboard.press('Escape'); await expect(nav('code')).toHaveAttribute('data-state', 'closed')
-    const table = scroller('code').locator(`[data-turn-id="${turnId('code', count - 2, nestedCodeId)}"] .md-table-wrap`).first()
-    await expect(table).toHaveAttribute('data-scroll-axis', 'x')
-    await expect.poll(() => table.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(500)
-    await table.hover(); await expect(table).toBeInViewport({ ratio: 0.5 }); await assertTarget('code', count - 2, nestedCodeId)
-    const before = await scroller('code').evaluate(element => element.scrollTop)
-    await expect.poll(() => table.evaluate(element => element.scrollLeft)).toBe(0)
-    await page.mouse.wheel(0, 240)
-    await expect.poll(() => table.evaluate(element => element.scrollLeft)).toBeGreaterThan(100)
-    await expect.poll(() => scroller('code').evaluate(element => element.scrollTop)).toBe(before)
-    await expect(row('code', count - 2)).toHaveAttribute('aria-current', 'true')
-    await openNav('code'); await nav('code').getByRole('button', { name: '下一条', exact: true }).click()
-    await assertTarget('code', count - 1, nestedCodeId)
-  })
-
-  test.skip('Code 回到底部后服务端追加新轮次，导航跟随新的最后一条', async () => {
-    await seed('code', followCodeId)
-    await nav('code').getByRole('button', { name: '回到底部', exact: true }).click()
-    await expect(row('code', count - 1)).toHaveAttribute('aria-current', 'true')
-    await expect.poll(() => scroller('code').evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(2)
-    appendServerTurn(followCodeId)
-    // The regular idle-root poll discovers this server-owned append. No reload
-    // or mode switch may erase the navigator's previous bottom selection.
-    await expect(nav('code').locator('[data-nav-index]')).toHaveCount(count + 1)
-    await expect(scroller('code')).toContainText(`ANSWER_${count + 1}：后台新增消息。`)
-    await expect(row('code', count)).toHaveAttribute('aria-current', 'true')
-    await expect(row('code', count - 1)).not.toHaveAttribute('aria-current', 'true')
-    await expect.poll(() => scroller('code').evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(2)
-    await openNav('code'); await expect(nav('code').getByRole('button', { name: '下一条', exact: true })).toBeDisabled()
   })
 
   for (const mode of ['work'] as const) test(`${mode} 键盘跳转与窄窗深浅色导航保持紧凑可操作`, async ({}, info) => {

@@ -99,16 +99,16 @@
 
 /* Kept-alive views preserve editor/terminal state. Discrete display transitions
  * let CSS visibility changes finish before removing them from layout. */
-:root :is(.panel__view, .subagent-followup__form, .work-subagents__composer,
+:root :is(.panel__view, .work-subagents__composer,
   .terminal-view__item-close, .work-task-primary, .work-workspace) {
   transition: opacity var(--motion-enter) var(--motion-ease),
     translate var(--motion-enter) var(--motion-ease), display var(--motion-exit) allow-discrete;
 }
 @starting-style {
-  :root :is(.panel__view, .subagent-followup__form, .work-subagents__composer,
+  :root :is(.panel__view, .work-subagents__composer,
     .terminal-view__item-close) { opacity: 0; translate: 0 -4px; }
 }
-:root :is(.panel__view, .subagent-followup__form, .work-subagents__composer)[hidden] {
+:root :is(.panel__view, .work-subagents__composer)[hidden] {
   opacity: 0; translate: 0 -4px;
 }
 :root .workbench__sidebar[data-motion-state] { --motion-offset-x: calc(-1 * var(--motion-distance)); }

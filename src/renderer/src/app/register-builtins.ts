@@ -1,22 +1,17 @@
 /**
- * Register shared editor commands, engine actions and application navigation.
+ * Register engine actions and application navigation.
  * The workspace surface owns its session and panel navigation.
  */
 import { registerCommands } from '@renderer/core/platform/commands'
 import { registerKeybindings } from '@renderer/core/platform/keybindings'
 import { restartEngine, startEngine, stopEngine } from '@renderer/core/engine/client'
-import { saveActiveDocument, saveAllDocuments } from '@renderer/core/editor/editor-store'
-import { registerEditorCommands } from '../features/editor/editor-commands'
 import { openAppSettings } from '../features/settings/app-settings-navigation'
 import { requestSessionTerminal } from '../features/terminal/terminal-navigation'
 import { registerBrowserContribution } from '../features/browser'
 
 export function registerContributions(): () => void {
-  const disposeEditorCommands = registerEditorCommands()
   const disposeBrowser = registerBrowserContribution()
   const disposeCommands = registerCommands([
-    { id: 'aether.file.save', title: '保存文件', category: '文件', run: () => saveActiveDocument() },
-    { id: 'aether.file.saveAll', title: '保存全部文件', category: '文件', run: () => saveAllDocuments() },
     { id: 'aether.engine.start', title: '启动引擎', category: '引擎', when: '!engineBusy',
       run: () => startEngine().then(() => undefined) },
     { id: 'aether.engine.stop', title: '停止引擎', category: '引擎', when: 'engineReady',
@@ -33,8 +28,6 @@ export function registerContributions(): () => void {
       run: () => openAppSettings('keybindings') }
   ])
   const disposeKeybindings = registerKeybindings([
-    { key: 'ctrl+s', command: 'aether.file.save' },
-    { key: 'ctrl+shift+s', command: 'aether.file.saveAll' },
     { key: 'ctrl+shift+m', command: 'aether.view.models' },
     { key: 'ctrl+,', command: 'aether.view.appSettings' },
     { key: 'ctrl+`', command: 'aether.panel.terminal' }
@@ -43,6 +36,5 @@ export function registerContributions(): () => void {
     disposeKeybindings()
     disposeCommands()
     disposeBrowser()
-    disposeEditorCommands()
   }
 }

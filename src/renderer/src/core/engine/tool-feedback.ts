@@ -1,4 +1,5 @@
 import type { ToolActivity } from './useChat'
+import { commandLogText, isCommandTool, parseCommandReceipts } from '@shared/command-receipt'
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -13,7 +14,10 @@ export function commandInvocation(args: string): string | undefined {
   const input = argumentsRecord(args)
   if (typeof input?.command !== 'string' || !input.command) return undefined
   const argv = Array.isArray(input.args) && input.args.every(arg => typeof arg === 'string') ? input.args as string[] : []
-  const display = (arg: string): string => !arg || /[\s"']/.test(arg) ? JSON.stringify(arg) : arg
+  // This is display text, never re-executed shell input. Preserve script lines
+  // and quotes instead of making users read JSON escape sequences.
+  const display = (arg: string): string => /[\r\n]/.test(arg) ? `\n${arg}\n`
+    : arg.includes('"') && !arg.includes("'") ? `'${arg}'` : !arg || /[\s"']/.test(arg) ? `"${arg}"` : arg
   return [input.command, ...argv.map(display)].join(' ')
 }
 
@@ -79,8 +83,19 @@ export function exportToolDiagnostics(tool: ToolActivity): string {
   const error = toolFailureMessage(tool)
   if (error) sections.push(`原因：${error}`)
   // Successful source reads can be huge; failed tools and command evidence matter in a report.
-  if (tool.result && (tool.name === 'execute_cmd' || tool.state === 'error' || tool.state === 'cancelled' || tool.state === 'interrupted')) {
-    sections.push(`输出：\n${outputBlock(boundToolOutput(tool.result))}`)
+  if (tool.result && (isCommandTool(tool.name) || tool.state === 'error' || tool.state === 'cancelled' || tool.state === 'interrupted')) {
+    const receipts = parseCommandReceipts(tool.result, tool.name)
+    const output = receipts ? receipts.map((item, index) => {
+      if (!('type' in item)) return `命令 ${index + 1} 读取失败：${item.error}`
+      return [receipts.length > 1 ? `命令 ${index + 1}` : '',
+        item.exitCode !== null ? `退出码：${item.exitCode}` : `状态：${item.status}`,
+        item.signal ? `信号：${item.signal}` : '', item.notice ?? '',
+        item.error ? item.error.message || item.error.code : '',
+        item.truncated ? '较早的日志已超出保留范围。' : '',
+        item.entries.map(entry => entry.text).join(''),
+        item.hasMore ? '后续输出尚未读取，可在命令结果中继续读取。' : ''].filter(Boolean).join('\n')
+    }).join('\n\n') : commandLogText(tool.result, tool.name, tool.metadata)
+    sections.push(`输出：\n${outputBlock(boundToolOutput(output))}`)
   }
   return sections.join('\n\n')
 }

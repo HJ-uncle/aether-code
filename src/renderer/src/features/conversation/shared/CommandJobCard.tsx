@@ -6,7 +6,7 @@ import type { CommandJobSnapshot } from '@shared/command-job'
 import { commandJobActive, commandJobDisplayLabel, commandJobInvocation, commandJobStopMessage, commandToolState, mergeCommandJob } from '@renderer/core/engine/command-job-state'
 import type { ToolActivity } from '@renderer/core/engine/useChat'
 import { cancelCommandJob, commandJobMissing, deleteCommandJob, ingestCommandJob, refreshCommandOutput, restartCommandJob, useCommandJob } from '@renderer/core/engine/command-job-store'
-import { MotionPresence } from '@renderer/ui/MotionPresence'
+import { MotionPresence, useMotionVisibility } from '@renderer/ui/MotionPresence'
 import { Icon } from '@renderer/ui/icons'
 import { confirmDialog } from '@renderer/ui/ConfirmDialog'
 import { exportToolDiagnostics } from '@renderer/core/engine/tool-feedback'
@@ -19,7 +19,12 @@ export function CommandJobCard({ job: initial, sessionId, active: surfaceActive 
   const visible = useWorkbenchVisible()
   const remoteReadOnly = engine.snapshot.mode === 'remote'
   const sourceEpoch = getEngineSource()
-  const cached = useCommandJob(sessionId, initial.jobId)
+  const servicePresentation = presentation === 'service'
+  // Running commands keep their status visible; output opens only on request.
+  const [open, setOpen] = useState(false)
+  const ancestorVisible = useMotionVisibility()
+  const readOutput = surfaceActive && visible && ancestorVisible && ready && open
+  const cached = useCommandJob(sessionId, initial.jobId, readOutput)
   const job = cached ? mergeCommandJob(initial, cached.job) : initial
   const [outputError, setOutputError] = useState('')
   const [cancelError, setCancelError] = useState('')
@@ -30,10 +35,6 @@ export function CommandJobCard({ job: initial, sessionId, active: surfaceActive 
   const [stopping, setStopping] = useState(false)
   const [copied, setCopied] = useState(false)
   const detailsId = useId()
-  const servicePresentation = presentation === 'service'
-  // Live output is useful while a command is running; terminal jobs reopen as
-  // compact summaries after a reload so an old script cannot fill the chat.
-  const [open, setOpen] = useState(() => !servicePresentation && commandJobActive(initial))
   // Source passed through node -e should not compete with its actual output.
   const [commandOpen, setCommandOpen] = useState(false)
   const active = commandJobActive(job)
@@ -94,14 +95,14 @@ export function CommandJobCard({ job: initial, sessionId, active: surfaceActive 
   }, [copied])
   useEffect(() => { if (initial.sessionId === sessionId) ingestCommandJob(initial) }, [initial, sessionId])
   useEffect(() => {
-    if (dismissed || !belongs || !ready || !visible || !surfaceActive) return
+    if (dismissed || !belongs || !readOutput) return
     let alive = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const refresh = async (): Promise<void> => {
       let nextActive = true
       try {
         const view = await refreshCommandOutput(sessionId, initial.jobId)
-        nextActive = commandJobActive(view.job) || view.output.cursor < view.job.cursor
+        nextActive = commandJobActive(view.job) || view.output.hasMore
         if (alive) setOutputError('')
       } catch (error) {
         if (commandJobMissing(error)) {
@@ -113,7 +114,7 @@ export function CommandJobCard({ job: initial, sessionId, active: surfaceActive 
     }
     void refresh()
     return () => { alive = false; if (timer) clearTimeout(timer) }
-  }, [dismissed, belongs, initial.jobId, sessionId, ready, visible, surfaceActive])
+  }, [dismissed, belongs, initial.jobId, sessionId, readOutput])
   const stop = async (): Promise<void> => {
     if (readOnly || !ready || sourceEpoch !== getEngineSource() || !belongs || stopping || !active) return
     restoreFocusOnExit.current = Boolean(cardRef.current?.contains(document.activeElement))
@@ -121,7 +122,7 @@ export function CommandJobCard({ job: initial, sessionId, active: surfaceActive 
     setStopping(true); setCancelError('')
     try {
       await cancelCommandJob(sessionId, job.jobId)
-      if (sourceEpoch === getEngineSource()) await refreshCommandOutput(sessionId, job.jobId)
+      if (sourceEpoch === getEngineSource() && readOutput) await refreshCommandOutput(sessionId, job.jobId)
     }
     catch (error) { if (sourceEpoch === getEngineSource()) setCancelError(`停止失败：${error instanceof Error ? error.message : String(error)}`) }
     finally {
@@ -187,7 +188,7 @@ export function CommandJobCard({ job: initial, sessionId, active: surfaceActive 
               {job.signal ? <div><dt>信号</dt><dd>{job.signal}</dd></div> : null}
             </dl>
             {stopMessage || job.error ? <p className="work-service-card__note" role="note">{stopMessage ?? job.error?.message}{job.error && !stopMessage ? `（${job.error.code}）` : ''}</p> : null}
-            <div className="work-service-card__detail-head"><span>日志</span>{cached?.output.truncated ? <span>仅保留最近输出</span> : null}</div>
+            <div className="work-service-card__detail-head"><span>日志</span>{cached?.output.truncated || cached?.output.tail ? <span>仅显示最近输出</span> : null}</div>
             <pre className="work-service-card__output" aria-label="命令输出">{cached?.output.entries.length ? cached.output.entries.map(entry => <span key={entry.seq} data-stream={entry.stream}>{entry.text}</span>) : '暂无输出'}</pre>
           </div>
         </MotionPresence>
@@ -233,6 +234,7 @@ export function CommandJobCard({ job: initial, sessionId, active: surfaceActive 
     <MotionPresence show={open}><div className="command-job-card__body">
       <ToolOutcome tool={outcomeTool} />
       {cached?.output.truncated ? <div className="command-job-card__meta">较早输出已截断，仅显示最近保留的内容。</div> : null}
+      {cached?.output.tail && !cached.output.truncated ? <div className="command-job-card__meta">仅显示最近输出，较早日志仍保留在磁盘。</div> : null}
       <pre className="command-job-card__output" aria-label="命令输出">{cached?.output.entries.length ? cached.output.entries.map(entry => <span key={entry.seq} data-stream={entry.stream} className={entry.stream === 'stderr' ? 'command-job-card__stderr' : undefined}>{entry.text}</span>) : '暂无输出'}</pre>
     </div></MotionPresence>
   </section>

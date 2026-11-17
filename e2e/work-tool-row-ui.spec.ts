@@ -9,8 +9,9 @@ import type { EngineFileChange } from '../src/shared/ipc'
 import type { RootRun } from '../src/shared/root-run'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
+import type { CommandJobSnapshot } from '../src/shared/command-job'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'command-receipts')
 const token = 'tool-row-fixture-token', sessionId = 'work-tool-rows', modelId = 'tool-row-model'
 const title = '读取范围与行交互核对', now = Date.now() - 10_000, remoteRoot = '/remote/tool-rows'
 const sourcePath = `${remoteRoot}/example.ts`, firstSource = '1 | const first = 1;\n2 | const second = 2;'
@@ -39,6 +40,15 @@ const presentationChange: EngineFileChange = { id: 'tool-row-presentation', sess
   oldHash: 'missing', newHash: `sha256:${'d'.repeat(64)}`, isNew: true,
   truncated: false, status: 'pending', createdAt: now + 19, toolCallId: 'write-presentation' }
 const changes = [change, presentationChange]
+const receiptJob: CommandJobSnapshot = { schemaVersion: 1, jobId: 'receipt-job', sessionId, ownerSessionId: sessionId,
+  runId: run.runId, ownerRunId: run.runId, turnId: run.turnId, toolCallId: 'command-receipt', version: 1,
+  status: 'succeeded', command: 'node', args: ['-e', 'const title = "中文";\nconsole.log(title);\nconsole.log("done");'],
+  cwd: remoteRoot, background: false, createdAt: now, updatedAt: now + 20, exitCode: 0, signal: null, cursor: 3, earliestCursor: 0 }
+const firstCommandReceipt = { type: 'command_result', version: 1, jobId: receiptJob.jobId, status: 'succeeded', exitCode: 0, signal: null,
+  entries: [{ seq: 1, stream: 'stdout', text: '😀中' }], nextCursor: 0, nextOffset: 7, earliestCursor: 0, truncated: false, hasMore: true,
+  notice: 'COMMAND_SOURCE_NOTICE：源码变化已确认。' }
+const commandReads: Array<{ sessionId: string; cursor: number; offset: number; maxBytes: number }> = []
+let holdCommandPage = false, releaseCommandPage: (() => void) | undefined
 const metadata = { rootRunId: run.runId, turnId: run.turnId }
 const errors: string[] = [], mutations: string[] = []
 let app: ElectronApplication | undefined, page: Page, fixture = ''
@@ -97,12 +107,32 @@ function history(id: string): EngineHistoryRow[] {
     createdAt: now + 19, conversationId: run.turnId, metadata: { ...metadata, success: true, change: presentationChange } })
   rows.push({ id: run.assistantMessageId, role: 'assistant', content: '已读取源码、目录和办公文档，并核对命令记录。', createdAt: now + 21,
     conversationId: run.turnId, metadata })
+  rows.splice(rows.length - 1, 0,
+    { id: 'call-command-receipt', role: 'assistant', content: '', createdAt: now + 20, conversationId: run.turnId, metadata,
+      toolCall: { id: 'command-receipt', name: 'execute_cmd', args: { command: receiptJob.command, args: receiptJob.args } } },
+    { id: 'result-command-receipt', role: 'tool', toolCallId: 'command-receipt', content: JSON.stringify(firstCommandReceipt), success: true,
+      createdAt: now + 20, conversationId: run.turnId, metadata: { ...metadata, success: true, commandJob: receiptJob, changes: [change] } },
+    { id: 'call-command-business', role: 'assistant', content: '', createdAt: now + 20, conversationId: run.turnId, metadata,
+      toolCall: { id: 'command-business', name: 'execute_cmd', args: { command: 'node', args: ['report.js'] } } },
+    { id: 'result-command-business', role: 'tool', toolCallId: 'command-business', content: JSON.stringify({ text: 'BUSINESS_JSON_BEGIN' + 'x'.repeat(64010) + 'BUSINESS_JSON_END', count: 19 }), success: true,
+      createdAt: now + 20, conversationId: run.turnId, metadata: { ...metadata, success: true } })
   return rows
 }
 const server = createServer((request, response) => { void (async () => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1'), path = url.pathname, id = url.searchParams.get('sessionId') ?? ''
   response.setHeader('content-type', 'application/json')
   if (path.startsWith('/api/') && request.headers['x-aether-instance-token'] !== token) throw new Error(`Unauthenticated ${path}`)
+  if (path === `/api/v1/command-jobs/${receiptJob.jobId}/output`) {
+    const cursor = Number(url.searchParams.get('cursor')), offset = Number(url.searchParams.get('cursorOffset')), maxBytes = Number(url.searchParams.get('maxBytes'))
+    if (id !== sessionId || maxBytes !== 32768 || cursor === 0 && offset !== 7 || cursor !== 0 && cursor !== 2) throw new Error('Wrong command output scope/cursor')
+    commandReads.push({ sessionId: id, cursor, offset, maxBytes })
+    const body = envelope({ job: receiptJob, entries: cursor === 0
+      ? [{ seq: 1, stream: 'stdout', text: '文\n' }, { seq: 2, stream: 'stderr', text: '{"text":"COMMAND_BUSINESS_JSON","count":12}\n' }]
+      : [{ seq: 3, stream: 'stdout', text: 'COMMAND_FINAL_OUTPUT\n' }],
+      nextCursor: cursor === 0 ? 2 : 3, nextOffset: 0, earliestCursor: 0, truncated: false, hasMore: cursor === 0 })
+    if (holdCommandPage) { releaseCommandPage = () => { response.end(body); releaseCommandPage = undefined; holdCommandPage = false }; return }
+    response.end(body); return
+  }
   if (path === '/api/v1/workspace/file/content') throw new Error('Receipt hover and disclosure must not open workspace files')
   if (['/api/v1/workbench/clients', '/api/v1/browser/clients', '/api/v1/terminal/create', '/api/v1/lsp/request', '/api/v1/cron/capabilities'].includes(path)) {
     response.writeHead(404).end(envelope(null)); return
@@ -200,11 +230,13 @@ test.beforeAll(async () => {
   await expect(page.locator('.work-view').getByRole('heading', { name: title, exact: true })).toBeVisible()
 })
 test.afterEach(async ({}, info) => {
+  releaseCommandPage?.()
   if (info.status !== info.expectedStatus && page && !page.isClosed()) await screenshot('tool-row-failure', info)
   await info.attach('app-errors', { body: JSON.stringify({ errors, mutations }, null, 2), contentType: 'application/json' })
   expect(errors).toEqual([]); expect(mutations).toEqual([])
 })
 test.afterAll(async () => {
+  releaseCommandPage?.()
   try { await app?.close() } finally {
     server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()))
     if (fixture) {
@@ -389,6 +421,63 @@ test('成功和失败命令保留cmd参数，窄窗单行省略且悬浮显示�
   }
   await app!.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setContentSize(1440, 900) })
   await page.locator('html').evaluate(element => element.setAttribute('data-appearance', 'light'))
+})
+
+test('命令结果保留脚本与业务 JSON，手动分页且关闭后拒绝迟到页', async ({}, info) => {
+  await collapseToolRows()
+  const row = page.locator('[data-work-tool-id="command-receipt"]'), toggle = row.locator('button.logline')
+  await toggle.scrollIntoViewIfNeeded(); await toggle.focus(); await page.keyboard.press('Enter')
+  const result = row.getByRole('region', { name: '命令结果', exact: true })
+  await expect(result.getByLabel('命令输出', { exact: true })).toHaveText('😀中')
+  await expect(result).toContainText('COMMAND_SOURCE_NOTICE')
+  await expect(row.locator('.work-file-change-row')).toHaveCount(1)
+  await expect(result.locator('.tool-result-data')).toHaveCount(0)
+  await expect(result).not.toContainText('schemaVersion')
+  expect(commandReads).toEqual([])
+  const command = result.locator('summary').filter({ hasText: '查看命令' })
+  await command.focus(); await page.keyboard.press('Enter')
+  await expect(result.locator('.command-receipt__command > pre')).toContainText(receiptJob.args[1])
+  expect(await result.locator('.command-receipt__command > pre').textContent()).not.toContain('\\n')
+  for (const appearance of ['light', 'dark']) {
+    await page.locator('html').evaluate((element, value) => element.setAttribute('data-appearance', value), appearance)
+    await result.locator('.command-receipt__log').scrollIntoViewIfNeeded()
+    await result.locator('.command-receipt__actions').scrollIntoViewIfNeeded()
+    await screenshot(`command-receipt-${appearance}`, info)
+  }
+  const more = result.getByRole('button', { name: '读取更多命令输出', exact: true })
+  await more.focus(); await page.keyboard.press('Enter')
+  await expect(result.getByLabel('命令输出', { exact: true })).toHaveText('文\n{"text":"COMMAND_BUSINESS_JSON","count":12}\n')
+  expect(commandReads).toEqual([{ sessionId, cursor: 0, offset: 7, maxBytes: 32768 }])
+  await more.click()
+  await expect(result.getByLabel('命令输出', { exact: true })).toHaveText('COMMAND_FINAL_OUTPUT\n')
+  expect(commandReads).toHaveLength(2)
+  await expect(result.getByRole('button', { name: '读取更多命令输出', exact: true })).toHaveCount(0)
+  await result.getByRole('button', { name: '上一页', exact: true }).click()
+  await expect(result).toContainText('COMMAND_BUSINESS_JSON'); expect(commandReads).toHaveLength(3)
+  await result.getByRole('button', { name: '上一页', exact: true }).click()
+  await expect(result.getByLabel('命令输出', { exact: true })).toHaveText('😀中'); expect(commandReads).toHaveLength(3)
+  holdCommandPage = true
+  await more.click(); await expect.poll(() => commandReads.length).toBe(4)
+  await toggle.click(); await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  releaseCommandPage?.()
+  await toggle.click()
+  await expect(result.getByLabel('命令输出', { exact: true })).toHaveText('😀中')
+  await expect(result).not.toContainText('COMMAND_BUSINESS_JSON')
+  holdCommandPage = true
+  await more.click(); await expect.poll(() => commandReads.length).toBe(5)
+  const process = page.locator('.work-message__process-toggle')
+  await process.click(); await expect(process).toHaveAttribute('aria-expanded', 'false')
+  releaseCommandPage?.()
+  await process.click()
+  await expect(result.getByLabel('命令输出', { exact: true })).toHaveText('😀中')
+  await expect(result).not.toContainText('COMMAND_BUSINESS_JSON')
+  const business = page.locator('[data-work-tool-id="command-business"]')
+  await business.locator('button.logline').click()
+  const log = business.getByLabel('命令输出', { exact: true })
+  await expect(log).toContainText('BUSINESS_JSON_BEGIN'); await expect(log).toContainText('BUSINESS_JSON_END')
+  await expect(log).toContainText('"count":19')
+  await expect(business).not.toContainText('暂无可展示的摘要')
+  expect(commandReads).toHaveLength(5)
 })
 
 test('宽窄浅深主题中文件收据与其他过程行共用对齐列，悬浮和键盘焦点不移动内容', async ({}, info) => {

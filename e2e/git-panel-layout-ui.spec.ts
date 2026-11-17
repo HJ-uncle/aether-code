@@ -144,7 +144,7 @@ async function setWindow(width: number): Promise<void> {
   await expect(panel()).toBeVisible(); await settle()
 }
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('complementary', { name: '应用导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   await settings.getByRole('tab', { name: '外观', exact: true }).click()
   await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
@@ -480,7 +480,6 @@ test.describe.serial('Git 面板紧凑布局', () => {
       { name: 'workspace-search', innerButton: true, html: '<div class="work-workspace-panel"><div class="search-view__field ui-input-shell ui-input-shell--compact" data-focus-owner><input class="search-view__input ui-input-field" data-focus-field><button class="search-view__btn" type="button" data-inner-button>正则</button></div></div>' },
       { name: 'workspace-search-filter', html: '<div class="work-workspace-panel"><input class="search-view__filter-input ui-input ui-input--compact" data-focus-field></div>' },
       { name: 'subagent-composer', innerButton: true, html: '<div class="work-subagents"><form class="work-subagents__composer"><div class="work-subagents__composer-editor ui-input-shell ui-input-shell--multiline" data-focus-owner><textarea class="ui-input-field" data-focus-field></textarea><button type="button" data-inner-button>发送</button></div></form></div>' },
-      { name: 'subagent-followup', html: '<form class="subagent-followup__form"><textarea class="ui-input" data-focus-field></textarea></form>' },
       { name: 'subagent-search', html: '<div class="work-subagents"><label class="work-subagents__search"><input class="ui-input ui-input--compact" data-focus-field></label></div>' },
       { name: 'chat-composer', innerButton: true, html: '<div class="chat__surface input-composer ui-input-shell ui-input-shell--multiline" data-focus-owner><div class="input-composer__input ui-input-field" contenteditable="true" role="textbox" data-focus-field></div><button type="button" data-inner-button>附件</button></div>' },
       { name: 'git-picker', innerButton: true, html: '<div class="git-pickdlg"><div class="git-pickdlg__search ui-input-shell" data-focus-owner><input class="git-pickdlg__input ui-input-field" data-focus-field><button class="git-pickdlg__clear" type="button" data-inner-button>清除</button></div></div>' }

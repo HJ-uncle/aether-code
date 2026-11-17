@@ -76,6 +76,7 @@ export function ApplicationView(): JSX.Element {
   const view = useMemo(() => ({ ...storedView, tab: workspaceTabs.tab }), [storedView, workspaceTabs.tab])
   const selectWorkspaceTab = workspaceTabs.setTab
   const workspaceMotion = useMotionPresence(view.workspace)
+  const [workspaceFocusRequest, setWorkspaceFocusRequest] = useState(0)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<HomeFilter>('all')
   const [artifactSelection, setArtifactSelection] = useState<{ scope: string; id: string | null } | null>(null)
@@ -481,6 +482,7 @@ export function ApplicationView(): JSX.Element {
     // The leading control is the workspace pane's collapse action. The home
     // surface is opened explicitly when the last workspace destination closes.
     set({ workspace: false, pane: 'conversation' })
+    setWorkspaceFocusRequest(previous => previous + 1)
   }, [set])
   const openWorkspaceHome = useCallback((): void => {
     set({ workspace: true, tab: 'home', pane: 'workspace' })
@@ -643,7 +645,8 @@ export function ApplicationView(): JSX.Element {
                     <ResourceTabs
                       key={`${browserSource}:${task.id}`}
                       sessionId={task.id}
-                      activeTab={view.tab}
+                      focusRequest={workspaceFocusRequest}
+                      activeTab={view.workspace && (!singlePane || view.pane === 'workspace') ? view.tab : undefined}
                       visibleWorkspaceIds={[
                         'home',
                         'workspace',

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Icon, type IconName } from '@renderer/ui/icons'
 import { Popover } from '@renderer/ui/Popover'
 import { browserAction, initializeBrowser, selectBrowserTab } from '../browser/browser-store'
@@ -28,7 +28,7 @@ interface ActivitySection {
  * collapsed. It also surfaces live work from the same session context as the
  * global activity tray; empty activity sections stay hidden.
  */
-export function ResourceTabs({ sessionId, onSelect, onNewTab, items, activeTab, visibleWorkspaceIds }: {
+export function ResourceTabs({ sessionId, onSelect, onNewTab, items, activeTab, visibleWorkspaceIds, focusRequest = 0 }: {
   sessionId: string
   onSelect: () => void
   /** Opens the Work landing page as a new workspace tab. */
@@ -38,13 +38,23 @@ export function ResourceTabs({ sessionId, onSelect, onNewTab, items, activeTab, 
   activeTab?: string
   /** Optional content gate for destinations which are only useful when populated. */
   visibleWorkspaceIds?: readonly string[]
+  /** Increment only for an explicit pane collapse, not ordinary visibility changes. */
+  focusRequest?: number
 }): JSX.Element {
   const fileInput = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const consumedFocusRequest = useRef(focusRequest)
   const menuRef = useRef<HTMLElement>(null)
   const [open, setOpen] = useState(false)
   const [collapsedKinds, setCollapsedKinds] = useState<ReadonlySet<string>>(new Set())
   const { activities } = useWorkspaceActivity(sessionId)
+  useLayoutEffect(() => {
+    // Starting at the current request prevents a previous session's collapse
+    // from taking focus when this menu later mounts for another session.
+    if (consumedFocusRequest.current === focusRequest) return
+    consumedFocusRequest.current = focusRequest
+    triggerRef.current?.focus({ preventScroll: true })
+  }, [focusRequest])
   useEffect(() => { void initializeBrowser() }, [])
   useEffect(() => {
     if (!open) return
@@ -111,7 +121,10 @@ export function ResourceTabs({ sessionId, onSelect, onNewTab, items, activeTab, 
   const activityRow = (section: ActivitySection): JSX.Element => section.entry.open
     ? <button key={section.id} type="button" className="work-workspace-card__row work-workspace-card__row--activity" role="menuitem" onClick={() => {
       close()
-      void Promise.resolve().then(() => section.entry.open?.()).catch(error => toast.error(error instanceof Error ? error.message : String(error)))
+      // This row represents the terminal category, not its newest job. Only
+      // an explicit job row should replace the user's remembered selection.
+      const open = section.id === 'terminal' ? items.find(item => item.id === 'terminal')?.onSelect ?? section.entry.open : section.entry.open
+      void Promise.resolve().then(() => open?.()).catch(error => toast.error(error instanceof Error ? error.message : String(error)))
     }}>{activityCopy(section)}</button>
     : <div key={section.id} className="work-workspace-card__row work-workspace-card__row--summary">{activityCopy(section)}</div>
 

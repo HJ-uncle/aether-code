@@ -203,7 +203,7 @@ test.describe.serial('插件实际挂载点与目标路由', () => {
     await expect.poll(() => events.some(event => event.event === 'composer.changed' && event.sessionId === first && JSON.stringify(event.payload).includes('补充要求'))).toBe(true)
     await slot('composer.panel').locator('#start-service').click()
     await expect(slot('composer.panel').locator('#result')).toContainText('running')
-    await page.getByRole('button', { name: '服务，1 个运行中', exact: true }).click()
+    await page.getByRole('button', { name: '进行中，1 项', exact: true }).click()
     const row = page.locator('.service-tray__row').filter({ hasText: '入口测试服务' })
     await expect(row).toBeVisible(); await row.click({ button: 'right' })
     await page.getByRole('menuitem', { name: '检查 service.context', exact: true }).click()
@@ -214,7 +214,12 @@ test.describe.serial('插件实际挂载点与目标路由', () => {
   test('工作区和编辑器挂载实际生效，选择与定位保持文件归属，只读预览不能被写入', async () => {
     const tab = page.getByRole('tab', { name: '工作区', exact: true })
     if (await tab.isVisible()) await tab.click()
-    else { await page.locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '工作区', exact: true }).click() }
+    else {
+      await page.locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click()
+      // The activity card omits the selected destination even while its pane is collapsed.
+      await page.getByRole('menu', { name: '更多工作区', exact: true }).getByRole('menuitem', { name: '新建首页标签', exact: true }).click()
+      await page.getByRole('tabpanel', { name: '工作区首页', exact: true }).getByRole('button', { name: '工作区 打开工作区', exact: true }).click()
+    }
     await openSlot('workspace.panel')
     await expect(slot('workspace.panel').locator('#context')).toContainText(workspace())
     await file('demo.ts').click({ button: 'right' })

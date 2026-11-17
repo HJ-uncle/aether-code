@@ -8,6 +8,9 @@ import { looksLikeStructuredResult, ToolResultData } from './ToolResultData'
 import { parseToolResultData } from './tool-result-data'
 import { useToolImageGallery } from './ToolImageGalleryProvider'
 import { buildToolImageGallery, toolImageReference, type ToolImageGalleryGroup } from './tool-image-gallery'
+import { CommandReceipts, LegacyCommandResult } from './CommandReceipt'
+import { commandLogText, isCommandTool, parseCommandReceipts } from '@shared/command-receipt'
+import type { ChatFileContext } from './chat-link'
 import './tool-result.css'
 
 function ResultImage({ image, onOpen }: { image: ToolResultImage; onOpen: () => void }): JSX.Element {
@@ -31,6 +34,9 @@ export const ToolResult = memo(function ToolResult({
   toolId,
   toolName,
   toolArgs,
+  metadata,
+  fileContext,
+  active = true,
   textClassName,
   structured = false,
   surfaceMode = 'code'
@@ -40,11 +46,16 @@ export const ToolResult = memo(function ToolResult({
   toolId?: string
   toolName?: string
   toolArgs?: unknown
+  metadata?: Record<string, unknown>
+  fileContext?: ChatFileContext
+  active?: boolean
   textClassName?: string
   structured?: boolean
   surfaceMode?: 'code' | 'work'
 }): JSX.Element {
-  const result = useMemo(() => parsed ?? parseToolResult(value), [parsed, value])
+  const result = useMemo(() => isCommandTool(toolName)
+    ? { text: typeof value === 'string' ? value : value !== undefined ? JSON.stringify(value) ?? '' : parsed?.text ?? '', images: [] }
+    : parsed ?? parseToolResult(value), [parsed, value, toolName])
   const fallbackId = useId(), owner = useToolImageGallery()
   const localId = toolId ?? fallbackId
   const local = useMemo(() => buildToolImageGallery([{ toolId: localId, toolName: toolName ?? '', args: toolArgs, result }],
@@ -73,6 +84,9 @@ export const ToolResult = memo(function ToolResult({
   const data = useMemo(() => (structured || surfaceMode === 'work') && !result.images.length && !result.browserSnapshots?.length ? parseToolResultData(result.text) : null, [structured, surfaceMode, result])
   const receipt = useMemo(() => ['cron_create', 'cron_update'].includes(toolName ?? '')
     ? parseAutomationReceipt(value ?? result.text) : null, [toolName, value, result.text])
+  const commandReceipts = useMemo(() => parseCommandReceipts(result.text, toolName), [result.text, toolName])
+  if (commandReceipts) return <CommandReceipts receipts={commandReceipts} metadata={metadata} context={fileContext} active={active} args={toolArgs} />
+  if (isCommandTool(toolName)) return <LegacyCommandResult text={commandLogText(result.text, toolName, metadata)} metadata={metadata} args={toolArgs} />
   if (receipt) return <><AutomationCard receipt={receipt} />{surfaceMode === 'code' ? <details className="automation-card-receipt"><summary>原始收据</summary><pre className={textClassName}>{result.text}</pre></details> : null}</>
   if (data) return <ToolResultData data={data} raw={result.text} surfaceMode={surfaceMode} />
   if (!result.images.length && !result.browserSnapshots?.length) {

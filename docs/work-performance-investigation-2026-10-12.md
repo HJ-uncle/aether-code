@@ -204,7 +204,7 @@ flowchart LR
 ## 7. 本次交付与复现
 
 - 完成源码、CSS computed style、GPU 状态、引擎日志/HTTP/IPC 传播链和两轮真实窗口对照；没有修改产品功能或用户实际配置。
-- `scripts/work-performance-probe.mjs` 为可复用隔离探针；本次最终正常桌面运行四组及层级探针均 exit 0。脚本的临时用户配置自动删除，结果 JSON 留作证据。
+- 当时的隔离探针四组与层级探测均 exit 0，原结果继续保留。`scripts/work-performance-probe.mjs` 在 2026-11-17 已适配统一默认界面，删除旧模式切换及已不存在的设置分区；以下命令运行当前脚本，不表示重现当时的完整 UI 或旧性能数字。
 - `docs/work-performance-evidence-2026-10-12.json` 保存两轮结果、实际 GPU 状态、窗口参数、版本、commit 与构建产物哈希。测量的构建基于 HEAD `37a19660be4b7d7ad271f6dc461f82e5f99ef729` 加当时未提交工作树；仓库还有其他正在进行的修改，报告链接行号以调研时为准。
 - 本次 `npm run build`（含 typecheck）成功；没有执行全量功能 E2E，因为本次产出是调研文档与诊断脚本。探针是定向实机实验，不能宣称完整业务回归已通过。
 
@@ -214,7 +214,9 @@ node scripts/work-performance-probe.mjs
 node scripts/work-performance-probe.mjs --layers
 ```
 
-在正常桌面权限执行，串行运行；查看 `.e2e-tmp/work-performance-results.json` 和 `.e2e-tmp/work-performance-layers-results.json`。脚本清除其子进程的 `ELECTRON_RUN_AS_NODE`，不修改系统环境变量；真实用户 profile 不参与。
+在正常桌面权限执行，串行运行；新结果、隔离用户配置和冻结构建统一位于 `.e2e-tmp/work-performance/`。结果文件为 `work-performance-results.json`、`work-performance-layers-results.json`；`--verify --default-graphics` 写入 `work-performance-optimized-results.json`。脚本清除其子进程的 `ELECTRON_RUN_AS_NODE`，不修改系统环境变量；真实用户 profile 不参与。
+
+旧 Code 界面的专属探针与阶段说明已退役。其共享图形与设置测量仍保留为[历史性能证据](code-performance-verification-evidence-2026-10-12.json)，其中构建身份、运行命令和旧界面条件属于原采样记录，不能作为当前可执行入口。
 
 当前源码的 GPU 比较入口为 `$env:AETHER_ENABLE_GPU='1'`，上面的隔离探针已在子进程中分别设为0/1。普通运行中的实例不会热切换 GPU。企业安装版应提供正式图形设置与故障回退，不让用户长期依赖环境变量。
 

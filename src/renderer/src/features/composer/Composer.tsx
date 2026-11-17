@@ -229,6 +229,7 @@ export function Composer({
     setPolishing(false)
     setMentionQuery(null)
     setResourceQuery(null)
+    inputRef.current?.closeCompletion()
     setAgentsOpen(false)
     return () => {
       polishEpoch.current += 1
@@ -569,7 +570,7 @@ export function Composer({
             open={mentionQuery !== null}
             anchorRef={composerRef}
             className="work-completion-popover"
-            onClose={() => setMentionQuery(null)}
+            onClose={() => inputRef.current?.closeCompletion()}
           >
               <MentionRefPicker
                 open={mentionQuery !== null}
@@ -594,7 +595,7 @@ export function Composer({
                   setMentionQuery(null)
                 }}
                 onClose={() => {
-                  setMentionQuery(null)
+                  inputRef.current?.closeCompletion()
                   inputRef.current?.focus()
                 }}
               />
@@ -603,7 +604,7 @@ export function Composer({
             open={resourceQuery !== null}
             anchorRef={composerRef}
             className="work-completion-popover"
-            onClose={() => setResourceQuery(null)}
+            onClose={() => inputRef.current?.closeCompletion()}
           >
             <ResourcePicker
               query={resourceQuery ?? ''}
@@ -611,7 +612,7 @@ export function Composer({
               selectedKnowledgeBases={controller.resources.knowledgeBases}
               onSelect={selectResource}
               onClose={() => {
-                setResourceQuery(null)
+                inputRef.current?.closeCompletion()
                 inputRef.current?.focus()
               }}
             />

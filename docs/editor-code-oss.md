@@ -45,12 +45,12 @@ flowchart LR
 | --- | --- | --- |
 | Monaco 初始化、主题、模型与文件身份 | [monaco-setup.ts](../src/renderer/src/core/editor/monaco-setup.ts)、[file-identity.ts](../src/renderer/src/core/editor/file-identity.ts) | 被预览及其他组件复用；Monaco 依赖本身不包含 VS Code 完整工作台 |
 | 文件编辑状态、保存与冲突检查 | [editor-store.ts](../src/renderer/src/core/editor/editor-store.ts) | 有可写宿主实现，但默认只读预览不注册为可写编辑组 |
-| 当前编辑器及原生命令路由 | [active-editor.ts](../src/renderer/src/core/editor/active-editor.ts)、[editor-commands.ts](../src/renderer/src/features/editor/editor-commands.ts) | 命令执行依赖实际活动编辑器；不能以命令已注册证明用户能编辑和保存 |
-| TypeScript 语言服务与跨文件桥 | [core/lsp](../src/renderer/src/core/lsp/)、[monaco-workspace.ts](../src/renderer/src/core/editor/monaco-workspace.ts)、[main/lsp](../src/main/lsp/) | 当前默认装配未调用 `wireTsLsp` 或挂载可写编辑器注册；不承诺默认文件页的 F12、F2、项目诊断和跨文件保存 |
+| 插件编辑器目标与选区 | [CodePreview.tsx](../src/renderer/src/features/workspace/CodePreview.tsx)、[interactions.ts](../src/renderer/src/features/extensions/interactions.ts) | 预览自己注册只读目标与选区事件；保留插件读取、定位与只读写入拒绝 |
+| TypeScript 语言服务与跨文件桥 | [core/lsp](../src/renderer/src/core/lsp/)、[monaco-workspace.ts](../src/renderer/src/core/editor/monaco-workspace.ts)、[main/lsp](../src/main/lsp/) | 保留共享模型、诊断和 IPC 基础设施；旧 Code 工作区的未挂载生命周期入口已移除，不承诺默认文件页的 F12、F2、项目诊断和跨文件保存 |
 | 显示偏好 | [editor-display-options.ts](../src/renderer/src/core/editor/editor-display-options.ts) | 字体、自动换行、小地图等偏好通过 `aether.editor.displayOptions` 保存，跨重启保留 |
-| 内置命令目录 | [register-builtins.ts](../src/renderer/src/app/register-builtins.ts) | 保存等命令仍在目录中，但需要对应活动上下文；不是独立可写入口 |
+| 内置命令目录 | [register-builtins.ts](../src/renderer/src/app/register-builtins.ts) | 只注册实际可用的应用操作；已移除没有可写宿主的全局保存、格式化、重构等旧 Code 命令及保存快捷键 |
 
-本文源码核对未发现 `registerActiveEditor`、`setActiveEditorGroup`、`wireTsLsp` 在当前默认界面中的挂载调用。若以后接入，应同步更新界面、文档和真实交互测试，验证实际修改与落盘，不只验证命令可见。
+旧 Code 活动编辑器注册、原生命令桥和专属选区投递实现已经清理。当前预览的查找、复制、选区引用和插件目标由预览组件自行承载；共享文件状态的保存、冲突及身份检查仍保留。若以后新增可写编辑界面，须重新接入完整生命周期并验证实际修改与落盘。
 
 ## 本地与远端文件
 

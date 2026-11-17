@@ -60,6 +60,8 @@ export interface MentionInsertion {
 /** 父组件通过 ref 调用的命令式接口（插 chip / 清空 / 聚焦） */
 export interface MentionInputHandle {
   insertMention: (mention: Mention) => boolean
+  /** End completion without deleting its authored query. A fresh trigger starts another session. */
+  closeCompletion: () => void
   /** @ 补全选中：把光标前的「@关键词」文本替换为 chip */
   completeMention: (mention: Mention) => void
   /** Consume only the active @ query for a resource action, without inserting a reference. */
@@ -349,6 +351,12 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
     /** 上一次序列化出的文本：用于区分「用户编辑」与「外部回填」 */
     const lastSerializedRef = useRef('')
     const composingRef = useRef(false)
+    const completionRef = useRef<{ trigger: '@' | '/'; node: Node; start: number; end: number } | null>(null)
+    const closeCompletion = useCallback(() => {
+      completionRef.current = null
+      onMentionQuery?.(null)
+      onSlashQuery?.(null)
+    }, [onMentionQuery, onSlashQuery])
     const acceptedDraftRef = useRef<InputDraft>({ text: '', mentions: [] })
     const draftGenerationRef = useRef(0)
     const pendingInsertionsRef = useRef(new Set<() => void>())
@@ -538,6 +546,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         if (normalized) onChange(text, acceptedDraftRef.current.mentions)
         return
       }
+      closeCompletion()
       invalidateInsertions()
       domDraftScopeRef.current = draftScopeRef.current
       if (resetHistory && !restoringHistoryRef.current && !sameAuthoredDraft(acceptedDraftRef.current, { text, mentions })) editHistoryRef.current.reset()
@@ -562,7 +571,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       lastSerializedRef.current = text
       acceptedDraftRef.current = { text, mentions: serialize().mentions }
       if (normalized) onChange(text, acceptedDraftRef.current.mentions)
-    }, [invalidateInsertions, onOpenMention, serialize, decorateChip, onChange])
+    }, [invalidateInsertions, onOpenMention, serialize, decorateChip, onChange, closeCompletion])
 
     const rebuildFromText = useCallback((text: string) => restoreDraft(text, []), [restoreDraft])
 
@@ -932,15 +941,30 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       return keyword
     }, [])
 
-    /** 光标变化（输入/点击/方向键）后同步 @ 触发状态给父组件 */
-    const syncMentionQuery = useCallback(() => {
-      if (!onMentionQuery) return
-      onMentionQuery(composingRef.current ? null : detectMentionQuery())
-    }, [onMentionQuery, detectMentionQuery])
-    const syncSlashQuery = useCallback(() => {
-      if (!onSlashQuery) return
-      onSlashQuery(composingRef.current ? null : detectSlashQuery())
-    }, [onSlashQuery, detectSlashQuery])
+    const syncCompletionQueries = useCallback((insertedText = '') => {
+      if (disabledRef.current || document.activeElement !== boxRef.current) { closeCompletion(); return }
+      // IME temporarily hides suggestions; committing the same active query
+      // may resume them, but committing ordinary text cannot revive dismissal.
+      if (composingRef.current) { onMentionQuery?.(null); onSlashQuery?.(null); return }
+      const mention = onMentionQuery ? detectMentionQuery() : null
+      const slash = onSlashQuery ? detectSlashQuery() : null
+      const keyword = mention ?? slash
+      const selection = window.getSelection()
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+      if (keyword === null || !range) { closeCompletion(); return }
+      const trigger = mention !== null ? '@' : '/'
+      const start = range.startOffset - keyword.length - 1
+      const current = completionRef.current
+      const continuing = current?.trigger === trigger && current.node === range.startContainer && current.start === start
+      // Only a trigger inside this insertion can start a session. Backspacing
+      // to an old @ or /, pasting a name, and restored drafts are ordinary text.
+      const insertedIndex = insertedText.length - keyword.length - 1
+      const fresh = insertedIndex >= 0 && insertedText[insertedIndex] === trigger
+      if (!continuing && !fresh) { closeCompletion(); return }
+      completionRef.current = { trigger, node: range.startContainer, start, end: range.startOffset }
+      onMentionQuery?.(trigger === '@' ? keyword : null)
+      onSlashQuery?.(trigger === '/' ? keyword : null)
+    }, [onMentionQuery, onSlashQuery, detectMentionQuery, detectSlashQuery, closeCompletion])
 
     /**
      * 把光标前的「@关键词」替换为 chip（@ 补全面板选中项时调用）。
@@ -967,9 +991,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           }
         }
         insertMention(mention)
-        onMentionQuery?.(null)
+        closeCompletion()
       },
-      [insertMention, onMentionQuery]
+      [insertMention, closeCompletion]
     )
 
     const dismissMentionQuery = useCallback((): void => {
@@ -987,8 +1011,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         selection.addRange(range)
         emitChange()
       } else box?.focus()
-      onMentionQuery?.(null)
-    }, [detectMentionQuery, emitChange, onMentionQuery])
+      closeCompletion()
+    }, [detectMentionQuery, emitChange, closeCompletion])
 
     const completeSlash = useCallback((mention: Mention): boolean => {
       if (disabledRef.current || composingRef.current) return false
@@ -1009,9 +1033,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           selection.addRange(replace)
         }
       }
-      onSlashQuery?.(null)
+      closeCompletion()
       return insertMention(mention)
-    }, [insertMention, onSlashQuery])
+    }, [insertMention, closeCompletion])
 
     const removeSlashResource = useCallback((mention: Mention): boolean => {
       if (disabledRef.current || composingRef.current || !isResourceSource(mention.source)) return false
@@ -1026,9 +1050,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         mentionsRef.current.delete(key); chip.remove()
       })
       box.focus(); selection.removeAllRanges(); selection.addRange(range)
-      emitChange(); onSlashQuery?.(null)
+      emitChange(); closeCompletion()
       return true
-    }, [detectSlashQuery, emitChange, onSlashQuery])
+    }, [detectSlashQuery, emitChange, closeCompletion])
 
     const removeTextToken = useCallback((token: string) => {
       const box = boxRef.current
@@ -1047,10 +1071,10 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         const selection = window.getSelection()
         selection?.removeAllRanges(); selection?.addRange(range)
         emitChange()
-        syncSlashQuery()
+        closeCompletion()
         return
       }
-    }, [emitChange, syncSlashQuery])
+    }, [emitChange, closeCompletion])
 
     const removeAttachmentReferences = useCallback((id: string): void => {
       const reference = attachmentReferencesRef.current.find(item => item.id === id)
@@ -1073,6 +1097,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       ref,
       () => ({
         insertMention,
+        closeCompletion,
         completeMention,
         dismissMentionQuery,
         completeSlash,
@@ -1092,23 +1117,27 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         },
         focus: () => boxRef.current?.focus()
       }),
-      [insertMention, completeMention, dismissMentionQuery, completeSlash, removeSlashResource, removeTextToken, removeAttachmentReferences, rebuildFromText, restoreDraft, emitChange, invalidateInsertions]
+      [insertMention, closeCompletion, completeMention, dismissMentionQuery, completeSlash, removeSlashResource, removeTextToken, removeAttachmentReferences, rebuildFromText, restoreDraft, emitChange, invalidateInsertions]
     )
 
-    // 光标移动（点击/方向键）不产生 input 事件，用 selectionchange 补齐 @ 触发检测
+    // Native input also queues selectionchange. Keep its recorded caret, but
+    // moving away ends the session even if the destination is another query.
     useEffect(() => {
       if (!onMentionQuery && !onSlashQuery) return
       const handler = () => {
-        const box = boxRef.current
+        const current = completionRef.current
+        if (!current || composingRef.current) return
         const selection = window.getSelection()
-        if (!box || !selection || selection.rangeCount === 0) return
-        if (!box.contains(selection.getRangeAt(0).startContainer)) return
-        syncMentionQuery()
-        syncSlashQuery()
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+        if (!range?.collapsed || range.startContainer !== current.node || range.startOffset !== current.end) closeCompletion()
       }
       document.addEventListener('selectionchange', handler)
-      return () => document.removeEventListener('selectionchange', handler)
-    }, [onMentionQuery, onSlashQuery, syncMentionQuery, syncSlashQuery])
+      window.addEventListener('blur', closeCompletion)
+      return () => {
+        document.removeEventListener('selectionchange', handler)
+        window.removeEventListener('blur', closeCompletion)
+      }
+    }, [onMentionQuery, onSlashQuery, closeCompletion])
 
     // Apply one complete draft before the next native edit. A passive text-only
     // echo can run after typing/IME has advanced the DOM and strip every chip.
@@ -1170,7 +1199,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         if (cut) {
           range.deleteContents(); range.collapse(true)
           selection.removeAllRanges(); selection.addRange(range)
-          emitChange(); syncMentionQuery(); syncSlashQuery()
+          emitChange(); syncCompletionQueries()
         }
         return
       }
@@ -1193,10 +1222,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         selection.removeAllRanges()
         selection.addRange(range)
         emitChange()
-        syncMentionQuery()
-        syncSlashQuery()
+        syncCompletionQueries()
       }
-    }, [disabled, emitChange, syncMentionQuery, syncSlashQuery])
+    }, [disabled, emitChange, syncCompletionQueries])
 
     const pasteAttachmentDraft = useCallback((draft: InputDraft): void => {
       const box = boxRef.current, selection = window.getSelection()
@@ -1218,8 +1246,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       range.deleteContents(); range.insertNode(fragment)
       box.focus(); range.setStartAfter(last); range.collapse(true)
       selection?.removeAllRanges(); selection?.addRange(range)
-      emitChange(); syncMentionQuery(); syncSlashQuery()
-    }, [decorateChip, emitChange, onOpenMention, syncMentionQuery, syncSlashQuery])
+      emitChange(); syncCompletionQueries()
+    }, [decorateChip, emitChange, onOpenMention, syncCompletionQueries])
 
     const moveMentionChip = useCallback((chip: HTMLElement, range: Range): void => {
       const box = boxRef.current
@@ -1232,8 +1260,8 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
       box.focus(); range.setStartBefore(spacer); range.collapse(true)
       const selection = window.getSelection()
       selection?.removeAllRanges(); selection?.addRange(range)
-      emitChange(); syncMentionQuery(); syncSlashQuery()
-    }, [emitChange, syncMentionQuery, syncSlashQuery])
+      emitChange(); closeCompletion()
+    }, [emitChange, closeCompletion])
 
     const menuMention = chipMenu?.scope === draftScope && boxRef.current?.contains(chipMenu.chip)
       ? mentionsRef.current.get(chipMenu.key) : undefined
@@ -1287,24 +1315,26 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         contentEditable={disabled ? 'false' : 'true'}
         data-placeholder={placeholder ?? ''}
         onInput={(event) => {
-          const inputType = (event.nativeEvent as InputEvent).inputType
+          const input = event.nativeEvent as InputEvent
+          const inputType = input.inputType
           if (inputType === 'historyUndo' || inputType === 'historyRedo') {
             const accepted = acceptedDraftRef.current
             if (disabled || !restoreHistory(inputType === 'historyRedo', accepted)) restoreDraft(accepted.text, accepted.mentions, false)
             return
           }
-          emitChange(['insertText', 'deleteContentBackward', 'deleteContentForward'].includes(inputType))
-          syncMentionQuery()
-          syncSlashQuery()
+          if (emitChange(['insertText', 'deleteContentBackward', 'deleteContentForward'].includes(inputType))) {
+            syncCompletionQueries(inputType?.startsWith('insert') ? input.data ?? '' : '')
+          }
         }}
         onCompositionStart={() => {
           composingRef.current = true
+          onMentionQuery?.(null); onSlashQuery?.(null)
         }}
-        onCompositionEnd={() => {
+        onCompositionEnd={(event) => {
           composingRef.current = false
           refreshAttachmentChips()
           emitChange()
-          syncSlashQuery()
+          syncCompletionQueries(event.data)
         }}
         onCopy={(event) => copyConversationSelection(event)}
         onCut={(event) => copyConversationSelection(event, true)}
@@ -1347,6 +1377,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
           pasteAttachmentDraft({ text, mentions: [] })
         }}
         onPointerDown={(event) => {
+          closeCompletion()
           releasePointerChip()
           suppressClickUntilRef.current = 0
           const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-mention-key]') : null
@@ -1433,7 +1464,7 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
             const reference = attachmentDropReference(event.dataTransfer.getData(ATTACHMENT_DRAG_TYPE), attachmentReferencesRef.current)
             if (reference) insertMentionAt(attachmentMention(reference), range, { preserveLineBreak: true })
           }
-          onMentionQuery?.(null); onSlashQuery?.(null)
+          closeCompletion()
         }}
         onClick={(event) => {
           if (!(event.target instanceof Element)) return
@@ -1460,6 +1491,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
         }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || composingRef.current) return
+          // The picker consumes its own navigation keys in capture. Keys that
+          // reach the editor move the caret instead of requesting completion.
+          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape'].includes(event.key)) closeCompletion()
           if ((event.ctrlKey || event.metaKey) && !event.altKey &&
             (event.key.toLowerCase() === 'z' || event.key.toLowerCase() === 'y')) {
             event.preventDefault(); event.stopPropagation()
@@ -1499,7 +1533,9 @@ export const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(
               removeChip(chip)
             }
           }
-          syncSlashQuery()
+        }}
+        onBlur={(event) => {
+          if (!(event.relatedTarget instanceof Element && event.relatedTarget.closest('.completion-popover'))) closeCompletion()
         }}
         suppressContentEditableWarning
       />

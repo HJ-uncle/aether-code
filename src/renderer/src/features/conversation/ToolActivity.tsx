@@ -11,15 +11,15 @@ import { sessionActivityState } from './inline-activity-state'
 import { sessionToolTarget } from './message-timeline'
 import { sessionToolChanges, sessionToolHasImages, sessionToolKind } from './tool-presentation'
 import { FileChangeRow } from '../artifacts/FileChangeRow'
+import { isCommandTool } from '@shared/command-receipt'
 import './inline-activity.css'
 
 /** Timeline and inspector use the same cards, including their task-scoped actions. */
-export const ToolActivity = memo(function ToolActivity({ tool, fileContext, onOpenFile, onOpenChange, defaultOpen, revealRevision, turnRunning, active = true, readOnly = false }: {
+export const ToolActivity = memo(function ToolActivity({ tool, fileContext, onOpenFile, onOpenChange, revealRevision, turnRunning, active = true, readOnly = false }: {
   tool: ToolActivityRecord
   fileContext: ChatFileContext
   onOpenFile?: (path: string) => void
   onOpenChange?: (change: EngineFileChange) => void
-  defaultOpen?: boolean
   revealRevision?: number
   turnRunning?: boolean
   active?: boolean
@@ -43,12 +43,15 @@ export const ToolActivity = memo(function ToolActivity({ tool, fileContext, onOp
     summaryDetail={outputOnly ? '调用记录未载入' : sessionToolTarget(tool, undefined, true)}
     memoryKey={`work-tool:${getEngineSource()}:${fileContext.sessionId}:${tool.id}${previewScope}`} fileContext={fileContext} onOpenFile={onOpenFile}
     structuredResult={tool.name !== 'read_file'} readRange={readPreview?.range} readFiles={readFiles} quiet
-    defaultOpen={defaultOpen ?? (turnRunning === true && (state === 'running' || state === 'waiting'))}
-    revealRevision={revealRevision} />
+    defaultOpen={false}
+    revealRevision={revealRevision} active={active} />
   return <div className="work-tool-activity" data-tool-kind={kind} data-work-tool-id={tool.id}>
     {outputOnly ? <>
       {changes.map(change => <FileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}
       {details}
+    </> : isCommandTool(tool.name) ? <>
+      {details}
+      {changes.map(change => <FileChangeRow key={change.id} change={change} state={state} onOpenChange={onOpenChange} />)}
     </> : kind === 'subagent' ? <SubagentCard tool={tool} fileContext={fileContext} active={active} />
       : kind === 'command' && tool.commandJob && !tool.commandJob.background ? <CommandJobCard job={tool.commandJob} sessionId={fileContext.sessionId} active={active} readOnly={readOnly} />
         : kind === 'command' && tool.commandJob ? <div className="work-tool-activity__service-row" data-service-job-id={tool.commandJob.jobId}>{details}</div>

@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX, type MouseEvent, type ReactNode } from 'react'
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX, type MouseEvent, type KeyboardEvent, type ReactNode } from 'react'
 import type { EngineFileChange } from '@shared/ipc'
 import type { FinalResult } from '@shared/final-result'
 import type { ChatAttachment, ChatMessage } from '@renderer/core/engine/useChat'
@@ -37,6 +37,8 @@ export interface MessageContentProps {
   fileContext: ChatFileContext
   active: boolean
   onFileLink?: (event: MouseEvent<HTMLElement>) => void
+  onFileContextMenu?: (event: MouseEvent<HTMLElement>) => void
+  onFileKeyDown?: (event: KeyboardEvent<HTMLElement>) => void
   onOpenFile?: (path: string) => void
   onOpenChange?: (change: EngineFileChange) => void
   revealTool?: { toolId: string; revision: number } | null
@@ -55,7 +57,7 @@ export interface MessageContentProps {
 
 /** Message presentation is shared; the owning conversation supplies its actions and approvals. */
 export const MessageContent = memo(function MessageContent({
-  message, sessionId, fileContext, active, onFileLink, onOpenFile, onOpenChange,
+  message, sessionId, fileContext, active, onFileLink, onFileContextMenu, onFileKeyDown, onOpenFile, onOpenChange,
   revealTool = null, turnSegments, processKey, defaultProcessOpen, showAllContent = false, finalAnswer, deliveryResult, readOnly = false,
   userActions, replyActions, usage, children
 }: MessageContentProps): JSX.Element {
@@ -123,16 +125,15 @@ export const MessageContent = memo(function MessageContent({
     const timer = window.setTimeout(() => setCopied(false), 1800)
     return () => window.clearTimeout(timer)
   }, [copied])
-  const renderProcessItem = (item: ProcessItem, latestSection = false, latestItemKey?: string, latestToolId?: string): ReactNode => item.kind === 'tools' ? (
+  const renderProcessItem = (item: ProcessItem, latestSection = false, latestItemKey?: string): ReactNode => item.kind === 'tools' ? (
     <InlineActivity key={item.key} tools={item.tools} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
-      revealTool={revealTool} defaultToolId={latestToolId} expanded contained={!showAllContent} groupRepeated={false}
+      revealTool={revealTool} expanded contained={!showAllContent} groupRepeated={false}
       turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
   ) : item.kind === 'tool' ? (
     <ToolActivity key={item.key} tool={item.tool} fileContext={fileContext} onOpenFile={onOpenFile} onOpenChange={onOpenChange}
-      defaultOpen={latestSection && latestItemKey === item.key ? true : undefined}
       revealRevision={revealTool?.toolId === item.tool.id ? revealTool.revision : undefined} turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
   ) : item.kind === 'collaboration' ? (
-    <CollaborationSummary key={item.key} tools={item.tools} fileContext={fileContext} revealTool={revealTool} defaultToolId={latestToolId}
+    <CollaborationSummary key={item.key} tools={item.tools} fileContext={fileContext} revealTool={revealTool}
       turnRunning={turnRunning} active={active && processOpen} readOnly={readOnly} />
   ) : item.kind === 'thinking' ? (
     <MotionPresence key={item.key} className="work-message__thinking" show={thinkingOpen}>
@@ -157,15 +158,13 @@ export const MessageContent = memo(function MessageContent({
       return item.kind === 'tool' || item.kind === 'tools' || item.kind === 'collaboration'
     })
     const latestItemKey = latestItem?.key
-    const latestToolId = latestItem?.kind === 'tool' ? latestItem.tool.id
-      : latestItem?.kind === 'tools' || latestItem?.kind === 'collaboration' ? latestItem.tools.at(-1)?.id : undefined
     return sections.map(item => item.kind === 'section' ? (
       <ProcessSection key={item.key} section={item} memoryKey={`${processScope}:${item.key}`} running={turnRunning}
         isLatest={item.key === latestSectionKey}
         showThinking={thinkingOpen} revealTool={revealTool}>
-        {item.segments.map(child => renderProcessItem(child, item.key === latestSectionKey, latestItemKey, latestToolId))}
+        {item.segments.map(child => renderProcessItem(child, item.key === latestSectionKey, latestItemKey))}
       </ProcessSection>
-    ) : renderProcessItem(item, false, latestItemKey, latestToolId))
+    ) : renderProcessItem(item, false, latestItemKey))
   }
   return (
     <article
@@ -176,6 +175,8 @@ export const MessageContent = memo(function MessageContent({
       data-process-expanded={hasProcess && processOpen ? 'true' : undefined}
       data-process-view={message.role === 'assistant' && !showAllContent ? 'focused' : undefined}
       onClickCapture={onFileLink}
+      onContextMenuCapture={onFileContextMenu}
+      onKeyDownCapture={onFileKeyDown}
     >
       {message.role === 'user' ? (
         <SessionUserMessageBody message={message} root={fileContext.workspaceRoot ?? null} fileContext={fileContext}>

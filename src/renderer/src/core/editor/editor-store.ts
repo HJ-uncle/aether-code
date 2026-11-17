@@ -18,7 +18,6 @@ import { assertSessionFileTarget, paths, readFile, stat, writeFile, type Session
 import { getWorkspaceState } from '../workspace/workspace-store'
 import { activateDocument } from './editor-activation'
 import { fileIdentity } from './file-identity'
-import { getActiveEditor } from './active-editor'
 import { workspaceConnectionKey } from '../workspace/connection'
 
 export interface OpenDocument {
@@ -460,35 +459,6 @@ async function saveDocumentNow(filePath: string, identity: DocumentIdentity | un
     nextSaving.delete(filePath)
     setState({ docs: nextDocs, saving: nextSaving })
     throw err
-  }
-}
-
-/** 保存当前激活的文档 */
-export async function saveActiveDocument(): Promise<void> {
-  const model = getActiveEditor()?.getModel()
-  const active = model
-    ? model.uri.scheme === 'file' ? getDocument(model.uri.fsPath) : undefined
-    : state.activePath ? state.docs.get(state.activePath) : undefined
-  if (active && isDirty(active)) {
-    await saveDocument(active.path)
-    return
-  }
-  // 没有活动文档或当前文档已保存时，不应写入另一组无关的未保存文件。
-}
-
-/**
- * 保存全部脏文档。
- *
- * 逐个 await 而非 Promise.all：写盘要经过主进程，并发写同一目录下的多个文件
- * 在 Windows 上更容易撞上瞬时占用；顺序写慢一点但结果可预期。
- * 有文档写失败时不中断后面的 —— 用户要的是「能存的都存了」，
- * 失败的文档已在自身状态里带 error，会照常显示。
- */
-export async function saveAllDocuments(): Promise<void> {
-  for (const doc of [...state.docs.values()]) {
-    if (isDirty(doc)) {
-      try { await saveDocument(doc.path) } catch { /* The document retains its buffer and visible error. */ }
-    }
   }
 }
 

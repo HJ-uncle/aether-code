@@ -1,18 +1,7 @@
-import { createContext, useContext, useEffect, useId, useRef, useState, type JSX } from 'react'
-import type { SubagentRun } from '@shared/subagent'
-import type { PublishedChildReference } from '@shared/published-child'
-import { useApp } from '@renderer/core/app-context'
-import { getEngineSource } from '@renderer/core/engine/source'
-import { isSubagentActive } from '@renderer/core/engine/subagent-state'
-import { assertSubagentConnection, captureSubagentConnection, getSubagentRun } from '@renderer/core/engine/client'
-import { useCollaborationController } from '@renderer/core/engine/useCollaborationController'
+import { useState, type JSX } from 'react'
 import { controllerSavedStatus, type ControllerSavedRecord } from '@renderer/core/engine/collaboration-contract'
-import { Icon } from '@renderer/ui/icons'
-import { Spinner } from '@renderer/ui/ui-primitives'
-import type { SubagentControllerScope } from './subagent-controller-scope'
 import './subagent-followup.css'
 
-export const SubagentControllerContext = createContext<SubagentControllerScope | undefined>(undefined)
 
 /** ACKs stay queryable after the outbox is cleared. Local removal never
  * changes the engine queue; every query uses the frozen original key/scope. */
@@ -67,43 +56,7 @@ export function ControllerTrackingRecovery({ message, disabled, onForget }: { me
   </details>
 }
 
-/** Historical evidence keeps its exact watermark. Current controls use a
- * separate, explicitly requested read and never hydrate the history card. */
-export function CodePublishedSubagentControl({ reference, visible }: { reference: PublishedChildReference; visible: boolean }): JSX.Element | null {
-  const scope = useContext(SubagentControllerContext)
-  if (!scope || scope.source !== reference.source || scope.source !== getEngineSource() || scope.sessionId !== reference.sessionId || scope.rootRunId !== reference.fence.rootRunId || reference.identity.parentSessionId !== scope.sessionId || reference.identity.rootSessionId !== scope.sessionId) return null
-  return <PublishedCurrentControl key={JSON.stringify([scope, reference.identity])} reference={reference} scope={scope} visible={visible} />
-}
-function PublishedCurrentControl({ reference, scope, visible }: { reference: PublishedChildReference; scope: SubagentControllerScope; visible: boolean }): JSX.Element {
-  const { ready } = useApp(), mounted = useRef(true), pending = useRef(false)
-  const [run, setRun] = useState<SubagentRun>(), [loading, setLoading] = useState(false), [error, setError] = useState('')
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const read = async (): Promise<void> => {
-    if (pending.current || !ready || !visible) return
-    pending.current = true; setLoading(true); setError('')
-    const connection = captureSubagentConnection()
-    const verify = (): void => { assertSubagentConnection(connection); if (!mounted.current || scope.source !== getEngineSource()) throw new Error('代理所属会话或引擎已变化，请返回当前会话重试') }
-    try {
-      verify()
-      const identity = reference.identity
-      const current = await getSubagentRun(identity.runId, { connection, verify, parentSessionId: identity.parentSessionId, rootSessionId: identity.rootSessionId, parentConversationId: identity.parentConversationId })
-      verify()
-      for (const key of ['tenantId', 'parentMessageId', 'parentToolCallId', 'childSessionId', 'createdAt'] as const) if (current[key] !== identity[key]) throw new Error('当前代理身份与此记录不一致，请重新确认')
-      setRun(current)
-    } catch (cause) { if (mounted.current && scope.source === getEngineSource()) setError(cause instanceof Error ? cause.message : String(cause)) }
-    finally { pending.current = false; if (mounted.current) setLoading(false) }
-  }
-  return <section className="subagent-current" aria-label={`当前代理 ${reference.identity.agentName || '子代理'}`}>
-    <div className="subagent-current__header"><span>当前代理{run ? isSubagentActive(run.status) ? ' · 正在运行' : ' · 本轮已结束' : ''}</span>
-      <button type="button" className="link" disabled={loading || !ready || !visible} onClick={() => void read()}>{loading ? <><Spinner size={12} />正在确认…</> : run ? '刷新当前状态' : '查看当前代理'}</button>
-    </div>
-    <p className="subagent-current__hint">上方保留已发布记录；这里单独确认当前状态，补充要求仍交给同一轮代理。</p>
-    {error ? <p className="subagent-followup__error" role="alert">{error}</p> : null}
-    {run ? <CodeSubagentFollowup run={run} sessionId={scope.sessionId} source={scope.source} visible={visible} /> : null}
-  </section>
-}
-
-/** Shared editing and keyboard behavior in the Code card and Work detail. */
+/** Shared keyboard behavior for the current collaboration detail. */
 export function SubagentFollowupInput({ id, value, readOnly, onChange, onDismiss, onSubmit, placeholder, labelledBy, describedBy, className = 'ui-input' }: {
   id: string; value: string; readOnly: boolean; onChange: (value: string) => void
   onDismiss: () => void; onSubmit: () => void; placeholder: string; labelledBy: string; describedBy: string
@@ -114,59 +67,4 @@ export function SubagentFollowupInput({ id, value, readOnly, onChange, onDismiss
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onDismiss() }
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit() }
     }} />
-}
-
-export function CodeSubagentFollowup({ run, sessionId, source, visible }: { run: SubagentRun; sessionId: string; source: number; visible: boolean }): JSX.Element | null {
-  const scope = useContext(SubagentControllerContext)
-  // Published cards never render this component. A trusted message root and
-  // direct child owner must both match before exposing a live control.
-  if (!scope || scope.source !== source || scope.sessionId !== sessionId || run.rootSessionId !== sessionId || run.parentSessionId !== sessionId || !run.childSessionId) return null
-  return <BoundFollowup key={JSON.stringify([source, sessionId, scope.rootRunId, run.runId])} run={run} scope={scope} visible={visible} />
-}
-
-function BoundFollowup({ run, scope, visible }: { run: SubagentRun; scope: SubagentControllerScope; visible: boolean }): JSX.Element | null {
-  const { ready } = useApp()
-  const id = useId(), toggle = useRef<HTMLButtonElement>(null), mounted = useRef(true)
-  const [expanded, setExpanded] = useState(false), [draft, setDraft] = useState<string | undefined>(), [refreshKey, setRefreshKey] = useState(0)
-  const draftRef = useRef(draft); draftRef.current = draft
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const active = isSubagentActive(run.status)
-  const controller = useCollaborationController({ sessionId: scope.sessionId, rootRunId: scope.rootRunId, source: scope.source,
-    childSessionId: run.childSessionId, invocationRunId: run.runId, active, ready: ready && visible, toolProfile: 'code', refreshKey,
-    onUnacceptedDraft: message => { if (draftRef.current === undefined) { draftRef.current = message; setDraft(message) } } })
-  const submit = async (retry = false): Promise<void> => {
-    if (controller.busy || !visible) return
-    const original = draftRef.current
-    const clearsSentDraft = !controller.pending || original === undefined || original.trim() === controller.pending.message
-    const accepted = retry ? await controller.retry() : controller.pending ? await controller.reconcile() : await controller.send((original ?? controller.restoredDraft?.message ?? '').trim())
-    if (accepted && clearsSentDraft && mounted.current && scope.source === getEngineSource() && draftRef.current === original) { draftRef.current = undefined; setDraft(undefined) }
-  }
-  if (!active && !controller.pending && !controller.restoredDraft && !controller.history.length && draft === undefined && !controller.notice && !controller.error) return null
-  const editableDraft = draft ?? controller.restoredDraft?.message ?? ''
-  const label = run.agentName?.trim() || '子代理'
-  return <section className="subagent-followup" aria-label={`补充要求给 ${label}`}>
-    <button ref={toggle} type="button" className="subagent-followup__toggle" aria-expanded={expanded} aria-controls={`${id}-form`} onClick={() => setExpanded(value => !value)}>
-      <Icon name="chevron-down" size={14} /><span id={`${id}-label`}>补充要求给 {label}</span>
-      {!expanded && (editableDraft.trim() || controller.pending) ? <span className="subagent-followup__draft-status">{controller.pending ? '结果待核对' : '已保留草稿'}</span> : null}
-    </button>
-    <form id={`${id}-form`} className="subagent-followup__form" hidden={!expanded} onSubmit={event => { event.preventDefault(); void submit() }}>
-      <SubagentFollowupInput id={`${id}-input`} value={controller.pending?.message ?? editableDraft} readOnly={Boolean(controller.pending)} onChange={value => { draftRef.current = value; setDraft(value) }}
-        onDismiss={() => { setExpanded(false); toggle.current?.focus() }} onSubmit={() => void submit()} placeholder="补充本轮要求；继续使用此代理的上下文" labelledBy={`${id}-label`} describedBy={`${id}-hint`} />
-      <div className="subagent-followup__actions"><p id={`${id}-hint`}>{controller.pending ? '原要求已冻结；核对不会重复发送' : !active ? '此代理本轮已结束，原文已保留' : controller.capability === undefined ? '正在确认引擎协作能力…' : controller.capability ? '补充要求将排队；Ctrl / ⌘ Enter 发送' : '当前引擎尚未启用运行中补充；草稿会保留'}</p>
-        <button className="btn btn--primary btn--sm" type="submit" disabled={controller.busy || !ready || !visible || (!controller.pending && (!active || !controller.capability || !editableDraft.trim()))}>
-          {controller.busy ? <><Spinner size={14} />{controller.pending ? '正在核对…' : '正在提交…'}</> : controller.pending ? '核对排队结果' : <><Icon name="send" size={14} />发送补充要求</>}
-        </button>
-      </div>
-      {controller.canRetry ? <button type="button" className="btn btn--sm" disabled={controller.busy || !ready || !visible} onClick={() => void submit(true)}>重试原请求</button> : null}
-      {controller.pending ? <ControllerTrackingRecovery message={controller.pending.message} disabled={controller.busy || !ready || !visible} onForget={controller.forgetTracking} /> : null}
-      {controller.restoredDraft && !controller.pending ? <button type="button" className="link" disabled={controller.busy || !ready || !visible} onClick={() => {
-        const original = controller.restoredDraft?.message
-        void controller.discardDraft().then(cleared => { if (cleared && mounted.current && (draftRef.current === undefined || draftRef.current === original)) { draftRef.current = undefined; setDraft(undefined) } })
-      }}>清除已结束的草稿</button> : null}
-      {active && controller.capability === false ? <button type="button" className="link" disabled={controller.busy || !ready} onClick={() => setRefreshKey(value => value + 1)}>重新检查能力</button> : null}
-    </form>
-    <ControllerReceiptHistory records={controller.history} rootRunId={scope.rootRunId} invocationRunId={run.runId} disabled={controller.busy || !ready || !visible} onQuery={controller.queryHistory} onRemove={controller.removeHistory} />
-    {controller.notice ? <p className="subagent-followup__notice" role="status">{controller.notice}</p> : null}
-    {controller.error ? <p className="subagent-followup__error" role="alert">{controller.error}</p> : null}
-  </section>
 }

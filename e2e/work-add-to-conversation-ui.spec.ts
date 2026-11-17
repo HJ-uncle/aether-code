@@ -253,7 +253,9 @@ async function openWorkspace(): Promise<void> {
   if (await tab.isVisible()) await tab.click()
   else {
     await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click()
-    await page.getByRole('menuitem', { name: '工作区', exact: true }).click()
+    // The activity card omits the selected destination even while its pane is collapsed.
+    await page.getByRole('menu', { name: '更多工作区', exact: true }).getByRole('menuitem', { name: '新建首页标签', exact: true }).click()
+    await work().getByRole('tabpanel', { name: '工作区首页', exact: true }).getByRole('button', { name: '工作区 打开工作区', exact: true }).click()
   }
   await expect(tree()).toBeVisible()
   await expect(exactRow('demo.ts')).toBeVisible()
@@ -360,16 +362,15 @@ test.describe.serial('Work 资源添加到对话', () => {
         const label = chip.querySelector('.mention-chip__label')!
         const labelRange = document.createRange(); labelRange.selectNodeContents(label)
         const rect = labelRange.getBoundingClientRect(), chipStyle = getComputedStyle(chip), labelStyle = getComputedStyle(label)
-        const underline = getComputedStyle(chip, '::after'), chipRect = chip.getBoundingClientRect()
+        const after = getComputedStyle(chip, '::after'), chipRect = chip.getBoundingClientRect()
         const iconRect = chip.querySelector('.mention-chip__icon')?.getBoundingClientRect()
         return { topDelta: Math.abs(rect.top - textRect.top), bottomDelta: Math.abs(rect.bottom - textRect.bottom),
           fontSize: labelStyle.fontSize, inputFont: style.fontSize, lineHeight: chipStyle.lineHeight, inputLineHeight: style.lineHeight,
           background: chipStyle.backgroundColor, padding: chipStyle.padding,
           borders: [chipStyle.borderTopWidth, chipStyle.borderRightWidth, chipStyle.borderBottomWidth, chipStyle.borderLeftWidth],
-          decoration: labelStyle.textDecorationLine, underlinePosition: underline.position,
-          underlineLeft: Number.parseFloat(underline.left), underlineRight: Number.parseFloat(underline.right),
-          underlineWidth: Number.parseFloat(underline.width), chipWidth: chipRect.width,
-          underlineHeight: Number.parseFloat(underline.height), underlineColor: underline.backgroundColor,
+          decoration: labelStyle.textDecorationLine, chipDecoration: chipStyle.textDecorationLine,
+          drawnLine: !['none', 'normal'].includes(after.content) && after.display !== 'none' && Number.parseFloat(after.height) > 0,
+          chipWidth: chipRect.width,
           iconLeft: iconRect ? iconRect.left - chipRect.left : null, iconRight: iconRect ? iconRect.right - chipRect.left : null,
           color: labelStyle.color, inputColor: style.color }
       })
@@ -384,16 +385,11 @@ test.describe.serial('Work 资源添加到对话', () => {
       expect(metric.padding).toBe('0px')
       expect(metric.borders).toEqual(['0px', '0px', '0px', '0px'])
       expect(metric.decoration).toBe('none')
-      expect(metric.underlinePosition).toBe('absolute')
-      expect(metric.underlineLeft).toBe(0)
-      expect(metric.underlineRight).toBe(0)
-      expect(Math.abs(metric.underlineWidth - metric.chipWidth)).toBeLessThanOrEqual(1)
-      expect(metric.underlineHeight).toBeGreaterThan(0)
-      expect(metric.underlineHeight).toBeLessThanOrEqual(1.5)
-      expect(metric.underlineColor).not.toBe('rgba(0, 0, 0, 0)')
+      expect(metric.chipDecoration).toBe('none')
+      expect(metric.drawnLine).toBe(false)
       if (metric.iconLeft !== null && metric.iconRight !== null) {
-        expect(metric.iconLeft).toBeGreaterThanOrEqual(metric.underlineLeft)
-        expect(metric.iconRight).toBeLessThanOrEqual(metric.underlineLeft + metric.underlineWidth + 1)
+        expect(metric.iconLeft).toBeGreaterThanOrEqual(0)
+        expect(metric.iconRight).toBeLessThanOrEqual(metric.chipWidth + 1)
       }
       expect(metric.color).not.toBe(metric.inputColor)
     }

@@ -1,11 +1,10 @@
 /** Real Electron dialogs: service deletion, pending queue confirmation/CAS,
- * session color persistence/focus and full search replacement previews.
- * Only engine HTTP and the queue IPC boundary are controlled. Search reads
- * and writes real fixture files through production IPC. Build first, then run
+ * service lifecycle and queue races.
+ * Only engine HTTP and the queue IPC boundary are controlled. Build first, then run
  * with --config e2e/config/playwright.dialog-consistency.config.ts; workers must remain one. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
 import type { CommandJobSnapshot } from '../src/shared/command-job'
@@ -16,9 +15,9 @@ import { SESSION_QUEUE_IPC, type SessionQueueRequest } from '../src/shared/sessi
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'dialog-consistency-fixture', model = 'dialog-fixture-model', now = Date.now() - 10_000
-const taskId = 'work-dialog-consistency-task', codeSession = 'dialog-consistency-code-session'
+const taskId = 'work-dialog-consistency-task'
 const runningJob = 'dialog-service-running', finishedJob = 'dialog-service-finished'
-const titles = new Map([[taskId, '弹窗回归任务'], [codeSession, '颜色标记回归会话']])
+const titles = new Map([[taskId, '弹窗回归任务']])
 const manifest = { version: '2.0.0', buildId: `sha256:${'b'.repeat(64)}`, protocolVersion: 1,
   toolProfiles: ['general', 'code'], subagentSchemaVersion: 1 }
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
@@ -27,12 +26,8 @@ const deletes: { sessionId: string; jobId: string }[] = []
 const roots = new Map<string, RootRun>(), jobs = new Map<string, CommandJobSnapshot>()
 type QueueFixture = { state: NextTurnQueueState; mutations: SessionQueueRequest[]; unexpected: SessionQueueRequest[] }
 type MainFixture = typeof globalThis & { __dialogQueue: QueueFixture }
-let app: ElectronApplication | undefined, page: Page, fixture = '', sessionCwd = '', codeCwd = '', searchFile = ''
-const marker = 'DIALOG_REPLACE_ME', longBefore = `${'长行前缀 '.repeat(60)}${marker}${' tail-content'.repeat(60)} FINAL_BEFORE`
-const replacement = `${'新内容 '.repeat(90)}FINAL_REPLACEMENT`
-const longAfter = longBefore.replace(marker, replacement)
+let app: ElectronApplication | undefined, page: Page, fixture = '', sessionCwd = ''
 
-function workspacePath(id: string): string { return id === taskId ? sessionCwd : codeCwd }
 function history(id: string): EngineHistoryRow[] {
   const run = roots.get(id)
   return run ? [
@@ -110,8 +105,8 @@ const server = createServer((request, response) => { void (async () => {
     : /\/sessions\/[^/]+\/binding$/.test(path) ? { started: true, agentId: null, metadata: null, agent: null }
     : path === '/api/v1/security/mode' ? { mode: 'standard', sessionId: id }
     : path === '/api/v1/memory/settings' ? { memoryScope: 'session', effectiveScope: 'session', enabled: false, sessionId: id }
-    : path === '/api/v1/workspace/directory' ? { root: workspacePath(id), bindingEpoch: 'one', entries: [] }
-    : path === '/api/v1/workspace/bind' ? { workspaceRoot: workspacePath(id) }
+    : path === '/api/v1/workspace/directory' ? { root: sessionCwd, bindingEpoch: 'one', entries: [] }
+    : path === '/api/v1/workspace/bind' ? { workspaceRoot: sessionCwd }
     : path === '/api/v1/codegraph/status' ? { initialized: false, indexing: false }
     : path === '/api/v1/command-jobs' ? { jobs: ownJobs } : []
   response.end(envelope(data))
@@ -139,25 +134,15 @@ async function openQueueClear(): Promise<Locator> {
   await expect(confirmation).toBeVisible()
   return confirmation
 }
-async function openCodeActivity(name: string): Promise<void> {
-  const codeTab = page.getByRole('tab', { name: 'Code 开发', exact: true })
-  if (await codeTab.getAttribute('aria-selected') !== 'true') await codeTab.click()
-  const button = page.getByRole('navigation', { name: '活动栏', exact: true }).getByRole('button', { name, exact: true })
-  if (await button.getAttribute('aria-pressed') !== 'true') await button.click()
-}
-async function tagColor(): Promise<string | null> {
-  return page.evaluate(id => (JSON.parse(localStorage.getItem('aether:sessionMeta') ?? '{}') as Record<string, { color?: string }>)[id]?.color ?? null, codeSession)
-}
 
 test.describe.serial('统一弹窗真实交互回归', () => {
   test.beforeAll(async () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'dialog-consistency-profile-'))
-    sessionCwd = join(fixture, 'work-task'); codeCwd = join(fixture, 'code-project')
-    for (const directory of [sessionCwd, codeCwd]) mkdirSync(directory)
-    searchFile = join(codeCwd, 'replace-preview-long-line.txt'); writeFileSync(searchFile, `${longBefore}\n`, 'utf8')
+    sessionCwd = join(fixture, 'work-task')
+    mkdirSync(sessionCwd)
     for (const sessionId of titles.keys()) roots.set(sessionId, { schemaVersion: 1, runId: `root-${sessionId}`, sessionId,
       turnId: `turn-${sessionId}`, userMessageId: `user-${sessionId}`, assistantMessageId: `assistant-${sessionId}`,
-      seq: 1, version: 2, status: 'succeeded', modelId: model, pending: [], workspacePaths: [workspacePath(sessionId)],
+      seq: 1, version: 2, status: 'succeeded', modelId: model, pending: [], workspacePaths: [sessionCwd],
       createdAt: now, updatedAt: now, finishedAt: now })
     for (const jobId of [runningJob, finishedJob]) jobs.set(jobId, { schemaVersion: 1, jobId, sessionId: taskId, ownerSessionId: taskId,
       runId: `root-${taskId}`, turnId: `turn-${taskId}`, toolCallId: `call-${jobId}`, version: 1,
@@ -185,7 +170,7 @@ const server = http.createServer((req, res) => {
 server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
 `)
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'embedded', autoStartEngine: true, preferredPort: 12559,
-      lastSessionId: codeSession, lastModelId: model, appearance: 'light', lastFolder: codeCwd, thinkingMode: 'off' }))
+      lastSessionId: taskId, lastModelId: model, appearance: 'light', lastFolder: sessionCwd, thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const name of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY',
       'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN', 'AETHER_INSTANCE_TOKEN', 'WORKSPACE_ROOT'].includes(name.toUpperCase())) delete env[name]
@@ -223,7 +208,6 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await page.evaluate(({ taskId, title, now, workspacePath, model }) => {
       localStorage.setItem('aether.work.state.v1', JSON.stringify({ tasks: [{ id: taskId, title, status: 'done', draft: '',
         createdAt: now, updatedAt: now, workspacePath, modelId: model, attachments: [], sources: [] }], activeTaskId: taskId }))
-      localStorage.setItem('aether.app.mode', 'work')
       localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 50 }))
     }, { taskId, title: titles.get(taskId), now, workspacePath: sessionCwd, model })
     await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
@@ -254,10 +238,11 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await page.locator('.status-bar .service-tray__button').click()
     const activity = page.locator('.service-tray__panel')
     await expect(activity).toBeVisible()
-    await activity.locator('.service-tray__row-main').first().click()
-    await activity.getByRole('button', { name: '在终端中查看', exact: true }).click()
+    // Command activity rows open their terminal directly; details are a context-menu action.
+    await activity.getByRole('button', { name: `node ${runningJob}.js，运行中`, exact: true }).click()
     const panel = work().getByRole('region', { name: '任务终端', exact: true })
     await expect(panel).toBeVisible()
+    await expect(activity).toHaveCount(0)
     await expect(panel.getByRole('tab', { name: /^后台运行/ })).toHaveAttribute('aria-selected', 'true')
     const historyRow = panel.locator(`.work-terminal-panel__job[data-job-id="${finishedJob}"]`)
     await historyRow.click()
@@ -273,7 +258,13 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await remove.click(); await confirmation.getByRole('button', { name: '删除', exact: true }).click()
     await expect.poll(() => deletes).toEqual([{ sessionId: taskId, jobId: finishedJob }])
     await expect(historyRow).toHaveCount(0); expect(jobs.has(finishedJob)).toBe(false); expect(jobs.has(runningJob)).toBe(true)
-    await work().getByRole('button', { name: '关闭终端', exact: true }).click()
+    const terminalTabs = work().getByRole('tablist', { name: '已打开的工作区', exact: true })
+    // Workspace tab close buttons become interactive only while hovered or keyboard-focused.
+    await terminalTabs.getByRole('tab', { name: '终端', exact: true }).hover()
+    const closeTerminal = terminalTabs.getByRole('button', { name: '关闭终端', exact: true })
+    await expect(closeTerminal).toHaveCSS('pointer-events', 'auto')
+    await closeTerminal.click()
+    await expect(panel).toHaveCount(0)
   })
 
   test('清空待发：取消保留消息，确认只提交一次原版本清空', async () => {
@@ -306,58 +297,5 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     expect(result.mutations.at(-1)).toMatchObject({ action: { expectedRevision: seeded.revision } })
     expect(result.state).toEqual(changed)
     await expect(queue().locator('.work-next-turn__item')).toHaveCount(3)
-  })
-
-  // Retired Code history surface; Work deliberately has no hidden history tab.
-  test.skip('历史颜色标记：选择和清除持久化，Escape 关闭并恢复行焦点', async () => {
-    await openCodeActivity('会话历史')
-    const row = page.locator(`.history-view__item[data-session-id="${codeSession}"]`)
-    const openColors = async (): Promise<Locator> => {
-      await row.click({ button: 'right' }); await page.getByRole('menuitem', { name: '标记', exact: true }).click()
-      const colors = dialog('颜色标记'); await expect(colors).toBeVisible(); return colors
-    }
-    const colors = await openColors()
-    for (const name of ['红', '橙', '黄', '绿', '蓝', '紫']) await expect(colors.getByRole('button', { name, exact: true })).toBeVisible()
-    await colors.getByRole('button', { name: '红', exact: true }).click()
-    await expect(colors).toHaveCount(0); await expect.poll(tagColor).toBe('red'); await expect(row).toBeFocused()
-    await openColors(); await expect(colors.getByRole('button', { name: '红', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    await page.keyboard.press('Escape')
-    await expect(colors).toHaveCount(0); await expect(row).toBeFocused(); expect(await tagColor()).toBe('red')
-    await openColors(); await colors.getByRole('button', { name: '清除', exact: true }).click()
-    await expect(colors).toHaveCount(0); await expect.poll(tagColor).toBeNull(); await expect(row).toBeFocused()
-    await expect(row.locator('.history-view__tag')).toHaveCount(0)
-  })
-
-  // Retired Code search surface; source search is outside the Work-only shell.
-  test.skip('替换预览：长行完整换行，取消不写盘，确认精确写入文件', async () => {
-    await openCodeActivity('搜索')
-    await page.getByRole('textbox', { name: '搜索内容', exact: true }).fill(marker)
-    const showReplace = page.getByRole('button', { name: '显示替换', exact: true })
-    if (await showReplace.isVisible()) await showReplace.click()
-    await page.getByRole('textbox', { name: '替换为', exact: true }).fill(replacement)
-    const all = page.getByRole('button', { name: '全部替换', exact: true })
-    await expect(all).toBeEnabled(); await all.click()
-    const preview = dialog('替换预览'), before = preview.locator('.replace-preview__row > .search-view__hit-text'), after = preview.locator('.replace-preview__after')
-    await expect(preview).toContainText('将替换 1 处（1 个文件）')
-    await expect(before).toHaveText(longBefore); await expect(after).toHaveText(longAfter)
-    await preview.getByRole('button', { name: '取消', exact: true }).click()
-    await expect(preview).toHaveCount(0); expect(readFileSync(searchFile, 'utf8')).toBe(`${longBefore}\n`)
-    await all.click(); await expect(preview.getByRole('button', { name: '应用替换', exact: true })).toBeEnabled()
-    for (const text of [before, after]) {
-      const metrics = await text.evaluate(element => {
-        const style = getComputedStyle(element), bounds = element.getBoundingClientRect(), range = document.createRange()
-        range.selectNodeContents(element)
-        return { whiteSpace: style.whiteSpace, overflowWrap: style.overflowWrap, textOverflow: style.textOverflow,
-          width: element.clientWidth, scrollWidth: element.scrollWidth, height: bounds.height, lineHeight: parseFloat(style.lineHeight),
-          textBottom: range.getBoundingClientRect().bottom, bottom: bounds.bottom }
-      })
-      expect(metrics.whiteSpace).toBe('pre-wrap'); expect(metrics.overflowWrap).toBe('anywhere'); expect(metrics.textOverflow).toBe('clip')
-      expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.width + 1)
-      expect(metrics.height).toBeGreaterThan(metrics.lineHeight * 2)
-      expect(metrics.textBottom).toBeLessThanOrEqual(metrics.bottom + 1)
-    }
-    await preview.getByRole('button', { name: '应用替换', exact: true }).click()
-    await expect(preview).toHaveCount(0)
-    await expect.poll(() => readFileSync(searchFile, 'utf8')).toBe(`${longAfter}\n`)
   })
 })

@@ -1,4 +1,4 @@
-import { type MouseEvent, type MutableRefObject, type JSX, useRef, useState, useCallback, useMemo, useEffect, useLayoutEffect, memo } from 'react'
+import { type MouseEvent, type KeyboardEvent, type MutableRefObject, type JSX, useRef, useState, useCallback, useMemo, useEffect, useLayoutEffect, memo } from 'react'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
 import type { EngineFileChange } from '@shared/ipc'
 import type { PendingInteraction } from '@renderer/core/engine/pending'
@@ -8,7 +8,8 @@ import { getEngineSource, isEngineReady, getEngineStorageKey } from '@renderer/c
 import { changeSecurityMode } from '@renderer/core/engine/security-store'
 import { Icon } from '@renderer/ui/icons'
 import { Spinner } from '@renderer/ui/ui-primitives'
-import { classifyChatLink } from './shared/chat-link'
+import { conversationFileLink } from './file-link-target'
+import { useFileLinkMenu } from './useFileLinkMenu'
 import type { ChatFileContext } from './shared/chat-link'
 import { Composer as ComposerV2 } from '../composer/Composer'
 import { NextTurnQueuePanel } from './NextTurnQueue'
@@ -83,14 +84,10 @@ function openSessionFileLink(
   engineUrl: string,
   openArtifact: (id: string) => void
 ): void {
-  const link = event.target instanceof Element ? event.target.closest('a') : null
-  const href = link?.getAttribute('href')
-  if (!href || !controller.activeTask) return
-  // Resolved receipt paths are literal filenames, including # names and files
-  // without extensions; URL classification must not reroute those references.
-  const fileReference = link?.getAttribute('data-work-file-path')
-  const target = fileReference ? { kind: 'file' as const, path: fileReference }
-    : classifyChatLink(href, controller.activeTask.id, engineUrl)
+  if (!controller.activeTask) return
+  const link = conversationFileLink(event.target, controller.activeTask.id, engineUrl)
+  if (!link) return
+  const { target } = link
   if (target.kind === 'external') return
   event.preventDefault()
   event.stopPropagation()
@@ -98,8 +95,7 @@ function openSessionFileLink(
     toast.error(target.message)
     return
   }
-  const path = fileReference ? target.path.replace(/\\/g, '/')
-    : target.path.replace(/\\/g, '/').replace(/:\d+(?::\d+)?$/, '')
+  const path = target.path
   const artifact = findSessionArtifact(controller.artifacts, path, controller.activeTask.workspacePath)
   // A markdown link may point to a workspace file that has no write receipt.
   // Keep it in the Work surface as a synthetic artifact so the panel performs
@@ -222,6 +218,11 @@ export function Conversation({
   const openActivityFile = useCallback((path: string): void => {
     openArtifact(`path:${path}`)
   }, [openArtifact])
+  const fileLinkMenu = useFileLinkMenu(fileContext, active && !task.archived, path => {
+    const current = controllerRef.current
+    const artifact = findSessionArtifact(current.artifacts, path, current.activeTask?.workspacePath)
+    openArtifact(artifact?.id ?? `path:${path}`)
+  })
   const respond = useCallback<SessionController['respond']>((...args) => controllerRef.current.respond(...args), [])
   const restartFailedTask = useCallback<SessionController['restartFailedTask']>((...args) => controllerRef.current.restartFailedTask(...args), [])
   const editSettledTurn = useCallback<SessionController['editSettledTurn']>((...args) => controllerRef.current.editSettledTurn(...args), [])
@@ -524,6 +525,7 @@ export function Conversation({
         toggleSelectMode()
       }
     }}>
+      {fileLinkMenu.menu}
       <RevertNotice sessionId={task.id} />
       <PublishedRecoveryNotice state={controller.publishedRecovery} onCancel={controller.cancelPublishedRecovery} onLoadBody={controller.loadPublishedBody} onRetry={controller.retryPublishedRecovery} />
       <MotionPresence show={selectMode}>
@@ -628,6 +630,8 @@ export function Conversation({
                     active={active}
                     fileContext={fileContext}
                     onFileLink={onFileLink}
+                    onFileContextMenu={fileLinkMenu.onContextMenu}
+                    onFileKeyDown={fileLinkMenu.onKeyDown}
                     openFile={openActivityFile}
                     respond={respond}
                     waitForSourceChange={controller.waitForSourceChange}
@@ -716,6 +720,8 @@ const SessionMessage = memo(function SessionMessage({
   active,
   fileContext,
   onFileLink,
+  onFileContextMenu,
+  onFileKeyDown,
   openFile,
   respond,
   waitForSourceChange,
@@ -746,6 +752,8 @@ const SessionMessage = memo(function SessionMessage({
   active: boolean
   fileContext: ChatFileContext
   onFileLink: (event: MouseEvent<HTMLElement>) => void
+  onFileContextMenu: (event: MouseEvent<HTMLElement>) => void
+  onFileKeyDown: (event: KeyboardEvent<HTMLElement>) => void
   openFile: (path: string) => void
   respond: SessionController['respond']
   waitForSourceChange: SessionController['waitForSourceChange']
@@ -779,6 +787,8 @@ const SessionMessage = memo(function SessionMessage({
       fileContext={fileContext}
       active={active}
       onFileLink={onFileLink}
+      onFileContextMenu={onFileContextMenu}
+      onFileKeyDown={onFileKeyDown}
       onOpenFile={openFile}
       onOpenChange={openChange}
       revealTool={revealTool}

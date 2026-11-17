@@ -125,6 +125,7 @@ const STORAGE_LABELS: Readonly<Record<string, string>> = {
   'audit-archive': '审计冷档',
   'history-cold': '已清空历史冷档',
   blobs: '共享正文与附件（磁盘）',
+  'command-logs': '命令日志（磁盘）',
   snapshots: '文件变更快照',
   backups: '备份文件',
   databases: '数据库',

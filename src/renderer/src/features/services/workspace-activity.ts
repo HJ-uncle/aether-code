@@ -11,6 +11,7 @@ import { useExtensionServices } from '../extensions'
 import { buildServiceItems, getHistoryServiceItems, getSessionServiceItems, type ServiceItem } from './service-model'
 import { getActivityHistory, rememberServiceHistory, subscribeActivityHistory } from './activity-history'
 import { useServiceTrayContext } from './tray-context'
+import { useWorkbenchVisible } from '@renderer/core/platform/workbench-visibility'
 
 export type WorkspaceActivityKind = 'subagent' | 'terminal' | 'git' | 'service'
 
@@ -38,6 +39,7 @@ export function useWorkspaceActivity(sessionId: string | null): {
   history: readonly WorkspaceActivityItem[]
 } {
   const { ready } = useApp()
+  const visible = useWorkbenchVisible()
   const tray = useServiceTrayContext()
   const owner = `workspace-activity:${useId()}`
   const contributions = useExtensionServices({ sessionId })
@@ -68,7 +70,7 @@ export function useWorkspaceActivity(sessionId: string | null): {
     for (const item of liveHistory) rememberServiceHistory(item, sessionId)
   }, [sessionId, liveHistory])
   useEffect(() => {
-    if (!sessionId || !ready) return
+    if (!sessionId || !ready || !visible) return
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const refresh = async (): Promise<void> => {
@@ -77,7 +79,7 @@ export function useWorkspaceActivity(sessionId: string | null): {
     }
     void refresh()
     return () => { disposed = true; if (timer) clearTimeout(timer) }
-  }, [sessionId, ready, runningCommands])
+  }, [sessionId, ready, visible, runningCommands])
 
   if (!sessionId) return { activities: [], history: [] }
 

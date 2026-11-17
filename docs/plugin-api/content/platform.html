@@ -270,7 +270,7 @@ type AgentPending = {
 <p><strong>参数：</strong><code>modelId</code> 接受已启用模型的配置 ID 或模型名，最长 256 字符。<code>task</code> 是非空需求；<code>description</code> 是可选的任务摘要。<code>resumeRunId</code> 必须属于当前插件与会话，是该 <code>childSessionId</code> 的最新执行，并处于 <code>succeeded</code>、<code>failed</code>、<code>cancelled</code>、<code>blocked</code> 或 <code>interrupted</code> 状态。同一子会话有活动执行时不能再次接续，也不能从过期执行分叉。有待答复的请求时，应先由用户答复或取消；不能用新任务跳过确认。</p>
 <p><strong>返回：</strong>任务接纳后的快照，返回不代表任务已完成。用 <code>runId</code> 查询后续状态。接续会创建新 <code>runId</code>，复用原 <code>childSessionId</code> 和上下文；要求原工作区仍匹配，可调整身份、提示词、挂载与工具配置，实际执行始终检查当前授权和用户禁用名单。</p>
 <p><strong>运行策略：</strong>不增加插件专属 Agent 并发配额或任务时限。Agent 复用平台工具注册、模型执行与安全检查。工作区变化、插件停用或撤销授权会阻止后续执行。调用使用正常模型额度。</p>
-<p><strong>工具授权：</strong><code>agents.manage</code> 管理任务；<code>engine.tools</code> 开放下方六类、33 个内置工具，执行沿用绑定会话的安全策略。<code>agents.tools()</code> 返回准确名称、参数及可用性；未授权或已禁用的工具不会提供给模型。</p>
+<p><strong>工具授权：</strong><code>agents.manage</code> 管理任务；<code>engine.tools</code> 开放下方六类、35 个内置工具，执行沿用绑定会话的安全策略。<code>agents.tools()</code> 返回准确名称、参数及可用性；未授权或已禁用的工具不会提供给模型。</p>
 <p>内置工具仅包含文件、命令、交互与计划、搜索、子代理、Skill。工具按需加载，检查 <code>available</code> 和 <code>reason</code> 了解当前授权与调用入口状态。Office、浏览器、工作台和成果工具不在插件 Agent 的内置范围中。</p>
 <p>插件 Agent 拥有独立的执行与会话记录，工作区继承绑定会话。其子代理遵循相同工具范围、用户禁用名单和当前授权。插件代码可直接使用已授权的 <code>$AE</code> 接口读取会话、知识库或设置，再把所需内容放入 <code>task</code>；这些接口不会自动包装成 Agent 工具。</p>
 <pre><code class="language-js">const run = await $AE.agents.run({ modelId, task: &#39;读取当前工作区的 README.md 并生成需求检查报告。&#39; });
@@ -314,17 +314,28 @@ const run = await $AE.agents.stream({ modelId, task: '审查需求并汇总结�
 <h4>插件代码与显式扩展</h4>
 <p><code>$AE.session</code>、<code>$AE.ai</code>、<code>$AE.workspace</code>、<code>$AE.knowledge</code>、<code>$AE.settings</code> 等接口继续供插件代码直接调用，并分别检查授权；授权不会自动向 Agent 注入 <code>ae_*</code> 工具。</p>
 <p>开发者可用 <code>mcpServerIds</code> 显式挂载外部 MCP，或用 <code>customTools</code> 挂载本插件声明的工具。这些是开发者选择的扩展，参数与执行仍按各自权限校验。</p>
-<h4 id="engine-tool-catalogue">六类内置工具 · 33 个</h4>
+<h4 id="engine-tool-catalogue">六类内置工具 · 35 个</h4>
 <p>以下为插件 Agent 的完整内置范围。<code>engine.tools</code> 授权后按需加载，用户仍可逐项禁用。工具目录以 <code>agents.tools()</code> 返回的实际状态为准；主会话 Agent 的工具配置与本表不同。</p>
-<p>已授权、未禁用工具且未挂载扩展的新任务，首轮向模型提供 16 个工具定义；其余通过 <code>load_tools</code> 按需加载。续跑历史、禁用设置与显式扩展会影响本轮实际定义数量。</p>
+<p>已授权、未禁用工具且未挂载扩展的新任务，首轮向模型提供 18 个工具定义；其余通过 <code>load_tools</code> 按需加载。续跑历史、禁用设置与显式扩展会影响本轮实际定义数量。</p>
 <table><thead><tr><th>类别</th><th>工具名称</th></tr></thead><tbody>
 <tr><td>文件</td><td><code>read_file</code>、<code>write_file</code>、<code>edit_file</code>、<code>list_files</code>、<code>delete_file</code>、<code>create_dir</code></td></tr>
-<tr><td>命令</td><td><code>execute_cmd</code>、<code>command_output</code>、<code>cancel_command</code></td></tr>
+<tr><td>命令</td><td><code>execute_cmd</code>、<code>command_output</code>、<code>wait_command</code>、<code>wait_commands</code>、<code>cancel_command</code></td></tr>
 <tr><td>交互与计划</td><td><code>ask_user</code>、<code>plan_update</code>、<code>load_tools</code></td></tr>
 <tr><td>搜索</td><td><code>glob</code>、<code>grep</code>、<code>web_fetch</code>、<code>http_request</code>、<code>search_history</code>、<code>code_diagnose</code>、<code>codegraph</code></td></tr>
 <tr><td>子代理与协作</td><td><code>subagent</code>、<code>subagent_start</code>、<code>subagent_send</code>、<code>subagent_wait</code>、<code>subagent_cancel</code>、<code>subagent_participants</code>、<code>subagent_inbox</code>、<code>subagent_read_result</code>、<code>subagent_directory</code>、<code>subagent_followup</code>、<code>subagent_request_input</code></td></tr>
 <tr><td>Skill</td><td><code>list_skills</code>、<code>get_skill</code>、<code>run_skill_script</code></td></tr>
 </tbody></table>
+<p><strong>命令等待：</strong>模型可用 <code>wait_command({ jobId, waitMs?, cursor?, cursorOffset? })</code> 等待一个命令，或用 <code>wait_commands({ jobs, waitMs? })</code> 并发等待 1–8 个不同命令。默认等待 10 秒、最多 60 秒；批量共用同一截止时间，<code>waitMs: 0</code> 立即读取。超时仍返回真实运行状态，不取消或重新启动进程。每项结果与错误独立，全部正文共享一次调用的输出预算。继续读取时，把各项返回的 <code>nextCursor</code>、<code>nextOffset</code> 原样作为 <code>cursor</code>、<code>cursorOffset</code>；<code>hasMore</code> 表示还有输出。<code>nextOffset</code> 按 UTF-8 字节计数并保持字符边界，不自行按 JavaScript 字符长度换算。命令只在当前会话授权范围内读取，子代理进一步限定到自己的运行。</p>
+<pre><code class="language-json">{
+  "jobs": [
+    { "jobId": "returned-build-job-id", "cursor": 0, "cursorOffset": 0 },
+    { "jobId": "returned-test-job-id", "cursor": 0, "cursorOffset": 0 }
+  ],
+  "waitMs": 10000
+}</code></pre>
+<p>以上是模型调用 <code>wait_commands</code> 的参数示例，两个 ID 必须来自已启动命令的真实回执。读取或等待成功表示取得状态，不能据此宣称命令执行成功；需检查各命令的终态和退出码。停止命令使用 <code>cancel_command</code>。</p>
+<p><code>execute_cmd</code> 的本次输出预算不足 1024 字符时会在启动前拒绝，避免执行后无法返回任务 ID。若进程已执行而日志读取失败，回执保留真实执行状态和文件变化，提示用 <code>command_output</code> 重读；此时不要重复执行原命令。</p>
+<p>用户在平台命令历史中手动重启已结束的后台任务时，会生成新的命令任务，并重新检查当前策略、工作区与环境，复用 <code>execute_cmd</code> 已支持的源码保护，同时记录可观察的文件变化。历史批准不会沿用；需要确认时界面显示原因，请回到当前会话重新执行并完成确认。命中源码保护的后台构建仍需改为前台执行，刷新列表或读取日志不会重新启动命令。插件不能通过额外参数代替用户批准。</p>
 <h3 id="agents-stream"><code>$AE.agents.stream(args, options?)</code> · 流式输出与进度</h3>
 <p>通过 <code>onEvent</code> 逐段接收 <code>text-delta</code> 正文和工具执行进度；本次流结束后，Promise 返回 <code>AgentRun</code>。参数、身份配置、挂载和权限与后台任务 <code>agents.run()</code> 相同；回调及取消方式与 <code>ai.stream()</code> 相同。</p>
 <pre><code class="language-ts">$AE.agents.stream(args: AetherPluginAgentInput,

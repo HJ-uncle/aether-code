@@ -89,28 +89,49 @@ export function attachCommandJobs(messages: ChatMessage[], jobs: CommandJobSnaps
   return changed ? next : messages
 }
 
-export interface CommandOutputState { entries: CommandOutputEntry[]; cursor: number; truncated: boolean; bytes: number }
-export const emptyCommandOutput: CommandOutputState = { entries: [], cursor: 0, truncated: false, bytes: 0 }
+export interface CommandOutputState { entries: CommandOutputEntry[]; cursor: number; cursorOffset: number; truncated: boolean; tail: boolean; initialized: boolean; hasMore: boolean; bytes: number }
+export const emptyCommandOutput: CommandOutputState = { entries: [], cursor: 0, cursorOffset: 0, truncated: false, tail: false, initialized: false, hasMore: false, bytes: 0 }
 const outputLimit = 256 * 1024
 /** Cursor is the last consumed entry sequence, never a character offset or the job's latest cursor. */
 export function mergeCommandOutput(previous: CommandOutputState, page: CommandJobOutput): CommandOutputState {
-  if (!Number.isSafeInteger(page.nextCursor) || page.nextCursor < previous.cursor ||
-    !Array.isArray(page.entries) || page.entries.some(entry => !Number.isSafeInteger(entry.seq) || entry.seq <= 0 || entry.seq > page.nextCursor ||
+  const offset = page.nextOffset ?? 0
+  if (!Number.isSafeInteger(page.nextCursor) || page.nextCursor < previous.cursor || !Number.isSafeInteger(offset) || offset < 0 ||
+    page.nextCursor === previous.cursor && offset < previous.cursorOffset ||
+    !Array.isArray(page.entries) || page.entries.some((entry, index) => !Number.isSafeInteger(entry.seq) || entry.seq <= 0 ||
+      (entry.seq > page.nextCursor && !(index === page.entries.length - 1 && offset > 0)) ||
       !['stdout', 'stderr'].includes(entry.stream) || typeof entry.text !== 'string')) throw new Error('命令输出响应无效')
   const fresh = page.entries.filter(entry => entry.seq > previous.cursor)
   if (fresh.some((entry, index) => index > 0 && entry.seq <= fresh[index - 1].seq)) throw new Error('命令输出顺序无效')
   // Idle services often have nothing new. Preserve the snapshot so readers do
   // not rebuild their log DOM or restore scroll position on every poll.
-  if (!fresh.length && page.nextCursor === previous.cursor && (!page.truncated || previous.truncated)) return previous
-  let entries = [...previous.entries, ...fresh]
-  let bytes = previous.bytes + fresh.reduce((total, entry) => total + new TextEncoder().encode(entry.text).byteLength, 0)
-  let truncated = previous.truncated || page.truncated
-  while (bytes > outputLimit && entries.length > 1) {
-    bytes -= new TextEncoder().encode(entries[0].text).byteLength
-    entries = entries.slice(1)
-    truncated = true
+  const advances = page.nextCursor > previous.cursor || offset > previous.cursorOffset
+  if (previous.initialized && !advances && (!page.truncated || previous.truncated) &&
+    (!page.tail || previous.tail) && page.hasMore === previous.hasMore) return previous
+  let entries = [...previous.entries]
+  let bytes = previous.bytes
+  if (advances) for (const entry of fresh) {
+    const last = entries.at(-1)
+    if (last?.seq === entry.seq) {
+      if (!previous.cursorOffset || last.stream !== entry.stream) throw new Error('命令输出片段不一致')
+      entries[entries.length - 1] = { ...entry, text: last.text + entry.text }
+    } else entries.push(entry)
+    bytes += new TextEncoder().encode(entry.text).byteLength
   }
-  return { entries, bytes, cursor: page.nextCursor, truncated }
+  let dropped = 0
+  while ((bytes > outputLimit || entries.length - dropped > 2048) && entries.length - dropped > 1) {
+    bytes -= new TextEncoder().encode(entries[dropped++].text).byteLength
+  }
+  if (dropped) entries = entries.slice(dropped)
+  if (bytes > outputLimit && entries.length === 1) {
+    const encoded = new TextEncoder().encode(entries[0].text)
+    let start = encoded.length - outputLimit
+    while (start < encoded.length && (encoded[start] & 0xc0) === 0x80) start++
+    entries = [{ ...entries[0], text: new TextDecoder('utf-8', { fatal: true }).decode(encoded.subarray(start)) }]
+    bytes = encoded.length - start
+    dropped++
+  }
+  return { entries, bytes, cursor: page.nextCursor, cursorOffset: offset, initialized: true,
+    hasMore: page.hasMore, tail: previous.tail || page.tail === true || dropped > 0, truncated: previous.truncated || page.truncated }
 }
 export function exportCommandJob(job: CommandJobSnapshot): string {
   return [`状态：${commandJobDisplayLabel(job)}`, commandJobStopMessage(job) ?? '', `工作目录：${job.cwd}`, `命令：${commandJobInvocation(job)}`,

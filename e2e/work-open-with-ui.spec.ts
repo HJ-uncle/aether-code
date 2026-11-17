@@ -1,5 +1,6 @@
 /** Real Electron Work menus: discovered project tools, grouped keyboard navigation,
- * session-owned directories, draft restrictions and launch-error feedback.
+ * session-owned directories, draft restrictions, file reveal through production
+ * IPC and launch-error feedback.
  * Only app discovery/launch IPC is substituted to avoid opening external UI;
  * workspace resolution and filesystem authorization use production bridges. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -10,9 +11,10 @@ import type { OpenWithApp } from '../src/shared/ipc'
 import type { RootRun } from '../src/shared/root-run'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'file-link-menu')
 const token = 'open-with-fixture', modelId = 'open-with-model', now = Date.now() - 10_000
 const taskA = 'work-open-with-a', taskB = 'work-open-with-b', draft = 'work-open-with-draft'
+const linkedFile = 'menu-notes.txt'
 const titles = new Map([[taskA, '打开方式任务 A'], [taskB, '打开方式任务 B'], [draft, '尚未选择目录的草稿']])
 const manifest = { version: '2.0.0', buildId: `sha256:${'d'.repeat(64)}`, protocolVersion: 1, toolProfiles: ['general', 'code'], subagentSchemaVersion: 1 }
 // A renderer hot update may briefly read the catalog from an older main process.
@@ -26,7 +28,14 @@ const apps: DiscoveryApp[] = [
 ]
 type Launch = { path: string; app: string }
 type ProbeState = { discoveries: number; launches: Launch[]; authorized: string[]; fail: boolean; hold: boolean; apps: DiscoveryApp[] }
-type ProbeGlobal = typeof globalThis & { __openWithProbe: ProbeState; __releaseOpenWithDiscovery?: () => void }
+type ProbeGlobal = typeof globalThis & {
+  __openWithProbe: ProbeState
+  __releaseOpenWithDiscovery?: () => void
+  __nativeOpenWith?: (...args: unknown[]) => Promise<unknown>
+  __nativeFileReveals?: string[]
+  __nativeDirectoryOpens?: string[]
+  __restoreNativeOpenWithTest?: () => void
+}
 const errors: string[] = [], workspaceReads: string[] = [], writes: string[] = []
 const runs = new Map<string, RootRun>()
 let app: ElectronApplication | undefined, page: Page, fixture = '', cwdA = '', cwdB = '', staleHint = ''
@@ -35,7 +44,7 @@ const workspace = (id: string): string => id === taskB ? cwdB : cwdA
 function history(id: string): EngineHistoryRow[] {
   const run = runs.get(id)
   return run ? [{ id: run.userMessageId, role: 'user', content: titles.get(id), createdAt: now, conversationId: run.turnId,
-    metadata: { rootRunId: run.runId } }, { id: run.assistantMessageId, role: 'assistant', content: `${titles.get(id)} 已完成。`,
+    metadata: { rootRunId: run.runId } }, { id: run.assistantMessageId, role: 'assistant', content: `${titles.get(id)} 已完成。\n\n[正文文件](${linkedFile})`,
     createdAt: now + 1, conversationId: run.turnId, metadata: { rootRunId: run.runId } }] : []
 }
 const server = createServer((request, response) => { void (async () => {
@@ -130,6 +139,7 @@ test.describe.serial('Work 打开方式', () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'work-open-with-profile-'))
     cwdA = join(fixture, '当前任务 A'); cwdB = join(fixture, "另一个任务 B & '目录'"); staleHint = join(fixture, '旧目录')
     for (const directory of [cwdA, cwdB, staleHint]) mkdirSync(directory, { recursive: true })
+    for (const directory of [cwdA, cwdB]) writeFileSync(join(directory, linkedFile), `File belongs to ${directory}`, 'utf8')
     for (const sessionId of [taskA, taskB]) runs.set(sessionId, { schemaVersion: 1, runId: `root-${sessionId}`, sessionId,
       turnId: `turn-${sessionId}`, userMessageId: `user-${sessionId}`, assistantMessageId: `answer-${sessionId}`, seq: 1, version: 2,
       status: 'succeeded', modelId, pending: [], workspacePaths: [workspace(sessionId)], createdAt: now, updatedAt: now + 1, finishedAt: now + 1 })
@@ -173,6 +183,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> })._invokeHandlers
       const allowRoot = handlers.get('fs:allow-root')
       if (!allowRoot) throw new Error('Missing production fs:allow-root handler')
+      ;(globalThis as ProbeGlobal).__nativeOpenWith = handlers.get('system:open-with')
       const state: ProbeState = { discoveries: 0, launches: [], authorized: [], fail: false, hold: true, apps }
       ;(globalThis as ProbeGlobal).__openWithProbe = state
       ipcMain.removeHandler('fs:allow-root')
@@ -226,7 +237,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     expect(Math.abs(menuBounds.y - Math.max(4, Math.min(rowBounds.y + 16, viewport.height - menuBounds.height - 4)))).toBeLessThanOrEqual(2)
     await expect(work().getByRole('heading', { name: titles.get(taskA)!, exact: true })).toBeVisible()
     expect((await probe()).discoveries).toBe(0)
-    expect(await menuStructure(parentMenu())).toEqual(['重命名任务', '置顶', '颜色标记', '|', '添加到对话', '复制', '打开方式', '导出任务', '|', '归档任务'])
+    expect(await menuStructure(parentMenu())).toEqual(['重命名任务', '置顶', '颜色标记', '|', '添加到对话', '复制', '打开方式', '导出任务', '|', '归档任务', '删除任务'])
     await expect(parentMenu().getByRole('separator')).toHaveCount(2)
     await expect(parentMenu().getByRole('menuitem', { name: '继续任务', exact: true })).toHaveCount(0)
     await expect(parentMenu().getByRole('menuitem').first()).toHaveText('重命名任务')
@@ -257,13 +268,15 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
 
   test('顶栏子菜单支持键盘往返，启动失败有提示且无目录草稿不可用', async ({}, info) => {
     await work().getByRole('button', { name: '任务更多操作', exact: true }).click()
-    expect(await menuStructure(parentMenu())).toEqual(['重命名任务', '|', '选择对话', '添加到对话', '复制', '打开方式', '导出任务', '|', '归档任务'])
-    await expect(parentMenu().getByRole('separator')).toHaveCount(2)
+    expect(await menuStructure(parentMenu())).toEqual(['重命名任务', '置顶', '颜色标记', '|', '选择对话', '|', '添加到对话', '复制', '打开方式', '导出任务', '|', '归档任务', '删除任务'])
+    await expect(parentMenu().getByRole('separator')).toHaveCount(3)
     await expect(parentMenu().getByRole('menuitem', { name: '继续任务', exact: true })).toHaveCount(0)
     await expect(parentMenu().getByRole('menuitem').first()).toHaveText('重命名任务')
     await parentMenu().getByRole('menuitem', { name: '导出任务', exact: true }).focus()
     await page.keyboard.press('ArrowDown')
     await expect(parentMenu().getByRole('menuitem', { name: '归档任务', exact: true })).toBeFocused()
+    await page.keyboard.press('End')
+    await expect(parentMenu().getByRole('menuitem', { name: '删除任务', exact: true })).toBeFocused()
     const copy = page.getByRole('menuitem', { name: '复制', exact: true })
     await copy.focus(); await page.keyboard.press('ArrowRight')
     await expect(item('复制会话链接')).toBeFocused()
@@ -395,6 +408,81 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await expect(page.getByRole('menu')).toHaveCount(0)
     await expect(taskButton(taskB)).toBeFocused()
     await expect(taskButton(taskB)).toHaveAttribute('aria-expanded', 'false')
-    await expect(work().locator('.work-sidebar__task-row button')).toHaveCount(3)
+    await expect(work().locator('.work-sidebar__task-row button.work-sidebar__task')).toHaveCount(3)
+  })
+
+  test('正文文件菜单按需检测应用，并用所属会话的文件路径启动编辑器', async () => {
+    await work().locator(`.work-sidebar__task-row[data-task-id="${taskB}"] .work-sidebar__task`).click()
+    await expect(work().getByRole('heading', { name: titles.get(taskB)!, exact: true })).toBeVisible()
+    await app!.evaluate((_electron, catalog) => {
+      const state = (globalThis as ProbeGlobal).__openWithProbe
+      state.apps = catalog; state.hold = true; state.fail = false
+    }, apps)
+    const before = await probe()
+    const file = work().locator(`[data-message-id="answer-${taskB}"]`).getByRole('link', { name: '正文文件', exact: true })
+    await file.click({ button: 'right' })
+    await expect(parentMenu().getByRole('menuitem', { name: '打开文件', exact: true })).toBeVisible()
+    await expect(openWith()).toBeEnabled()
+    expect((await probe()).discoveries).toBe(before.discoveries)
+    expect((await probe()).authorized).toEqual(before.authorized)
+    expect((await probe()).launches).toEqual(before.launches)
+
+    await openWith().focus(); await page.keyboard.press('ArrowRight')
+    const submenu = page.locator('.context-menu--submenu:not([aria-hidden="true"])')
+    await expect(submenu).toContainText('正在检测应用')
+    await expect.poll(async () => (await probe()).discoveries).toBe(before.discoveries + 1)
+    await releaseDiscovery()
+    await expect(item('VS Code')).toBeVisible()
+    expect(await menuStructure(submenu)).toEqual(['VS Code', 'Cursor'])
+    await expect(submenu.getByRole('menuitem', { name: /项目目录|Terminal|Git Bash/ })).toHaveCount(0)
+    expect((await probe()).authorized).toEqual(before.authorized)
+    await item('VS Code').click()
+
+    const expectedFile = join(cwdB, linkedFile).replace(/\\/g, '/')
+    await expect.poll(async () => (await probe()).launches.slice(before.launches.length)).toEqual([{ path: expectedFile, app: 'vscode' }])
+    expect((await probe()).authorized.slice(before.authorized.length)).toEqual([cwdB])
+    expect(workspaceReads).toContain(taskB)
+    await expect(page.getByRole('menu')).toHaveCount(0)
+    await expect(work().getByRole('heading', { name: titles.get(taskB)!, exact: true })).toBeVisible()
+  })
+
+  test('真实打开方式 IPC 定位文件并保留目录行为，不执行目标文件', async () => {
+    const file = join(cwdA, "正文 #20% & '内容'.txt")
+    writeFileSync(file, 'Native file reveal fixture', 'utf8')
+    await app!.evaluate(({ ipcMain, shell }) => {
+      const state = globalThis as ProbeGlobal
+      const native = state.__nativeOpenWith
+      if (!native) throw new Error('Missing production system:open-with handler')
+      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> })._invokeHandlers
+      const mock = handlers.get('system:open-with')
+      const reveal = shell.showItemInFolder, open = shell.openPath
+      state.__nativeFileReveals = []; state.__nativeDirectoryOpens = []
+      shell.showItemInFolder = path => { state.__nativeFileReveals!.push(path) }
+      shell.openPath = async path => { state.__nativeDirectoryOpens!.push(path); return '' }
+      ipcMain.removeHandler('system:open-with')
+      ipcMain.handle('system:open-with', (event, ...args) => native(event, ...args))
+      state.__restoreNativeOpenWithTest = () => {
+        shell.showItemInFolder = reveal; shell.openPath = open
+        ipcMain.removeHandler('system:open-with')
+        if (mock) ipcMain.handle('system:open-with', (event, ...args) => mock(event, ...args))
+      }
+    })
+    try {
+      await page.evaluate(async ({ file, directory }) => {
+        await window.aether.fs.allowRoot(directory)
+        await window.aether.system.openWith(file, 'file-explorer')
+        await window.aether.system.openWith(directory, 'file-explorer')
+      }, { file, directory: cwdA })
+      expect(await app!.evaluate(() => (globalThis as ProbeGlobal).__nativeFileReveals)).toEqual([file])
+      expect(await app!.evaluate(() => (globalThis as ProbeGlobal).__nativeDirectoryOpens)).toEqual([cwdA])
+      const missing = await page.evaluate(async path => {
+        try { await window.aether.system.openWith(path, 'file-explorer'); return '' }
+        catch (error) { return error instanceof Error ? error.message : String(error) }
+      }, join(cwdA, '已移除.txt'))
+      expect(missing).toContain('不存在或已不可访问')
+      expect(await app!.evaluate(() => (globalThis as ProbeGlobal).__nativeFileReveals)).toEqual([file])
+    } finally {
+      await app!.evaluate(() => { (globalThis as ProbeGlobal).__restoreNativeOpenWithTest?.() })
+    }
   })
 })

@@ -1,6 +1,6 @@
-/** New Electron regression for atomic @ chips while editing adjacent spaces and
- * committing Chinese IME text. Uses an isolated HTTP fixture and never sends a
- * model request, uploads a file, or runs the legacy composer suite. Build first. */
+/** Electron regression for intentional @/slash completion, atomic chips while editing
+ * adjacent spaces, and committing Chinese IME text. Uses an isolated HTTP fixture
+ * and never sends a model request, uploads a file, or runs the legacy composer suite. Build first. */
 import { _electron as electron, expect, test, type CDPSession, type ElectronApplication, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -39,6 +39,7 @@ const server = createServer((request, response) => { void (async () => {
     : /\/sessions\/[^/]+\/binding$/.test(path) ? { started: true, agentId: null, metadata: null, agent: null }
     : /\/sessions\/[^/]+\/toolkits$/.test(path) ? { toolkits: [] }
     : path === '/api/v1/toolkits' ? { toolkits: [{ id: 'plugin-management', name: '插件管理', description: '创建和管理插件', toolNames: ['plugin_create'], available: true }] }
+    : path === '/api/v1/skills' ? { list: [{ id: 'fixture-review', name: '需求审查', description: '核对当前需求', enabled: true }] }
     : path === '/api/v1/security/mode' ? { mode: 'standard', sessionId: id }
     : path === '/api/v1/memory/settings' ? { memoryScope: 'off', effectiveScope: 'off', enabled: false, sessionId: id }
     : path === '/api/v1/workspace/directory' ? { root: workspace, entries: [], bindingEpoch: 'one' }
@@ -93,6 +94,26 @@ async function caretAtChip(side: 'before' | 'after'): Promise<void> {
   }, side)
 }
 
+async function clickQueryEnd(): Promise<void> {
+  const point = await editor().evaluate(element => {
+    const node = element.lastChild
+    if (!node || node.nodeType !== Node.TEXT_NODE || !node.textContent) throw new Error('Expected plain mention query')
+    const range = document.createRange()
+    range.setStart(node, node.textContent.length - 1); range.setEnd(node, node.textContent.length)
+    const rect = range.getBoundingClientRect()
+    return { x: rect.right + 3, y: rect.top + rect.height / 2 }
+  })
+  await page.mouse.click(point.x, point.y)
+  await expect(editor()).toBeFocused()
+}
+
+async function expectCompletionClosed(): Promise<void> {
+  // Native selectionchange is queued after pointer/keyboard dispatch. Observe
+  // the next paint before asserting so an immediate absent DOM cannot pass.
+  await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
+  await expect(page.locator('.mention-ref-picker:visible, .resource-picker:visible')).toHaveCount(0)
+}
+
 test.describe.serial('@ 标签相邻编辑', () => {
   test.beforeAll(async () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'profile-'))
@@ -138,6 +159,70 @@ test.describe.serial('@ 标签相邻编辑', () => {
       }
     }
   })
+
+  for (const { trigger, keyword, selector, source, id } of [
+    { trigger: '@', keyword: '插件管理', selector: '.mention-ref-picker', source: 'toolkit', id: 'plugin-management' },
+    { trigger: '/', keyword: '需求审查', selector: '.resource-picker', source: 'skill', id: 'fixture-review' }
+  ]) {
+    test(`${trigger} 关闭后输入和移动光标不复活，只有新触发符开启补全`, async () => {
+      await editor().fill('')
+      await page.keyboard.insertText(trigger)
+      const picker = page.locator(`${selector}:visible`)
+      const option = picker.getByRole('option').filter({ hasText: keyword })
+      await expect(option).toBeVisible()
+      await page.keyboard.insertText(keyword.slice(0, 2)); await expect(option).toBeVisible()
+      await page.keyboard.press('Escape'); await expectCompletionClosed()
+      await page.keyboard.insertText(keyword.slice(2)); await expectCompletionClosed()
+      await page.keyboard.press('Home'); await clickQueryEnd(); await expectCompletionClosed()
+      await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowRight')
+      await page.keyboard.insertText('X'); await expectCompletionClosed()
+      for (let index = 0; index < keyword.length + 1; index++) await page.keyboard.press('Backspace')
+      await expect(editor()).toHaveText(trigger); await expectCompletionClosed()
+
+      // Deleting the old delimiter and typing a new one is a fresh request,
+      // even though the resulting draft text is identical.
+      await page.keyboard.press('Backspace'); await page.keyboard.insertText(trigger)
+      await expect(option).toBeVisible()
+      await clickQueryEnd(); await expectCompletionClosed()
+      await page.keyboard.insertText(keyword); await expectCompletionClosed()
+      await page.keyboard.insertText(` ${trigger}`); await expect(option).toBeVisible()
+      await page.keyboard.insertText(keyword); await expect(option).toBeVisible()
+      await page.keyboard.press('ArrowLeft'); await expectCompletionClosed()
+      await page.keyboard.press('ArrowRight'); await page.keyboard.insertText('X'); await expectCompletionClosed()
+
+      await page.keyboard.insertText(` ${trigger}${keyword}`); await expect(option).toBeVisible()
+      await page.getByRole('heading', { name: title, exact: true }).click(); await expectCompletionClosed()
+      await clickQueryEnd(); await page.keyboard.insertText('X'); await expectCompletionClosed()
+      await page.keyboard.insertText(` ${trigger}${keyword}`); await expect(option).toBeVisible()
+      await expect(option).toHaveAttribute('aria-selected', 'true')
+      await page.keyboard.press('Tab'); await expectCompletionClosed()
+      const reference = editor().locator(`.mention-chip--${source}`)
+      await expect(reference).toHaveCount(1); await expect(reference).toHaveText(keyword)
+      expect((await savedDraft()).mentions.filter(mention => mention.source === source).map(mention => mention.path)).toEqual([id])
+      await reference.click(); await expectCompletionClosed()
+    })
+
+    test(`${trigger} 关闭后中文输入法不重开，新查询的中文补全仍正常`, async () => {
+      await editor().fill('')
+      await page.keyboard.insertText(trigger)
+      const option = page.locator(`${selector}:visible`).getByRole('option').filter({ hasText: keyword })
+      await expect(option).toBeVisible()
+      await page.keyboard.press('Escape'); await expectCompletionClosed()
+      await cdp.send('Input.imeSetComposition', { text: keyword, selectionStart: keyword.length, selectionEnd: keyword.length })
+      await expectCompletionClosed()
+      await cdp.send('Input.insertText', { text: keyword }); await expectCompletionClosed()
+      await expect(editor()).toHaveText(`${trigger}${keyword}`)
+
+      await page.keyboard.insertText(` ${trigger}`); await expect(option).toBeVisible()
+      await cdp.send('Input.imeSetComposition', { text: keyword, selectionStart: keyword.length, selectionEnd: keyword.length })
+      await expectCompletionClosed()
+      await cdp.send('Input.insertText', { text: keyword })
+      await expect(option).toBeVisible()
+      await option.click(); await expectCompletionClosed()
+      await expect(editor().locator(`.mention-chip--${source}`)).toHaveText(keyword)
+      expect((await savedDraft()).mentions.filter(mention => mention.source === source).map(mention => mention.path)).toEqual([id])
+    })
+  }
 
   test('插件管理标签前后输入空格、中文并移动光标，显示与草稿引用一致', async () => {
     await insertReference()

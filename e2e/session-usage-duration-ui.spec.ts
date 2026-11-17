@@ -1,6 +1,6 @@
 /** Real Electron + authenticated HTTP: execution duration excludes idle gaps,
  * survives history reload, advances only for active runs, and shares the same
- * semantics in Work and Code. Percentage rows disclose exact tokens and their
+ * semantics in the default workspace. Percentage rows disclose exact tokens and their
  * denominator by hover/keyboard in both themes. Side details remain readable
  * outside the owning popup and stay inside resized viewports. Build before running. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -10,7 +10,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
 import type { ChatSsePayload } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
-import { engineStorageKey, sessionStorageKey } from '../src/renderer/src/core/engine/source'
+import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'usage-duration-token', model = 'usage-duration-model', now = Date.now()
@@ -186,7 +186,7 @@ async function readHoveredDetail(tip: Locator, owner: Locator = popover()): Prom
 }
 
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('complementary', { name: '应用导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   await settings.getByRole('tab', { name: '外观', exact: true }).click()
   await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
@@ -232,7 +232,6 @@ async function seed(): Promise<void> {
   await page.evaluate(({ key, tasks, activeTaskId }) => {
     window.dispatchEvent(new Event('blur'))
     localStorage.setItem(key, JSON.stringify({ tasks, activeTaskId, homeSources: [] }))
-    localStorage.setItem('aether.app.mode', 'work')
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 56 }))
   }, { key: storageKey, tasks, activeTaskId: settled })
   await page.reload()
@@ -329,7 +328,7 @@ test.describe.serial('会话累计执行用时', () => {
     await selectTask(partial)
     await expect(time()).toHaveText('≥30s')
     await meter().locator('button').click()
-    await expect(popover()).toContainText('已加载 4 轮 · 已知 30s')
+    await expect(popover()).toContainText('已加载 4 轮 · 累计 ≥30s')
     await page.keyboard.press('Escape')
     await selectTask(settled)
     await expect(time()).toHaveText('30s')
@@ -422,47 +421,5 @@ test.describe.serial('会话累计执行用时', () => {
       }, original)
       await page.keyboard.press('Escape'); await page.keyboard.press('Escape')
     }
-  })
-
-  // Retired Code surface; Work execution duration remains covered by the
-  // preceding real-session assertions.
-  test.skip('Code 模式共用累计执行时间，不再显示跨轮空闲跨度', async ({}, info) => {
-    await page.evaluate(({ key, sessionId }) => {
-      localStorage.setItem(key, sessionId)
-      localStorage.setItem('aether.app.mode', 'code')
-    }, { key: sessionStorageKey('aether:lastSessionId', source), sessionId: settled })
-    await page.reload()
-    const chat = page.locator('.chat')
-    if (!await chat.isVisible()) await page.getByRole('button', { name: '切换对话面板', exact: true }).click()
-    await expect(chat).toBeVisible()
-    await expect(time(chat)).toHaveText('30s')
-    await expect(meter(chat).locator('.usage-meter__tokens')).toHaveText('22k')
-    await meter(chat).locator('button').click()
-    await expect(popover()).toContainText('已加载 3 轮 · 累计 30s')
-    await expectPercentages()
-    await focusDetail('累计输入 Prompt', '21,000', '总用量', '22,000', '95.5%')
-    await focusDetail('缓存命中', '12,600', '累计输入', '21,000', '60%')
-    await page.keyboard.press('Escape')
-    await expect(popover()).toHaveCount(0)
-    await chat.locator('.turn-usage__trigger').last().click()
-    const turn = page.getByRole('dialog', { name: '本次问答用量', exact: true })
-    await expect(turn).toBeVisible()
-    await expect(turn.locator('.usage-popover__total-value')).toHaveText('7.4k')
-    await expect(turn.locator('.usage-popover__total-value')).toHaveAttribute('title', '7,400 tokens')
-    for (const [label, percentage] of [['累计输入 Prompt', '94.6%'], ['输出 Completion', '5.4%'], ['缓存命中', '60%']])
-      await expect(detailRow(label, turn).locator('.usage-detail__value')).toHaveText(percentage)
-    await detailRow('累计输入 Prompt', turn).hover()
-    const tip = detailTip('累计输入 Prompt')
-    await expect(tip).toBeVisible()
-    await expect(tip.locator('.usage-detail-tip__amount')).toHaveText('7,000 tokens')
-    await expect(tip).toContainText(/占总用量\s*94\.6%/)
-    await expect(tip).toContainText('计算基数：7,400 tokens')
-    await expectSideDetail(tip, turn)
-    await readHoveredDetail(tip, turn)
-    const path = info.outputPath('code-turn-usage-percentage.png')
-    await page.screenshot({ path, animations: 'disabled' })
-    await info.attach('Code 单轮用量占比', { path, contentType: 'image/png' })
-    await page.keyboard.press('Escape'); await expect(tip).toHaveCount(0); await expect(turn).toBeVisible()
-    await page.keyboard.press('Escape'); await expect(turn).toHaveCount(0)
   })
 })

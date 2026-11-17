@@ -64,7 +64,7 @@ test('Work command aliases show the executable and ordered arguments instead of 
 test('command targets retain empty, spaced and quoted arguments without changing the receipt', () => {
   const item = tool({ command: 'node', args: ['--label', '', 'two words', 'say "hi"', "it's"] }, 'execute_cmd')
   const original = structuredClone(item)
-  const expected = ['node', '--label', '""', '"two words"', String.raw`"say \"hi\""`, '"it\'s"'].join(' ')
+  const expected = ['node', '--label', '""', '"two words"', `'say "hi"'`, '"it\'s"'].join(' ')
   expect(sessionToolTarget(item)).toBe(expected)
   expect(sessionToolTarget(item, undefined, true)).toBe(expected)
   expect(item).toEqual(original)

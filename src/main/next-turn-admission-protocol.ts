@@ -2,8 +2,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { NextTurnQueueError, type FrozenQueueSubmission, type NextTurnQueueScope, type QueueAdmissionReceipt } from '../shared/next-turn-queue'
 
 export const SESSION_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 })
-export const CODE_QUEUE_TRANSPORT = Object.freeze({ toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 })
-export const queueTransport = (owner: NextTurnQueueScope['owner']) => owner === 'code' ? CODE_QUEUE_TRANSPORT : SESSION_QUEUE_TRANSPORT
+export function queueTransport(owner: NextTurnQueueScope['owner']): typeof SESSION_QUEUE_TRANSPORT {
+  // Keep old journal scopes distinguishable; never reinterpret their frozen
+  // requests as work requests or send them through the remaining owner.
+  if (owner !== 'work') fail('此队列属于已移除的 Code 界面，原记录保留且不会自动投递')
+  return SESSION_QUEUE_TRANSPORT
+}
 export interface AdmissionOutcomeRoot {
   runId: string; version: number
   attemptId?: string; turnId?: string
@@ -15,7 +19,7 @@ export interface AdmissionRoot extends AdmissionOutcomeRoot { attemptId: string 
 export interface AdmissionContext {
   protocolVersion: 1; tenantId: string; sessionId: string
   namespace: NextTurnQueueScope['namespace']; predecessor: FrozenQueueSubmission['anchor']
-  root: AdmissionRoot | null; transport: typeof SESSION_QUEUE_TRANSPORT | typeof CODE_QUEUE_TRANSPORT
+  root: AdmissionRoot | null; transport: typeof SESSION_QUEUE_TRANSPORT
 }
 function fail(message: string): never { throw new NextTurnQueueError('AUTHORITY', message) }
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
@@ -43,7 +47,7 @@ export function parseAdmissionRoot(value: unknown): AdmissionRoot {
 export function parseAdmissionContext(value: unknown, taskId: string, owner: NextTurnQueueScope['owner'] = 'work'): AdmissionContext {
   const item = record(value), transport = record(item.transport)
   if (item.protocolVersion !== 1 || item.sessionId !== taskId || transport.toolProfile !== queueTransport(owner).toolProfile
-    || transport.runLifetime !== 'durable' || transport.subagentProtocol !== 2) fail(`引擎尚未提供 ${owner === 'code' ? 'Code' : 'Work'} 下一轮接纳协议，未发送消息`)
+    || transport.runLifetime !== 'durable' || transport.subagentProtocol !== 2) fail('引擎尚未提供当前会话的下一轮接纳协议，未发送消息')
   const root = item.root === null ? null : parseAdmissionRoot(item.root)
   const predecessor = item.predecessor === null ? null : (() => {
     const anchor = record(item.predecessor)

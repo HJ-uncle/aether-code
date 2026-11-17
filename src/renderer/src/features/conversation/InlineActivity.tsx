@@ -20,12 +20,10 @@ import './inline-activity.css'
 const pagePositions = new Map<string, number | null>()
 
 /** Keep paged receipts and their original diagnostics beside the conversation. */
-export function InlineActivity({ tools: receipts, fileContext, onOpenFile, onOpenChange, revealTool, defaultToolId, expanded = false, contained = false, groupRepeated = true, turnRunning, active = true, readOnly = false }: {
+export function InlineActivity({ tools: receipts, fileContext, onOpenFile, onOpenChange, revealTool, expanded = false, contained = false, groupRepeated = true, turnRunning, active = true, readOnly = false }: {
   tools: ToolActivity[]; fileContext: ChatFileContext; onOpenFile?: (path: string) => void
   onOpenChange?: (change: EngineFileChange) => void
   revealTool?: { toolId: string; revision: number } | null
-  /** The newest receipt stays open when its containing process is visible. */
-  defaultToolId?: string
   expanded?: boolean
   contained?: boolean
   groupRepeated?: boolean
@@ -80,7 +78,6 @@ export function InlineActivity({ tools: receipts, fileContext, onOpenFile, onOpe
   const groups = contained && groupRepeated && !turnRunning ? sessionActivityGroups(visible) : visible.map(tool => [tool])
   const renderTool = (item: ToolActivity): ReactNode => <ToolActivityRow key={item.id} tool={item} fileContext={fileContext}
     onOpenFile={onOpenFile} onOpenChange={onOpenChange} turnRunning={turnRunning} active={active && open} readOnly={readOnly}
-    defaultOpen={item.id === defaultToolId ? true : undefined}
     revealRevision={revealTool?.toolId === item.id ? revealTool.revision : undefined} />
   const body = <div id={detailId} className="process__body work-inline-activity__body" role="region" aria-label="活动详情">
     {groups.map(group => (

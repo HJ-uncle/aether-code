@@ -1,4 +1,4 @@
-/** Real Electron: Code/Work attachment identity, native drag caret/ghost and
+/** Real Electron: Default workspace attachment identity, native drag caret/ghost and
  * cancellation, long-text clipboard paste, durable drafts and model-facing receipts.
  * Build first; run serially with --config e2e/config/playwright.attachment-references.config.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
@@ -15,9 +15,9 @@ import { SESSION_TOOLKITS, type SessionToolkit } from '../src/shared/toolkits'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'attachment-reference-token', model = 'attachment-reference-model'
-const sessionId = 'work-attachment-references', codeId = 'code-attachment-references', workspaceRoot = '/remote/attachment-references'
+const sessionId = 'work-attachment-references', workspaceRoot = '/remote/attachment-references'
 const selectionFile = 'selection-guide.txt'
-const titles = new Map([[sessionId, '附件引用 Work 验证'], [codeId, '附件引用 Code 验证']])
+const titles = new Map([[sessionId, '附件引用验证']])
 const resourceSkills = Array.from({ length: 3 }, (_, index) => ({ id: `resource-skill-${index + 1}`, name: `资料核对 ${index + 1}`, description: `核对第 ${index + 1} 类资料并保留完整来源。`, enabled: true }))
 const officeSkill = { id: 'aether-office', name: 'aether-office', description: '办公文档指南', enabled: true }
 const methodologySkills = ['os-using-superpowers', 'os-brainstorming', 'os-writing-plans', 'os-tdd', 'os-systematic-debugging', 'os-subagent-driven-dev', 'os-verification-before-completion']
@@ -259,23 +259,22 @@ async function selectResource(mode: Mode, name: string): Promise<void> {
   await picker.getByRole('option').filter({ has: page.locator('strong', { hasText: new RegExp(`^${name}$`) }) }).click()
   await expect(picker).toHaveCount(0)
 }
-async function savedDraft(mode: Mode): Promise<SavedDraft> {
-  return page.evaluate(({ mode, key, sessionId, codeId }) => {
+async function savedDraft(_mode: Mode): Promise<SavedDraft> {
+  return page.evaluate(({ key, sessionId }) => {
     window.dispatchEvent(new Event('blur'))
     const state = JSON.parse(localStorage.getItem(key) ?? '{}') as { tasks?: Array<SavedDraft & { id: string }> }
     return state.tasks?.find(task => task.id === sessionId) ?? { mentions: [], attachments: [] }
-  }, { mode, key: storageKey, sessionId, codeId })
+  }, { key: storageKey, sessionId })
 }
 async function seed(mode: Mode): Promise<void> {
   resetHistory()
-  await page.evaluate(({ mode, key, sessionId, title, model, workspaceRoot }) => {
+  await page.evaluate(({ key, sessionId, title, model, workspaceRoot }) => {
     window.dispatchEvent(new Event('blur'))
     for (const name of Object.keys(localStorage).filter(name => ['aether:chatDrafts', 'aether:session-request:', 'aether:composer-resources:', 'aether:knowledge-bases:'].some(prefix => name.startsWith(prefix)))) localStorage.removeItem(name)
     localStorage.setItem(key, JSON.stringify({ tasks: [{ id: sessionId, title, status: 'done', draft: '', mentions: [], createdAt: Date.now(), updatedAt: Date.now(),
       workspacePath: workspaceRoot, modelId: model, attachments: [], sources: [] }], activeTaskId: sessionId, homeDraft: '' }))
-    localStorage.setItem('aether.app.mode', mode)
     localStorage.setItem('aether.work.view.v1', JSON.stringify({ page: 'home', collapsed: false, workspace: false, tab: 'files', pane: 'conversation', ratio: 60 }))
-  }, { mode, key: storageKey, sessionId, title: titles.get(sessionId)!, model, workspaceRoot })
+  }, { key: storageKey, sessionId, title: titles.get(sessionId)!, model, workspaceRoot })
   await page.reload(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
   await expect(composer(mode)).toBeVisible(); await expect(surface(mode)).toContainText('READY_FOR_REFERENCES')
 }
@@ -511,7 +510,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     const origin = `http://127.0.0.1:${address.port}`
     storageKey = 'aether.work.state.v1:' + encodeURIComponent(engineStorageKey({ mode: 'remote', baseUrl: origin }))
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: workspaceRoot,
-      autoStartEngine: true, lastSessionId: codeId, lastFolder: '', lastModelId: model, appearance: 'light', thinkingMode: 'off' }))
+      autoStartEngine: true, lastSessionId: sessionId, lastFolder: '', lastModelId: model, appearance: 'light', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
@@ -1052,7 +1051,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await info.attach(`${mode} 资源正文标签`, { path: capture, contentType: 'image/png' })
     await surface(mode).getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1)
-    expect(chats[beforeChats]).toMatchObject({ sessionId: mode === 'work' ? sessionId : codeId, ...expected, skills: [] })
+    expect(chats[beforeChats]).toMatchObject({ sessionId: sessionId, ...expected, skills: [] })
     const sent = parseMentionContent(String(chats[beforeChats].message))
     expect(sent.body).toContain('RESOURCE_LEFT'); expect(sent.body).toContain('RESOURCE_RIGHT')
     expect(sent.refs.filter(ref => ['skill', 'mcp', 'kb'].includes(ref.t)).map(ref => [ref.t, ref.p, ref.d]))
@@ -1060,19 +1059,19 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     expect(sent.body).not.toContain('/mcp:'); expect(sent.body).not.toContain('/kb:')
     await expect(resourceChips(mode)).toHaveCount(0)
     await expect(input).toBeEmpty()
-    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: mode === 'work' ? expected.knowledgeBases : [] })
+    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: expected.knowledgeBases })
     await expect(surface(mode).getByRole('button', { name: '发送', exact: true })).toBeDisabled()
     await page.reload(); await expect(input).toBeVisible()
     await expect(resourceChips(mode)).toHaveCount(0)
     await expect(input).toBeEmpty()
-    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: mode === 'work' ? expected.knowledgeBases : [] })
+    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: expected.knowledgeBases })
     await expect(surface(mode).getByRole('button', { name: '发送', exact: true })).toBeDisabled()
     await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('SECOND_RESOURCE_ROUND')
     await surface(mode).getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 2)
-    expect(chats[beforeChats + 1].sessionId).toBe(mode === 'work' ? sessionId : codeId)
+    expect(chats[beforeChats + 1].sessionId).toBe(sessionId)
     for (const key of ['skills', 'mcpServers', 'knowledgeBases']) expect(chats[beforeChats + 1][key] ?? [])
-      .toEqual(key === 'knowledgeBases' && mode === 'work' ? expected.knowledgeBases : [])
+      .toEqual(key === 'knowledgeBases' ? expected.knowledgeBases : [])
     const second = parseMentionContent(String(chats[beforeChats + 1].message))
     expect(second.body).toBe('SECOND_RESOURCE_ROUND'); expect(second.refs).toEqual([])
     await expect(input).toBeEmpty(); await expect(resourceChips(mode)).toHaveCount(0)
@@ -1088,7 +1087,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await selectResource(mode, resourceBases[2].name)
     await expect.poll(() => resourceBindings(mode)).toEqual(expected)
     const saved = await savedDraft(mode)
-    rejectNextChatFor = mode === 'work' ? sessionId : codeId
+    rejectNextChatFor = sessionId
     const send = surface(mode).getByRole('button', { name: '发送', exact: true })
     await expect(send).toBeEnabled(); await send.click()
     await expect.poll(() => rejectedChats.length).toBe(beforeRejected + 1)
@@ -1105,7 +1104,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await send.click(); await expect.poll(() => chats.length).toBe(beforeChats + 1)
     expect(chats[beforeChats]).toMatchObject(expected)
     await expect(input).toBeEmpty(); await expect(resourceChips(mode)).toHaveCount(0)
-    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: mode === 'work' ? expected.knowledgeBases : [] })
+    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: expected.knowledgeBases })
   })
 
   for (const mode of ['work'] as const) test(`${mode}：旧资源绑定恢复为名称标签，重载不重复且发送字段保持`, async () => {
@@ -1114,14 +1113,12 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     const bindings: ResourceBindings = { skills: [resourceSkills[1].id], mcpServers: [resourceMcp[0].id], knowledgeBases: [resourceBases[1].id] }
     await input.fill('LEGACY_RESOURCE_PROSE ')
     await savedDraft(mode)
-    await page.evaluate(({ mode, key, source, sessionId, codeId, bindings }) => {
+    await page.evaluate(({ key, sessionId, bindings }) => {
       window.dispatchEvent(new Event('blur'))
-      if (mode === 'work') {
-        const state = JSON.parse(localStorage.getItem(key)!) as { tasks: Array<SavedDraft & { id: string }> }
-        state.tasks.find(task => task.id === sessionId)!.resources = bindings
-        localStorage.setItem(key, JSON.stringify(state))
-      } else localStorage.setItem(`aether:composer-resources:${source}:${codeId}`, JSON.stringify(bindings))
-    }, { mode, key: storageKey, source: decodeURIComponent(storageKey.slice('aether.work.state.v1:'.length)), sessionId, codeId, bindings })
+      const state = JSON.parse(localStorage.getItem(key)!) as { tasks: Array<SavedDraft & { id: string }> }
+      state.tasks.find(task => task.id === sessionId)!.resources = bindings
+      localStorage.setItem(key, JSON.stringify(state))
+    }, { key: storageKey, sessionId, bindings })
     for (let reload = 0; reload < 2; reload++) {
       await page.reload(); await expect(input).toBeVisible()
       await expect(resourceChips(mode).locator('.mention-chip__label')).toHaveText([resourceSkills[1].name, resourceMcp[0].name, resourceBases[1].name])
@@ -1131,10 +1128,10 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     }
     await surface(mode).getByRole('button', { name: '发送', exact: true }).click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1)
-    expect(chats[beforeChats]).toMatchObject({ sessionId: mode === 'work' ? sessionId : codeId, ...bindings })
+    expect(chats[beforeChats]).toMatchObject({ sessionId: sessionId, ...bindings })
     await expect(resourceChips(mode)).toHaveCount(0)
     await expect(input).toBeEmpty()
-    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: mode === 'work' ? bindings.knowledgeBases : [] })
+    await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: bindings.knowledgeBases })
     await expect(surface(mode).getByRole('button', { name: '发送', exact: true })).toBeDisabled()
   })
 
@@ -1310,29 +1307,6 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     } finally { unavailableToolkits.clear(); toolkitDirectorySupported = true }
   })
 
-  test.skip('Code：@ 单列分组使用同一键盘选择文件与 Agent', async () => {
-    menuPreviewFiles = Array.from({ length: 4 }, (_, index) => `code-reference-preview-${index + 1}.txt`)
-    try {
-    await seed('code')
-    const input = composer('code'), picker = page.locator('.mention-ref-picker:visible')
-    await input.fill('@')
-    await expect(picker.getByRole('listbox', { name: '选择引用或工具包' })).toHaveAttribute('aria-busy', 'false')
-    await expect(picker.getByRole('tab')).toHaveCount(0)
-    await expect(picker.getByRole('group', { name: '文件与目录' }).getByRole('option')).toHaveCount(3)
-    await expect(picker.getByText('输入名称查找更多文件', { exact: true })).toBeVisible()
-    await page.keyboard.press('Home'); await expect(picker.locator('[aria-selected="true"]')).toHaveAttribute('data-reference-kind', 'file')
-    await page.keyboard.press('Enter'); await expect(input.locator('.mention-chip--file')).toHaveText(selectionFile)
-    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' @code-reference-preview-4')
-    await expect(picker.getByRole('option')).toHaveCount(1)
-    await page.keyboard.press('Enter'); await expect(input.locator('.mention-chip--file')).toHaveCount(2)
-    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' @agent 执行')
-    await expect(picker.getByRole('option')).toHaveCount(1)
-    await page.keyboard.press('Enter'); await expect(input.locator('.mention-chip--agent')).toHaveText('执行')
-    await expect(input.locator('.mention-chip--file')).toHaveCount(2)
-    await expect(picker).toHaveCount(0)
-    } finally { menuPreviewFiles = [] }
-  })
-
   for (const mode of ['work'] as const) test(`${mode}：普通文件内联标签随正文拖动，删除撤销与发送附件一致`, async ({}, info) => {
     await seed(mode)
     const input = composer(mode), beforeUploads = uploads.length, beforeChats = chats.length
@@ -1400,25 +1374,17 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     ])
     await expect(chips(mode)).toHaveText('legacy-inline.txt')
     const file = (await savedDraft(mode)).attachments![0]
-    await page.evaluate(({ mode, key, sessionId, codeId }) => {
+    await page.evaluate(({ key, sessionId }) => {
       window.dispatchEvent(new Event('blur'))
       const migrate = (draft: SavedDraft): void => {
-        if (mode === 'work') draft.draft = 'LEGACY_DRAFT '
-        else draft.text = 'LEGACY_DRAFT '
+        draft.draft = 'LEGACY_DRAFT '
         draft.mentions = []
         for (const attachment of draft.attachments ?? []) delete attachment.inlineReference
       }
-      if (mode === 'work') {
-        const state = JSON.parse(localStorage.getItem(key)!) as { tasks: Array<SavedDraft & { id: string }> }
-        migrate(state.tasks.find(task => task.id === sessionId)!)
-        localStorage.setItem(key, JSON.stringify(state))
-      } else {
-        for (const name of Object.keys(localStorage).filter(name => name.startsWith('aether:chatDrafts'))) {
-          const state = JSON.parse(localStorage.getItem(name)!) as Record<string, SavedDraft>
-          if (state[codeId]) { migrate(state[codeId]); localStorage.setItem(name, JSON.stringify(state)) }
-        }
-      }
-    }, { mode, key: storageKey, sessionId, codeId })
+      const state = JSON.parse(localStorage.getItem(key)!) as { tasks: Array<SavedDraft & { id: string }> }
+      migrate(state.tasks.find(task => task.id === sessionId)!)
+      localStorage.setItem(key, JSON.stringify(state))
+    }, { key: storageKey, sessionId })
     for (let reload = 0; reload < 2; reload++) {
       await page.reload(); await expect(input).toBeVisible()
       await expect(input).toContainText('LEGACY_DRAFT')
@@ -1498,7 +1464,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     const send = surface(mode).getByRole('button', { name: '发送', exact: true }); await expect(send).toBeEnabled(); await send.click()
     await expect.poll(() => chats.length).toBe(beforeChats + 1); await expect(surface(mode)).toContainText('REFERENCES_SENT_OK')
     const request = chats[beforeChats]
-    expect(request.sessionId).toBe(mode === 'work' ? sessionId : codeId)
+    expect(request.sessionId).toBe(sessionId)
     expect(request.attachments).toEqual(savedAttachments.map((file, index) => expect.objectContaining({ name: file.path, type: file.type,
       attachmentId: file.attachmentId, displayName: file.name, referenceLabel: ['图1', '图2', '附件1'][index] })))
     const refs = parseMentionContent(String(request.message)).refs.filter(ref => ref.o === 'attachment')
@@ -1523,93 +1489,6 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await expect(composer(mode)).toContainText('保留正文')
     await composer(mode).focus(); await page.keyboard.press('Control+z')
     await expect(chips(mode)).toHaveCount(0)
-  })
-
-  test.skip('code：原生长文本转附件并插入原光标，完整字节与既有引用随发送保留', async () => {
-    await seed('code')
-    const input = composer('code'), label = 'existing-paste-reference.txt'
-    const longText = `CODE_PASTED_TEXT\n${Array.from({ length: 90 }, (_, index) => `第${index + 1}行：完整正文🙂，保留 Unicode 和空格。`).join('\n')}\nCODE_PASTED_TEXT_END`
-    expect(Array.from(longText).length).toBeGreaterThan(1000)
-    const beforeUploads = uploads.length, beforeChats = chats.length
-    await input.locator('xpath=ancestor::*[contains(@class, "input-composer")][1]').locator('input[type="file"]').setInputFiles([
-      { name: 'existing-paste-reference.txt', mimeType: 'text/plain', buffer: Buffer.from('EXISTING_ATTACHMENT_CONTENT') }
-    ])
-    await expect(cards('code')).toHaveCount(0)
-    await expect(chips('code')).toHaveText(label)
-    await expect.poll(() => uploads.length).toBe(beforeUploads + 1)
-    await expect.poll(async () => (await savedDraft('code')).attachments?.length ?? 0).toBe(1)
-    const file = (await savedDraft('code')).attachments![0]
-    await input.fill('CODE_BEFORE_REFERENCE '); await insertReference('code', '附件1')
-    const reference = chips('code', file.attachmentId), suffix = ' CODE_PASTE_RIGHT'
-    await input.focus(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(` CODE_PASTE_LEFT ${suffix}`)
-    await expect.poll(async () => (await savedDraft('code')).text?.endsWith(suffix)).toBe(true)
-    const beforePaste = await savedDraft('code'), beforeText = beforePaste.text!
-    expect(beforeText.endsWith(suffix)).toBe(true)
-    expect(beforePaste.mentions.map(mention => [mention.attachmentId, mention.path, mention.displayText])).toEqual([[file.attachmentId, file.path, label]])
-    // The right marker remains after the caret. Pasting at the end instead
-    // would still show the whole text but lose the user's intended placement.
-    for (let index = 0; index < suffix.length; index++) await page.keyboard.press('ArrowLeft')
-    await app!.evaluate(({ clipboard }, text) => clipboard.writeText(text), longText)
-    await page.keyboard.press('Control+V')
-    await expect(cards('code')).toHaveCount(0); await expect(reference).toHaveCount(1)
-    await expect(chips('code')).toHaveCount(2)
-    await expect.poll(() => uploads.length).toBe(beforeUploads + 2)
-    const uploaded = uploads[beforeUploads + 1]
-    expect(uploaded.bytes.equals(Buffer.from(longText))).toBe(true)
-    expect(uploaded.sessionId).toBe(codeId)
-    await expect.poll(async () => (await savedDraft('code')).text?.includes(`@${uploaded.path}`)).toBe(true)
-    const afterPaste = await savedDraft('code'), pasted = afterPaste.attachments!.find(item => item.path === uploaded.path)!
-    expect(pasted).toBeDefined()
-    const pastedLabel = '粘贴文本 · CODE_PASTED_TEXT', pastedReference = chips('code', pasted.attachmentId)
-    await expect(pastedReference.locator('.mention-chip__label')).toHaveText(pastedLabel)
-    const parts = afterPaste.text!.split(`@${pasted.path}`)
-    expect(parts).toHaveLength(2); expect(parts[0]).toBe(beforeText.slice(0, -suffix.length))
-    expect([suffix, ' ' + suffix]).toContain(parts[1])
-    expect(afterPaste.text!.includes(longText)).toBe(false)
-    expect(afterPaste.mentions.map(mention => [mention.attachmentId, mention.path, mention.displayText]))
-      .toEqual([[file.attachmentId, file.path, label], [pasted.attachmentId, pasted.path, pastedLabel]])
-    expect(chats).toHaveLength(beforeChats)
-    // Ordinary edits around the new reference retain the complete attachment
-    // identity through browser history, persistence and request serialization.
-    await input.focus(); await page.keyboard.press('Control+End')
-    await page.keyboard.press('Shift+Enter')
-    // serializeNodes omits the empty trailing line until it contains prose.
-    const beforeEdit = afterPaste.text!
-    await expect.poll(async () => (await savedDraft('code')).text).toBe(beforeEdit)
-    await page.keyboard.insertText('CODE_EDITED_IN_PLACE')
-    const editedText = beforeEdit + '\nCODE_EDITED_IN_PLACE'
-    await expect.poll(async () => (await savedDraft('code')).text).toBe(editedText)
-    await page.keyboard.press('Control+Z')
-    await expect.poll(async () => (await savedDraft('code')).text).toBe(beforeEdit)
-    expect((await savedDraft('code')).mentions).toEqual(afterPaste.mentions)
-    await page.keyboard.press('Control+Y')
-    await expect.poll(async () => (await savedDraft('code')).text).toBe(editedText)
-    await expect(reference.locator('.mention-chip__label')).toHaveText(label)
-
-    await page.reload(); await expect(input).toBeVisible()
-    await expect.poll(async () => (await savedDraft('code')).text).toBe(editedText)
-    await expect(input).toContainText('CODE_EDITED_IN_PLACE')
-    await expect(reference.locator('.mention-chip__label')).toHaveText(label)
-    expect((await savedDraft('code')).mentions).toEqual(afterPaste.mentions)
-    await expect(cards('code')).toHaveCount(0); await expect(pastedReference.locator('.mention-chip__label')).toHaveText(pastedLabel)
-    const send = surface('code').getByRole('button', { name: '发送', exact: true })
-    await expect(send).toBeEnabled(); await send.click()
-    await expect.poll(() => chats.length).toBe(beforeChats + 1)
-    await expect(surface('code').locator(`[data-message-id="${currentRun(codeId)!.assistantMessageId}"]`)).toContainText('REFERENCES_SENT_OK')
-    const request = chats[beforeChats], sent = parseMentionContent(String(request.message))
-    expect(request.sessionId).toBe(codeId)
-    expect(String(request.message).includes(longText)).toBe(false)
-    expect(sent.body).toContain('CODE_EDITED_IN_PLACE')
-    expect(sent.body.startsWith('CODE_BEFORE_REFERENCE ')).toBe(true)
-    expect(request.attachments).toEqual([expect.objectContaining({ name: file.path, type: file.type,
-      attachmentId: file.attachmentId, displayName: file.name, referenceLabel: '附件1' }),
-      expect.objectContaining({ name: pasted.path, type: uploaded.type, size: uploaded.bytes.length,
-        attachmentId: pasted.attachmentId, displayName: pasted.name, referenceLabel: pastedLabel })])
-    expect(sent.refs.map(ref => [ref.a, ref.p, ref.d])).toEqual([[file.attachmentId, file.path, label], [pasted.attachmentId, pasted.path, pastedLabel]])
-    await expect(surface('code').locator('.message--user').getByRole('button', { name: `查看引用：${label}`, exact: true })).toHaveCount(1)
-    await expect(input).toBeEmpty(); await expect(cards('code')).toHaveCount(0)
-    await expect(surface('code').locator('.message--user').getByRole('button', { name: `查看引用：${pastedLabel}`, exact: true })).toHaveCount(1)
-    expect(uploads).toHaveLength(beforeUploads + 2)
   })
 
   for (const mode of ['work'] as const) test(`${mode}：原生拖拽落点与取消清理，跨 Agent 和文件的正文仍可复制`, async () => {

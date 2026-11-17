@@ -3,6 +3,7 @@ export interface NextTurnQueueScope {
   source: { mode: 'embedded' | 'remote'; endpoint: string; accountId: string | null }
   tenantId: string
   namespace: { id: string; generation: string }
+  /** Code is retained only to identify and reject retired journals without rewriting them. */
   owner: 'work' | 'code'
   taskId: string
 }

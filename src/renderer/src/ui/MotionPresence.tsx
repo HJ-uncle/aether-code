@@ -1,5 +1,10 @@
-import { cloneElement, isValidElement, useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactElement, type ReactNode } from 'react'
+import { cloneElement, createContext, isValidElement, useCallback, useContext, useLayoutEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactElement, type ReactNode } from 'react'
 import { MOTION_EXIT_MS, MOTION_REDUCED_QUERY, startMotionTransition, type MotionState } from './motion'
+
+const MotionVisibility = createContext(true)
+/** Exit frames retain their children, but asynchronous readers must stop at
+ * the user's close intent rather than at the later DOM removal. */
+export function useMotionVisibility(): boolean { return useContext(MotionVisibility) }
 
 function reducedMotion(): boolean { return typeof matchMedia !== 'undefined' && matchMedia(MOTION_REDUCED_QUERY).matches }
 function subscribeReducedMotion(listener: () => void): () => void {
@@ -48,19 +53,20 @@ export function MotionPresence({ show, axis = 'y', asChild = false, children, ex
   onExited?: () => void
 } & HTMLAttributes<HTMLDivElement>) {
   const presence = useMotionPresence(show, { exitMs, onExited })
+  const ancestorVisible = useMotionVisibility()
   const last = useRef(children)
   useLayoutEffect(() => { if (show) last.current = children }, [show, children])
   if (!presence.present) return null
   const content = show ? children : last.current
   if (asChild && isValidElement<HTMLAttributes<HTMLElement>>(content)) {
     const element = content as ReactElement<HTMLAttributes<HTMLElement>>
-    return cloneElement(element, { ...props, ...presence.motionProps, 'data-motion-axis': axis,
+    return <MotionVisibility.Provider value={show && ancestorVisible}>{cloneElement(element, { ...props, ...presence.motionProps, 'data-motion-axis': axis,
       className: [element.props.className, props.className].filter(Boolean).join(' ') || undefined,
-      style: { ...element.props.style, ...props.style } } as HTMLAttributes<HTMLElement>)
+      style: { ...element.props.style, ...props.style } } as HTMLAttributes<HTMLElement>)}</MotionVisibility.Provider>
   }
-  return <div {...props} {...presence.motionProps} data-motion-axis={axis} className={['ui-motion-collapse', props.className].filter(Boolean).join(' ')}>
+  return <MotionVisibility.Provider value={show && ancestorVisible}><div {...props} {...presence.motionProps} data-motion-axis={axis} className={['ui-motion-collapse', props.className].filter(Boolean).join(' ')}>
     <div className="ui-motion-collapse__content">{content}</div>
-  </div>
+  </div></MotionVisibility.Provider>
 }
 
 /** For legacy conditionally mounted popups, delay only the dismissal callback.

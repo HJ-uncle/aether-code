@@ -209,27 +209,27 @@ export async function detectOpenWithApplications(context = nativeEnvironment): P
   return [...found.filter((item): item is OpenWithInstallation => Boolean(item)), explorer]
 }
 
-export function openWithLaunchArguments(kind: LaunchKind, directory: string, applicationPath?: string): string[] {
+export function openWithLaunchArguments(kind: LaunchKind, target: string, applicationPath?: string, targetKind: 'directory' | 'file' = 'directory'): string[] {
   switch (kind) {
-    case 'vscode': case 'sublime': return ['--new-window', directory]
-    case 'zed': return ['--new', directory]
-    case 'notepad-plus-plus': return ['-openFoldersAsWorkspace', directory]
-    case 'jetbrains': return [directory]
+    case 'vscode': case 'sublime': return ['--new-window', target]
+    case 'zed': return ['--new', target]
+    case 'notepad-plus-plus': return targetKind === 'directory' ? ['-openFoldersAsWorkspace', target] : [target]
+    case 'jetbrains': return [target]
     case 'mac-app': {
       if (!applicationPath) throw new Error('应用路径不可用')
-      return ['-a', applicationPath, directory]
+      return ['-a', applicationPath, target]
     }
   }
 }
 
-export function launchOpenWithApplication(installation: OpenWithInstallation, directory: string): Promise<void> {
+export function launchOpenWithApplication(installation: OpenWithInstallation, target: string, targetKind: 'directory' | 'file' = 'directory'): Promise<void> {
   const command = installation.command
   if (!command) return Promise.reject(new Error('此打开方式不可用'))
   const launched = new Promise<void>((resolve, reject) => {
     // This is an explicit request to show an editor. SW_HIDE also suppresses
     // Electron GUI windows on Windows, even when the editor starts normally.
-    const child = spawn(command.executable, openWithLaunchArguments(command.kind, directory, command.applicationPath), {
-      cwd: directory, detached: true, stdio: ['ignore', 'ignore', 'pipe'], shell: false, windowsHide: false,
+    const child = spawn(command.executable, openWithLaunchArguments(command.kind, target, command.applicationPath, targetKind), {
+      cwd: targetKind === 'directory' ? target : path.dirname(target), detached: true, stdio: ['ignore', 'ignore', 'pipe'], shell: false, windowsHide: false,
       env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'NODE_INSPECT_RESUME_ON_START'].includes(name.toUpperCase())))
     })
     let settled = false, stderr = '', timer: ReturnType<typeof setTimeout> | undefined
@@ -262,6 +262,8 @@ export function launchOpenWithApplication(installation: OpenWithInstallation, di
     })
   })
   return launched.then(async () => {
-    if (process.platform === 'win32' && installation.app.id === 'vscode') await recoverHiddenVSCodeWindow(command.executable, directory)
+    // Recovery identifies a previously hidden project window by its folder;
+    // a file request must not restore an unrelated window sharing its name.
+    if (targetKind === 'directory' && process.platform === 'win32' && installation.app.id === 'vscode') await recoverHiddenVSCodeWindow(command.executable, target)
   })
 }

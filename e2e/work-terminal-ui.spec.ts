@@ -12,16 +12,19 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { RootRun } from '../src/shared/root-run'
 import type { CommandJobSnapshot, CommandOutputEntry } from '../src/shared/command-job'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
+import type { EngineFileChange } from '../src/shared/ipc'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'command-receipts')
 const fixtureToken = 'work-terminal-fixture-token', model = 'work-terminal-model', now = Date.now() - 10_000
 const taskA = 'work-terminal-task-a', taskB = 'work-terminal-task-b', codeSession = 'work-terminal-code-session'
 const jobA = 'terminal-job-a', idleJobA = 'terminal-job-a-unselected', jobB = 'terminal-job-b'
 const titles = new Map([[taskA, '终端验收任务 A'], [taskB, '终端验收任务 B'], [codeSession, 'Code 终端对照会话']])
+const sourceName = 'fixture-source.md', sourceText = '# 终端验收资料\n\nWORKSPACE_SOURCE_FIXTURE\n'
+const artifactName = 'fixture-result.md', artifactText = '# 终端验收成果\n\nWORKSPACE_ARTIFACT_FIXTURE\n'
 const manifest = { version: '2.0.0', buildId: `sha256:${'b'.repeat(64)}`, protocolVersion: 1,
   toolProfiles: ['general', 'code'], subagentSchemaVersion: 1 }
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
-type OutputRead = { sessionId: string; jobId: string; cursor: number; maxBytes: number }
+type OutputRead = { sessionId: string; jobId: string; cursor: number; cursorOffset: number; maxBytes: number; tail: boolean }
 type ActionReceipt = { action: 'cancel' | 'restart'; sessionId: string; jobId: string; nextId?: string }
 type TerminalReceipt = { input: { cwd?: string; sessionId?: string; cols: number; rows: number }; id?: string; error?: string }
 const errors: string[] = [], unexpectedWrites: string[] = [], probes: string[] = []
@@ -55,6 +58,17 @@ function history(sessionId: string): EngineHistoryRow[] {
   const rows: EngineHistoryRow[] = [{ id: run.userMessageId, role: 'user', content: titles.get(sessionId), conversationId: run.turnId, createdAt: now,
     metadata: { rootRunId: run.runId } }, { id: run.assistantMessageId, role: 'assistant', content: `后台运行已启动：${titles.get(sessionId)}`,
     conversationId: run.turnId, createdAt: now + 1, metadata: { rootRunId: run.runId } }]
+  if (sessionId === taskB) {
+    const toolCallId = 'terminal-fixture-write'
+    const change: EngineFileChange = { id: 'terminal-fixture-change', sessionId, turnId: run.turnId, runId: run.runId,
+      toolCallId, path: join(cwdB, artifactName), kind: 'write', oldContent: null, newContent: artifactText,
+      truncated: false, status: 'kept', createdAt: now + 0.75 }
+    rows.splice(1, 0,
+      { id: 'terminal-fixture-write-call', role: 'assistant', content: '', conversationId: run.turnId, createdAt: now + 0.5,
+        metadata: { rootRunId: run.runId }, toolCall: { id: toolCallId, name: 'write_file', args: { path: change.path, content: artifactText } } },
+      { id: 'terminal-fixture-write-result', role: 'tool', toolCallId, content: '文件已写入', success: true,
+        conversationId: run.turnId, createdAt: now + 0.75, metadata: { rootRunId: run.runId, success: true, change } })
+  }
   if (sessionId === taskB) rows.push(
     { id: `${run.userMessageId}-second`, role: 'user', content: '继续查看任务 B 的第二轮结果', conversationId: `${run.turnId}-second`, createdAt: now + 2 },
     { id: `${run.assistantMessageId}-second`, role: 'assistant', content: '任务 B 第二轮已完成，后台运行保持当前任务归属。', conversationId: `${run.turnId}-second`, createdAt: now + 3 }
@@ -85,15 +99,43 @@ const server = createServer((request, response) => { void (async () => {
     const jobId = decodeURIComponent(command[1]), job = jobs.get(jobId), action = command[2]
     if (!job || job.sessionId !== id) throw new Error(`Crossed command owner: ${id}/${jobId}`)
     if (request.method === 'GET' && action === 'output') {
-      const cursor = Number(url.searchParams.get('cursor') ?? 0), maxBytes = Number(url.searchParams.get('maxBytes') ?? 0)
-      if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > job.cursor || maxBytes <= 0) throw new Error('Invalid output cursor')
-      const read = { sessionId: id, jobId, cursor, maxBytes }
+      const cursor = Number(url.searchParams.get('cursor') ?? 0), cursorOffset = Number(url.searchParams.get('cursorOffset') ?? 0)
+      const maxBytes = Number(url.searchParams.get('maxBytes') ?? 0), tail = url.searchParams.get('tail') === 'true'
+      if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > job.cursor || !Number.isSafeInteger(cursorOffset) || cursorOffset < 0 || maxBytes <= 0 || maxBytes > 65536) throw new Error('Invalid output cursor/budget')
+      if (tail && (url.searchParams.has('cursor') || url.searchParams.has('cursorOffset'))) throw new Error('Tail must not reuse a cursor')
+      const read = { sessionId: id, jobId, cursor, cursorOffset, maxBytes, tail }
       outputReads.push(read); for (const observer of outputObservers) observer(read)
-      // Small pages force the consumer to advance its sequence cursor and
-      // make repeating the whole buffer observable as duplicate DOM entries.
-      const entries = (logs.get(jobId) ?? []).filter(entry => entry.seq > cursor).slice(0, 2)
-      const nextCursor = entries.at(-1)?.seq ?? cursor
-      const value = envelope({ job, entries, nextCursor, earliestCursor: 0, truncated: false, hasMore: nextCursor < job.cursor })
+      const entries: CommandOutputEntry[] = []
+      let remaining = maxBytes, nextCursor = cursor, nextOffset = cursorOffset
+      if (tail) {
+        // A bounded recent view may clip the first entry, but never claims
+        // that older persisted logs were lost or asks to replay their pages.
+        for (const entry of [...(logs.get(jobId) ?? [])].reverse()) {
+          const bytes = Buffer.from(entry.text)
+          let start = Math.max(0, bytes.length - remaining)
+          while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++
+          entries.unshift({ ...entry, text: bytes.subarray(start).toString('utf8') })
+          remaining -= bytes.length - start
+          if (start > 0 || remaining === 0) break
+        }
+        nextCursor = job.cursor; nextOffset = 0
+      } else {
+        // Small incremental pages make cursor advancement and accidental
+        // eager multi-page loops observable without large UI fixtures.
+        for (const entry of (logs.get(jobId) ?? []).filter(entry => entry.seq > cursor).slice(0, 2)) {
+          const bytes = Buffer.from(entry.text), start = entry.seq === cursor + 1 ? cursorOffset : 0
+          let end = Math.min(bytes.length, start + remaining)
+          while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--
+          if (end <= start && bytes.length > start) break
+          entries.push({ ...entry, text: bytes.subarray(start, end).toString('utf8') })
+          remaining -= end - start
+          if (end < bytes.length) { nextOffset = end; break }
+          nextCursor = entry.seq; nextOffset = 0
+          if (!remaining) break
+        }
+      }
+      const value = envelope({ job, entries, nextCursor, nextOffset, earliestCursor: 0, truncated: false,
+        hasMore: nextCursor < job.cursor || nextOffset > 0, ...(tail ? { tail: true } : {}) })
       if (held?.jobId === jobId && !held.response) { held.response = response; held.body = value; return }
       response.end(value); return
     }
@@ -125,6 +167,13 @@ const server = createServer((request, response) => { void (async () => {
       conversationId: row.conversationId, preview: row.content, createdAt: row.createdAt })), messages: rows,
       loadedTurnIds: users.map(row => row.id), revision: `${id}-stable`, mutationRevision: `${id}-stable`, backend: 'jsonl', completeness: 'complete' })); return
   }
+  if (path === '/api/v1/workspace/file/content') {
+    const file = url.searchParams.get('path') ?? ''
+    const allowed = id === taskA ? [sourceName, join(cwdA, sourceName)] : id === taskB ? [artifactName, join(cwdB, artifactName)] : []
+    if (!allowed.includes(file)) throw new Error(`Unexpected workspace file read: ${id}/${file}`)
+    const content = id === taskA ? sourceText : artifactText
+    response.end(envelope({ content, isBinary: false, totalSize: Buffer.byteLength(content), root: workspacePath(id), bindingEpoch: 'one' })); return
+  }
   const ownJobs = [...jobs.values()].filter(job => job.sessionId === id)
   const data = path === '/health' ? { status: 'ok' }
     : path === '/meta' ? { ...manifest, instanceId: 'work-terminal-fixture' }
@@ -153,6 +202,9 @@ const server = createServer((request, response) => { void (async () => {
 
 const work = (): Locator => page.locator('.work-view')
 const workspaceMenu = (): Locator => work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true })
+const workspaceDestination = (name: string): Locator => page.getByRole('menu', { name: '更多工作区', exact: true })
+  .locator('.work-workspace-card__row').filter({ has: page.getByText(name, { exact: true }) })
+const activityEntry = (): Locator => page.locator('.status-bar .service-tray--activity').getByRole('button', { name: /^进行中/ })
 const workspace = (): Locator => work().getByRole('region', { name: '任务工作区', exact: true })
 const workspaceToolbar = (): Locator => workspace().getByRole('toolbar', { name: '工作区标签', exact: true })
 const panel = (): Locator => workspace().getByRole('region', { name: '任务终端', exact: true })
@@ -167,20 +219,30 @@ async function settleMotion(target: Locator): Promise<void> {
   })
 }
 async function openRunning(): Promise<void> {
-  await work().locator('.work-task-heading .service-tray--services .service-tray__button').click()
+  await activityEntry().click()
   const activity = page.locator('.service-tray__panel')
   await expect(activity).toBeVisible()
-  const back = activity.getByRole('button', { name: '返回详情列表', exact: true })
-  if (await back.isVisible()) await back.click()
   await activity.locator('.service-tray__row-main').first().click()
-  await activity.getByRole('button', { name: '在终端中查看', exact: true }).click()
+  await expect(activity).toBeHidden()
   await expect(panel()).toBeVisible()
   await expect(panel().getByRole('tab', { name: /^后台运行/ })).toHaveAttribute('aria-selected', 'true')
 }
 async function openTerminalFromMenu(): Promise<void> {
+  const existing = workspace().getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab', { name: '终端', exact: true })
+  if (await existing.isVisible()) {
+    await existing.click(); await expect(panel()).toBeVisible(); return
+  }
   await workspaceMenu().click()
-  await page.getByRole('menuitem', { name: '终端', exact: true }).click()
+  await workspaceDestination('终端').click()
   await expect(panel()).toBeVisible()
+}
+async function closeWorkspaceTab(button: Locator): Promise<void> {
+  // Close controls reserve their slot but only accept pointer events once
+  // the tab is hovered or keyboard-focused, matching the actual interaction.
+  await button.locator('..').hover()
+  await expect(button).toHaveCSS('pointer-events', 'auto')
+  await expect(button).toHaveCSS('opacity', '1')
+  await button.click()
 }
 async function closeWorkspace(): Promise<void> {
   const body = work().locator('.work-task-body')
@@ -283,7 +345,7 @@ async function logAnchor(): Promise<{ seq: string; offset: number; top: number }
   })
 }
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.keyboard.press('Control+,')
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   await settings.getByRole('tab', { name: '外观', exact: true }).click()
   await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
@@ -304,6 +366,8 @@ test.describe.serial('Work 终端与后台运行', () => {
     mkdirSync(fixtureRoot, { recursive: true }); fixture = mkdtempSync(join(fixtureRoot, 'work-terminal-profile-'))
     cwdA = join(fixture, 'task-a'); cwdB = join(fixture, 'task-b'); codeCwd = join(fixture, 'code-project')
     for (const directory of [cwdA, cwdB, codeCwd]) mkdirSync(directory, { recursive: true })
+    writeFileSync(join(cwdA, sourceName), sourceText)
+    writeFileSync(join(cwdB, artifactName), artifactText)
     for (const sessionId of titles.keys()) roots.set(sessionId, { schemaVersion: 1, runId: `root-${sessionId}`, sessionId,
       turnId: `turn-${sessionId}`, userMessageId: `user-${sessionId}`, assistantMessageId: `assistant-${sessionId}`,
       seq: 1, version: 2, status: 'succeeded', modelId: model, pending: [], workspacePaths: [workspacePath(sessionId)],
@@ -362,7 +426,9 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.setContentSize(1440, 900); window.show(); window.focus() })
     await expect(page.locator('.status-bar')).toContainText('引擎：就绪', { timeout: 90_000 })
     const tasks = [taskA, taskB].map(id => ({ id, title: titles.get(id), status: 'done', draft: '', createdAt: now, updatedAt: now,
-      workspacePath: workspacePath(id), modelId: model, attachments: [], sources: [] }))
+      workspacePath: workspacePath(id), modelId: model, attachments: [], sources: id === taskA ? [
+        { path: sourceName, name: sourceName, type: 'text/markdown', size: Buffer.byteLength(sourceText) }
+      ] : [] }))
     await page.evaluate(({ tasks, taskA }) => {
       localStorage.setItem('aether.work.state.v1', JSON.stringify({ tasks, activeTaskId: taskA }))
       localStorage.setItem('aether.app.mode', 'work')
@@ -401,17 +467,21 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await expect(workspace().getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab', { name: '终端', exact: true })).toHaveAttribute('aria-selected', 'true')
     await assertOutput(jobA)
     await assertNavigationSpace('single-turn-a', 1)
-    expect(outputReads.slice(readStart).filter(read => read.jobId === jobA).map(read => read.cursor)).toEqual(expect.arrayContaining([0, 2]))
+    const initialReads = outputReads.slice(readStart).filter(read => read.jobId === jobA)
+    expect(initialReads[0]).toMatchObject({ tail: true, cursor: 0, cursorOffset: 0, maxBytes: 65536 })
+    expect(initialReads.filter(read => read.tail)).toHaveLength(1)
+    expect(initialReads.slice(1).every(read => read.cursor === 3 && !read.tail)).toBe(true)
     await expect(output().locator('[data-stream="stderr"]')).toHaveText(['A_STDERR_INITIAL\n'])
     append(jobA, 'stdout', 'A_LIVE_STDOUT\n'); append(jobA, 'stderr', 'A_LIVE_STDERR\n')
     await assertOutput(jobA)
+    expect(outputReads.slice(readStart).some(read => read.jobId === jobA && !read.tail && read.cursor === 3)).toBe(true)
     expect(outputReads.slice(readStart).some(read => read.jobId === idleJobA || read.jobId === jobB)).toBe(false)
     expect((await terminalReceipts()).filter(receipt => receipt.input.sessionId === taskA)).toEqual([])
     const path = info.outputPath('work-running-output.png'); await page.screenshot({ path }); await info.attach('后台实时输出', { path, contentType: 'image/png' })
   })
 
   test('隐藏工作区停止日志请求，重开补齐输出，旧会话晚到响应不能串入新任务', async () => {
-    await workspace().getByRole('button', { name: '关闭终端', exact: true }).click()
+    await closeWorkspaceTab(workspace().getByRole('button', { name: '关闭终端', exact: true }))
     await expect(panel()).toBeHidden(); await settleMotion(work())
     append(jobA, 'stdout', 'A_WHILE_HIDDEN\n')
     await assertOutputQuiet(taskA)
@@ -434,13 +504,11 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await selectTask(taskA); await openRunning(); await assertOutput(jobA)
   })
 
-  test('服务菜单真实停止并保留服务历史，终端读取最后日志，重启选择新job并保留旧历史', async () => {
+  test('活动菜单真实停止并保留终端历史，终端读取最后日志，重启选择新job并保留旧历史', async () => {
     await assertOutput(jobA)
     const actionStart = actions.length
-    await work().locator('.work-task-heading .service-tray--services .service-tray__button').click()
+    await activityEntry().click()
     const activity = page.locator('.service-tray__panel')
-    const back = activity.getByRole('button', { name: '返回详情列表', exact: true })
-    if (await back.isVisible()) await back.click()
     const service = activity.locator(`.service-tray__row[data-service-id="command:${jobA}"]`)
     await service.click({ button: 'right' })
     await page.getByRole('menuitem', { name: '停止', exact: true }).click()
@@ -449,12 +517,14 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     expect(actions.slice(actionStart)).toEqual([{ action: 'cancel', sessionId: taskA, jobId: jobA }])
     await expect(output()).toContainText(`STOP_TAIL_${jobA}`)
     await expect(service).toHaveCount(0)
-    await activity.getByRole('button', { name: '查看服务历史', exact: true }).click()
-    await expect(service).toContainText('已停止')
-    await service.locator('.service-tray__row-main').click()
-    await expect(page.locator('.status-bar .service-tray--activity .service-tray__button')).not.toHaveAccessibleName(/未读/)
-    await activity.getByRole('button', { name: '关闭详情', exact: true }).click()
+    await expect(activityEntry()).not.toHaveAccessibleName(/未读/)
+    await activity.getByRole('button', { name: '关闭进行中', exact: true }).click()
     await expect(activity).toBeHidden()
+    const stoppedRow = panel().locator(`.work-terminal-panel__job[data-job-id="${jobA}"]`)
+    await expect(stoppedRow).toHaveAttribute('data-status', 'cancelled')
+    await expect(stoppedRow).toContainText('已停止')
+    await expect(panel().getByRole('heading', { name: '历史记录', exact: true })).toBeVisible()
+    await stoppedRow.click(); await assertOutput(jobA)
     await detail().getByRole('button', { name: '重启服务', exact: true }).click()
     await expect.poll(() => actions.at(-1)?.action).toBe('restart')
     const restarted = actions.at(-1)!.nextId!
@@ -466,11 +536,11 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
   })
 
   test('更多工作区与快捷键打开同款终端，真实PTY保留任务目录归属和关闭重开后的原输出', async ({}, info) => {
-    await workspace().getByRole('button', { name: '关闭终端', exact: true }).click()
+    await closeWorkspaceTab(workspace().getByRole('button', { name: '关闭终端', exact: true }))
     await expect(panel()).toBeHidden()
     await openTerminalFromMenu()
     await expect(workspace().getByRole('tablist', { name: '已打开的工作区', exact: true }).getByRole('tab', { name: '终端', exact: true })).toHaveAttribute('aria-selected', 'true')
-    await workspace().getByRole('button', { name: '关闭终端', exact: true }).click()
+    await closeWorkspaceTab(workspace().getByRole('button', { name: '关闭终端', exact: true }))
     await expect(panel()).toBeHidden()
     await page.keyboard.press('Control+Backquote')
     await expect(panel()).toBeVisible()
@@ -499,7 +569,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await expect.poll(() => copyTerminal(terminal())).toContain(marker)
     await terminal().locator('.xterm').evaluate(element => { element.setAttribute('data-e2e-terminal-identity', 'work-original') })
     const createdCount = (await terminalReceipts()).filter(receipt => receipt.input.sessionId === taskA).length
-    await workspace().getByRole('button', { name: '关闭终端', exact: true }).click()
+    await closeWorkspaceTab(workspace().getByRole('button', { name: '关闭终端', exact: true }))
     await expect(panel()).toBeHidden()
     await openTerminalFromMenu()
     await panel().getByRole('tablist', { name: '终端视图', exact: true }).getByRole('tab', { name: '终端', exact: true }).click()
@@ -515,8 +585,8 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await setWindow(1440, 900)
     await assertWorkspaceChrome()
     await panel().getByRole('tab', { name: /^后台运行/ }).click()
-    // Independent entries require multiple cursor pages on a remount, exposing
-    // restoration that accidentally follows a partially loaded tail.
+    // These entries fit within one recent page; reopening must restore the
+    // reading anchor after the discarded output buffer is fetched again.
     for (let index = 1; index <= 80; index++) append(idleJobA, index % 9 === 0 ? 'stderr' : 'stdout', `SAVED_RECORD_LINE_${String(index).padStart(3, '0')}\n`)
     const selectedRow = panel().locator(`.work-terminal-panel__job[data-job-id="${idleJobA}"]`)
     await selectedRow.click()
@@ -540,9 +610,9 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await expect(work().getByRole('button', { name: '收起工作区', exact: true })).toHaveCount(0)
     await expect(work().getByRole('button', { name: '打开工作区', exact: true })).toHaveCount(0)
     await workspaceMenu().press('Enter')
-    await expect(page.getByRole('menuitem', { name: '终端', exact: true })).toBeVisible()
+    await expect(workspaceDestination('终端')).toBeVisible()
     await page.keyboard.press('Escape')
-    await expect(page.getByRole('menuitem', { name: '终端', exact: true })).toHaveCount(0)
+    await expect(workspaceDestination('终端')).toHaveCount(0)
     await expect(workspaceMenu()).toBeFocused()
     await expect(work().locator('.work-workspace')).toHaveCount(0)
     append(idleJobA, 'stdout', 'SAVED_RECORD_WHILE_WORKSPACE_CLOSED\n')
@@ -601,7 +671,9 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       await expect(workspace()).toBeVisible()
     }
     const openSurface = async (name: string): Promise<void> => {
-      await workspaceMenu().click(); await page.getByRole('menuitem', { name, exact: true }).click()
+      const existing = tabs().getByRole('tab', { name, exact: true })
+      if (await existing.isVisible()) await existing.click()
+      else { await workspaceMenu().click(); await workspaceDestination(name).click() }
       await expect(workspace()).toBeVisible(); await expect(selectedTab()).toHaveText(name)
     }
     const assertTabs = async (names: string[], selected: string): Promise<void> => {
@@ -626,7 +698,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     for (const id of [taskB, taskA]) {
       await selectTask(id); await openTerminalFromMenu()
       for (const label of await tabs().getByRole('tab').allTextContents()) {
-        if (label !== '终端') await tabs().getByRole('tab', { name: label, exact: true }).locator('..').getByRole('button').click()
+        if (label !== '终端') await closeWorkspaceTab(tabs().getByRole('tab', { name: label, exact: true }).locator('..').getByRole('button'))
       }
       await assertTabs(['终端'], '终端')
     }
@@ -640,7 +712,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await tabs().getByRole('tab', { name: fileA, exact: true }).click()
     await assertExternalFile(taskA, fileA, markerA)
     await assertTabs(allA, fileA)
-    await tabs().getByRole('button', { name: '关闭资料', exact: true }).click()
+    await closeWorkspaceTab(tabs().getByRole('button', { name: '关闭资料', exact: true }))
     const retainedA = ['终端', fileA, '工作区']
     await assertTabs(retainedA, fileA)
     await closeWorkspace(); await openSurface('工作区')
@@ -666,7 +738,7 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
     await page.screenshot({ path: screenshot }); await info.attach('混合工作区标签与会话选择恢复', { path: screenshot, contentType: 'image/png' })
 
     // Resource closure must update the retained order too, not only the file store.
-    await tabs().getByRole('button', { name: `关闭文档 ${fileA}`, exact: true }).click()
+    await closeWorkspaceTab(tabs().getByRole('button', { name: `关闭文档 ${fileA}`, exact: true }))
     await assertTabs(['终端', '工作区'], '终端')
     await closeWorkspace(); await openSurface('工作区')
     await assertTabs(['终端', '工作区'], '工作区')
@@ -750,5 +822,59 @@ server.listen(Number(process.env.AETHER_ENGINE_PORT), '127.0.0.1');
       }
     }
     expect(composerGeometry).toHaveLength(24)
+  })
+
+  test('大日志首次仅取64KiB尾部，图标支持键盘刷新，隐藏后释放并重读且过期记录不复活', async () => {
+    const largeJob = 'terminal-job-large-tail'
+    addJob(largeJob, taskA, 'large-output.js', Date.now())
+    append(largeJob, 'stdout', `OLD_HEAD_MUST_STAY_ON_DISK\n${'中😀'.repeat(30000)}\n`)
+    append(largeJob, 'stderr', 'RECENT_TAIL_VISIBLE\n')
+    jobs.set(largeJob, { ...jobs.get(largeJob)!, status: 'succeeded', exitCode: 0, finishedAt: Date.now() })
+    await setWindow(1440, 900)
+    await selectTask(taskA); await openTerminalFromMenu()
+    await panel().getByRole('tab', { name: /^后台运行/ }).click()
+    const row = panel().locator(`.work-terminal-panel__job[data-job-id="${largeJob}"]`)
+    const reads = (): OutputRead[] => outputReads.filter(read => read.jobId === largeJob)
+    await row.click()
+    await expect(detail()).toHaveAttribute('data-job-id', largeJob)
+    await expect(output()).toContainText('RECENT_TAIL_VISIBLE')
+    await expect(output()).not.toContainText('OLD_HEAD_MUST_STAY_ON_DISK')
+    await expect(output()).not.toContainText('�')
+    const initialBytes = Buffer.byteLength((await output().textContent()) ?? '')
+    expect(initialBytes).toBeGreaterThan(60 * 1024); expect(initialBytes).toBeLessThanOrEqual(65536)
+    await expect(panel().locator('.work-terminal-panel__notice')).toContainText('较早日志仍保留在磁盘')
+    await expect(panel()).not.toContainText('较早内容已截断')
+    await assertOutputQuiet(taskA)
+    expect(reads()).toHaveLength(1)
+    expect(reads()[0]).toMatchObject({ tail: true, maxBytes: 65536 })
+
+    append(largeJob, 'stdout', 'MANUAL_ICON_REFRESH\n')
+    const refresh = detail().getByRole('button', { name: '刷新命令日志', exact: true })
+    await expect(refresh).toHaveText('')
+    await expect(refresh).toBeEnabled(); await refresh.focus(); await refresh.press('Enter')
+    await expect(output()).toContainText('MANUAL_ICON_REFRESH')
+    expect(reads()).toHaveLength(2)
+    expect(reads()[1]).toMatchObject({ tail: false, cursor: 2, cursorOffset: 0, maxBytes: 65536 })
+
+    await panel().getByRole('tab', { name: '终端', exact: true }).click()
+    append(largeJob, 'stdout', 'AFTER_HIDDEN_TAIL\n')
+    await assertOutputQuiet(taskA)
+    await panel().getByRole('tab', { name: /^后台运行/ }).click()
+    await expect(detail()).toHaveAttribute('data-job-id', largeJob)
+    await expect(output()).toContainText('AFTER_HIDDEN_TAIL')
+    expect(reads()).toHaveLength(3)
+    expect(reads()[2]).toMatchObject({ tail: true, maxBytes: 65536 })
+    expect(Buffer.byteLength((await output().textContent()) ?? '')).toBeLessThanOrEqual(65536)
+
+    await closeWorkspace(); await assertOutputQuiet(taskA)
+    await openTerminalFromMenu()
+    await expect(detail()).toHaveAttribute('data-job-id', largeJob)
+    await expect(output()).toContainText('AFTER_HIDDEN_TAIL')
+    expect(reads()).toHaveLength(4)
+    expect(reads()[3]).toMatchObject({ tail: true, maxBytes: 65536 })
+    jobs.delete(largeJob); logs.delete(largeJob)
+    await expect(row).toHaveCount(0)
+    await expect(detail()).toHaveCount(0)
+    await expect(panel()).toContainText('此后台运行记录暂不可用')
   })
 })

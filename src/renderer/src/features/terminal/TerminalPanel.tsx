@@ -3,7 +3,7 @@ import type { CommandJobSnapshot } from '@shared/command-job'
 import { useApp } from '@renderer/core/app-context'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { commandJobActive, commandJobDisplayLabel, commandJobInvocation, commandJobStopMessage, mergeCommandJob } from '@renderer/core/engine/command-job-state'
-import { activateCommandSession, cancelCommandJob, commandJobMissing, deactivateCommandSession, deleteCommandJob, getCommandJobs, ingestCommandJob, refreshCommandOutput, restartCommandJob, subscribeCommandJobs, useCommandJob } from '@renderer/core/engine/command-job-store'
+import { activateCommandSession, cancelCommandJob, commandJobMissing, deactivateCommandSession, deleteCommandJob, getCommandJobs, ingestCommandJob, isCommandJobDeleted, refreshCommandOutput, restartCommandJob, subscribeCommandJobs, useCommandJob } from '@renderer/core/engine/command-job-store'
 import { useWorkbenchVisible } from '@renderer/core/platform/workbench-visibility'
 import { confirmDialog } from '@renderer/ui/ConfirmDialog'
 import { Icon } from '@renderer/ui/icons'
@@ -74,7 +74,7 @@ function ScopedSessionTerminalPanel({ sessionId, cwd, jobs, active, reveal, sour
   const [deleted, setDeleted] = useState<ReadonlySet<string>>(new Set())
   const [localJobs, setLocalJobs] = useState<CommandJobSnapshot[]>([])
   const cachedJobs = getCommandJobs(sessionId)
-  const services = partitionCommandJobs([...jobs, ...localJobs, ...cachedJobs].filter(job => !deleted.has(job.jobId)), sessionId)
+  const services = partitionCommandJobs([...jobs, ...localJobs, ...cachedJobs].filter(job => !deleted.has(job.jobId) && !isCommandJobDeleted(sessionId, job.jobId)), sessionId)
   const available = [...services.running, ...services.history]
   const [memory] = useState(() => rememberPanel(source, sessionId, () => ({
     view: reveal ? reveal.view ?? 'jobs' : services.running.length ? 'jobs' : 'terminal',
@@ -166,7 +166,7 @@ function JobOutput({ initial, sessionId, source, enabled, ready, position, onRes
   initial: CommandJobSnapshot; sessionId: string; source: number; enabled: boolean; ready: boolean; position: LogPosition
   onRestart: (job: CommandJobSnapshot, originalId: string) => void; onDelete: (id: string) => void
 }): JSX.Element {
-  const cached = useCommandJob(sessionId, initial.jobId)
+  const cached = useCommandJob(sessionId, initial.jobId, enabled && ready)
   const job = cached ? mergeCommandJob(initial, cached.job) : initial
   const output = cached?.output
   const running = commandJobActive(job)
@@ -189,8 +189,9 @@ function JobOutput({ initial, sessionId, source, enabled, ready, position, onRes
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => { if (!enabled) setInfoOpen(false) }, [enabled])
   useEffect(() => {
-    if (!enabled || !ready) { setLoading(false); return }
+    if (!enabled || !ready) { setLoading(false); setLoaded(false); return }
     let alive = true
+    let failures = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     const refresh = async (): Promise<void> => {
       if (!alive || !current() || !live.current.enabled || !live.current.ready) return
@@ -198,13 +199,15 @@ function JobOutput({ initial, sessionId, source, enabled, ready, position, onRes
       setLoading(true)
       try {
         const next = await refreshCommandOutput(sessionId, initial.jobId)
-        again = commandJobActive(next.job) || next.output.cursor < next.job.cursor
+        again = commandJobActive(next.job) || next.output.hasMore
+        failures = 0
         if (alive && current()) setOutputError('')
       } catch (cause) {
+        failures++
         again = !commandJobMissing(cause)
         if (alive && current()) setOutputError(`日志读取失败：${cause instanceof Error ? cause.message : String(cause)}`)
       } finally { if (alive && current()) { setLoading(false); setLoaded(true) } }
-      if (alive && current() && again) timer = setTimeout(() => { void refresh() }, 1000)
+      if (alive && current() && again) timer = setTimeout(() => { void refresh() }, Math.min(1000 * 2 ** failures, 10000))
     }
     void refresh()
     return () => { alive = false; if (timer) clearTimeout(timer) }
@@ -295,15 +298,17 @@ function JobOutput({ initial, sessionId, source, enabled, ready, position, onRes
         </dl>
       </Popover>
       <button type="button" aria-label={copied ? '已复制日志' : '复制日志'} title={copied ? '已复制' : '复制当前保留的完整日志'} disabled={!output?.entries.length} onClick={() => void copy()}><Icon name={copied ? 'check' : 'copy'} size={14} /></button>
+      <button type="button" aria-label="刷新命令日志" title="刷新日志" disabled={!enabled || !ready || loading} onClick={() => setRetry(value => value + 1)}>{loading ? <Spinner size={14} /> : <Icon name="refresh" size={14} />}</button>
       {running ? <button type="button" aria-label="停止命令" title="停止后台运行" disabled={!enabled || !ready || working !== null || job.status === 'cancelling'} onClick={() => void action('stop')}>{working === 'stop' ? <Spinner size={14} /> : <Icon name="stop" size={14} />}</button> : <>
         <button type="button" aria-label="重启服务" title="按原命令重新启动" disabled={!enabled || !ready || working !== null} onClick={() => void action('restart')}>{working === 'restart' ? <Spinner size={14} /> : <Icon name="restart" size={14} />}</button>
         <button type="button" aria-label="删除服务历史" title="删除历史及日志" disabled={!enabled || !ready || working !== null} onClick={() => void action('delete')}>{working === 'delete' ? <Spinner size={14} /> : <Icon name="trash" size={14} />}</button>
       </>}
     </header>
     {error ? <p className="work-terminal-panel__error" role="alert">{error}</p> : null}
-    {outputError ? <div className="work-terminal-panel__error" role="alert"><span>{outputError}</span><button type="button" disabled={!enabled || !ready || loading} onClick={() => setRetry(value => value + 1)}>重试</button></div> : null}
+    {outputError ? <div className="work-terminal-panel__error" role="alert"><span>{outputError}</span><button type="button" aria-label="重试读取日志" title="重试" disabled={!enabled || !ready || loading} onClick={() => setRetry(value => value + 1)}><Icon name="refresh" size={14} /></button></div> : null}
     {job.error && !stopMessage ? <p className="work-terminal-panel__error" role="alert">{job.error.message}</p> : stopMessage ? <p className="work-terminal-panel__notice">{stopMessage}</p> : null}
     {output?.truncated ? <p className="work-terminal-panel__notice">仅显示最近保留的日志，较早内容已截断。</p> : null}
+    {output?.tail && !output.truncated ? <p className="work-terminal-panel__notice">仅显示最近输出，较早日志仍保留在磁盘。</p> : null}
     <pre ref={scroller} className="work-terminal-panel__output" aria-label="命令输出" tabIndex={0} onScroll={() => {
       if (!enabled || scrollFrame.current !== null) return
       scrollFrame.current = requestAnimationFrame(() => { scrollFrame.current = null; sampleScroll() })

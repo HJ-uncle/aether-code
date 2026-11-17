@@ -47,7 +47,8 @@ const relativeFile = (value: string): string => {
 }
 /** Actual authenticated transport authority. Renderer scope, tenant and permission claims never enter it. */
 export class EngineQueueGateway implements QueueDispatchGateway {
-  constructor(private readonly port: QueueEnginePort = enginePort, private readonly owner: NextTurnQueueScope['owner'] = 'work') {}
+  constructor(private readonly port: QueueEnginePort = enginePort) {}
+  private readonly owner = 'work' as const
   private get profile(): 'general' { return 'general' }
   private readonly leases = new WeakMap<TrustedQueueAuthorityLease, LeaseFacts>()
   private readonly controller = new AbortController()

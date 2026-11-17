@@ -558,6 +558,7 @@ function categoryFor(relative: string[], databaseName: string): string {
   }
   // Subagent payloads share the content bucket but remain scoped to this database.
   if (first === 'blobs' || relative.length > 1 && first === `${databaseName}.subagent-payloads`) return 'blobs'
+  if (relative.length > 1 && first === `${databaseName}.command-output`) return 'command-logs'
   if (first === 'audit-archive') return 'audit-archive'
   if (first === 'history-cold') return 'history-cold'
   if (first === 'memory') return 'memory'

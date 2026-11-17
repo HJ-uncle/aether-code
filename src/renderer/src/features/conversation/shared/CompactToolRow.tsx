@@ -7,7 +7,7 @@ import { toast } from '@renderer/core/toast'
 import { Icon } from '@renderer/ui/icons'
 import { Spinner } from '@renderer/ui/ui-primitives'
 import { useHoverDetail } from '@renderer/ui/useHoverDetail'
-import { MotionPresence } from '@renderer/ui/MotionPresence'
+import { useMotionPresence } from '@renderer/ui/MotionPresence'
 import type { ChatFileContext } from './chat-link'
 import { openFileFromChat } from './open-file'
 import { toolDisplayName, toolParamSummary, toolPathArg } from './tool-names'
@@ -24,7 +24,7 @@ import { FileGlyph } from '../../explorer/FileGlyph'
 /** Code and Work share the same one-line receipt and result-only disclosure. */
 export const CompactToolRow = memo(function CompactToolRow({
   tool, memoryKey, summary: summaryOverride, summaryDetail, state = tool.state,
-  fileContext, onOpenFile, defaultOpen, revealRevision, structuredResult = false, quiet = false, detailFooter, readRange, readFiles
+  fileContext, onOpenFile, defaultOpen, revealRevision, structuredResult = false, quiet = false, detailFooter, readRange, readFiles, active = true
 }: {
   tool: ToolActivity
   memoryKey?: string
@@ -43,6 +43,7 @@ export const CompactToolRow = memo(function CompactToolRow({
   detailFooter?: ReactNode
   readRange?: ReadActivityLineRange
   readFiles?: ReadActivityFileSummary[]
+  active?: boolean
 }): JSX.Element {
   const { engine } = useApp()
   const [memory, setMemory] = useCollapseMemory(memoryKey ?? `tool:${tool.id}`)
@@ -71,6 +72,9 @@ export const CompactToolRow = memo(function CompactToolRow({
   const duplicateSessionFailure = Boolean(quiet && failure && feedback?.detail === failure.trim()
     && !/[\r\n]/.test(failure) && result.text.trim() === failure.trim() && !result.images.length && !result.browserSnapshots?.length)
   const hasDetail = Boolean(result.text || result.images.length || result.browserSnapshots?.length || failure || feedback || detailFooter)
+  // Keep the latest active=false props during exit. MotionPresence freezes its
+  // last children, which would leave an in-flight command reader alive on close.
+  const detailPresence = useMotionPresence(open && hasDetail)
   const pathArg = toolPathArg(tool.args)
   // Routine Work targets describe an operation; only explicit change receipts
   // navigate to its artifacts. Code retains its editor and remote policy.
@@ -143,14 +147,14 @@ export const CompactToolRow = memo(function CompactToolRow({
         {hasDetail ? <Icon name={quiet ? 'chevron-right' : 'chevron'} size={quiet ? 12 : 16} className="logline__chevron" /> : null}
       </button>
       {tooltip}
-      <MotionPresence show={open && hasDetail}>
+      {detailPresence.present ? <div className="ui-motion-collapse" {...detailPresence.motionProps}><div className="ui-motion-collapse__content">
         <div id={detailId} className="logline__detail">
           {quiet ? <ToolOutcome tool={tool} state={state} /> : failure ? fileContext
             ? <ErrorNotice error={failure} /> : <div className="message__error" role="alert">{failure}</div> : null}
-          {!duplicateSessionFailure && (result.text || result.images.length || result.browserSnapshots?.length) ? <ToolResult parsed={result} toolId={tool.id} toolName={tool.name} toolArgs={tool.args} structured={structuredResult} surfaceMode={quiet ? 'work' : 'code'} /> : null}
+          {!duplicateSessionFailure && (result.text || result.images.length || result.browserSnapshots?.length) ? <ToolResult parsed={result} toolId={tool.id} toolName={tool.name} toolArgs={tool.args} metadata={tool.metadata} fileContext={fileContext} active={active && open} structured={structuredResult} surfaceMode={quiet ? 'work' : 'code'} /> : null}
           {detailFooter}
         </div>
-      </MotionPresence>
+      </div></div> : null}
     </div>
   )
 })

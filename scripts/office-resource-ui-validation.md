@@ -19,7 +19,7 @@
 
 入口都只导出 `recover(c)`。root 必须先阅读固定样本配置 `.e2e-tmp/office-resource-ui-fixtures.json`。start 不等待长任务；用 query 获取状态。`needs-reconciliation` 时不能重试 start；等 `pendingOperations === 0` 后调用 reconcile。cancel 不取消模型任务。已稳定的 UI 失败会恢复 runner 方法并返回失败，原错误与恢复错误分别保留。
 
-不要再加载 `office-resource-ui-validation-draft.mjs`。旧 prepare 入口已改为新 final 模块；它现在不再导入 draft 或 submit adapter。已加载的 final 模块不可在执行中改写，因为同一 Node 进程会缓存 ESM。
+退役的 draft 模块和专属测试已删除。prepare 入口使用 final 模块，不再导入 draft 或 submit adapter。已加载的 final 模块不可在执行中改写，因为同一 Node 进程会缓存 ESM。
 
 ## 当前真实样本与覆盖限制
 

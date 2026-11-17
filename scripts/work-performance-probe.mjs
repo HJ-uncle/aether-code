@@ -10,7 +10,7 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const parent = path.join(root, '.e2e-tmp')
+const parent = path.join(root, '.e2e-tmp', 'work-performance')
 fs.mkdirSync(parent, { recursive: true })
 // Other chats may rebuild out/ while profiling. Both GPU modes must load one
 // immutable copy, so changes to the shared output cannot skew the comparison.
@@ -28,7 +28,6 @@ const report = { runId: crypto.randomUUID(), generatedAt: new Date().toISOString
   totalMemoryGiB: Math.round(os.totalmem() / 1024 ** 3), buildArtifacts,
   note: 'Frozen build; no engine, no conversation history; renderer scheduling probe only.', configurations: [] }
 const quantile = (values, p) => values.length ? [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(values.length * p))] : null
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 async function startProbe(page) {
   await page.evaluate(() => {
@@ -112,13 +111,12 @@ for (const gpu of layers ? ['0'] : process.argv.includes('--default-graphics') ?
     app.process().stderr?.on('data', data => { const s = data.toString(); if (/crash|GPU process|exited|ERROR/i.test(s)) config.errors.push(s.slice(0, 3000)) })
     const page = await app.firstWindow()
     page.on('pageerror', error => config.errors.push(error.message))
-    await page.locator('.app-mode-switch').waitFor()
+    await page.locator('.work-view').waitFor({ state: 'visible' })
     config.gpu = await app.evaluate(async ({ app }) => ({ features: app.getGPUFeatureStatus(), basic: await app.getGPUInfo('basic'), versions: process.versions }))
     config.viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, focused: document.hasFocus(), visibility: document.visibilityState,
       supportedEntryTypes: PerformanceObserver.supportedEntryTypes }))
-    await page.getByRole('tab', { name: 'Work 办公', exact: true }).click()
-    await page.locator('.work-view').waitFor()
-    await delay(1000)
+    await page.getByRole('textbox', { name: '任务目标', exact: true }).waitFor({ state: 'visible' })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
     config.graphicsPolicy = await page.evaluate(async () => ({ snapshot: await window.aether.graphics.getSnapshot(), effects: document.documentElement.dataset.visualEffects }))
     const variants = layers ? ['all', 'no-overlay', 'no-panel', 'no-inner', 'settings-solid', 'none', 'no-overlay', 'settings-solid', 'all'] : ['all', 'none', 'none', 'all']
     for (const [sampleIndex, glassVariant] of variants.entries()) {
@@ -131,7 +129,7 @@ for (const gpu of layers ? ['0'] : process.argv.includes('--default-graphics') ?
       const inputMetrics = await stopProbe(page)
       await startProbe(page)
       const clickTimes = []
-      for (const label of ['项目', '成果', '工作台', '项目', '工作台']) {
+      for (const label of ['项目', '工作台', '项目', '工作台']) {
         clickTimes.push(await clickProbe(page, page.locator('.work-navigation__item').filter({ hasText: label }).first()))
       }
       const navigation = await stopProbe(page)
@@ -146,7 +144,7 @@ for (const gpu of layers ? ['0'] : process.argv.includes('--default-graphics') ?
       const before = await cdp.send('Performance.getMetrics')
       await startProbe(page)
       const settingsClicks = []
-      for (const label of ['外观', '文本编辑器', '终端', '文件', '工作台', '引擎管理', '外观', '文本编辑器']) {
+      for (const label of ['外观', '终端', '文件', '搜索', '引擎管理', '外观', '文件']) {
         settingsClicks.push(await clickProbe(page, page.locator('.work-settings-dialog .app-settings__nav-item').filter({ hasText: label }).first()))
         await page.locator('.work-settings-dialog .app-settings__body').evaluate(el => { el.scrollTop = el.scrollHeight })
         await page.locator('.work-settings-dialog .app-settings__body').evaluate(el => { el.scrollTop = 0 })

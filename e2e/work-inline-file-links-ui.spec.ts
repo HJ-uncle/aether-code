@@ -4,10 +4,12 @@
  * ambiguity, explicit links, source Markdown and session ownership stay intact.
  * Light/dark inline link styling stays quiet at rest, supports focus/hover,
  * and wraps long filenames without changing ordinary code rendering.
+ * File-link menus preserve session ownership for copy/save/open operations,
+ * stay lazy on right-click, and are also available from the keyboard.
  * Build first and run with the dedicated workers: 1 configuration. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import JSZip from 'jszip'
@@ -16,11 +18,12 @@ import type { RootRun } from '../src/shared/root-run'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'file-link-menu')
 const token = 'inline-file-links-token', modelId = 'inline-file-links-model', now = Date.now() - 10_000
 const taskA = 'work-inline-links-a', taskB = 'work-inline-links-b'
 const names = ['2048-项目说明书.docx', '2048-项目台账与测试矩阵.xlsx', '2048-项目汇报.pptx']
 const literalName = '#设计 50% 终版.xlsx'
+const textName = '复制 #50%.txt'
 const longName = '2048-项目交付与质量验收说明-包含玩法规则操作指南测试矩阵与已知限制-跨平台预览和数据存储核对-最终审核版本.docx'
 const titles = new Map([[taskA, '工具记录中的项目文件'], [taskB, '另一个任务的同名文件']])
 const roots = new Map([[taskA, '/remote/inline-links-a'], [taskB, '/remote/inline-links-b']])
@@ -35,6 +38,9 @@ const sourceMarkdown = new Map([taskA, taskB].map(id => [id, [
   '| 文件 | 说明 |', '| --- | --- |',
   ...names.map((name, index) => `| \`${name}\` | ${['项目说明', '台账与测试矩阵', '项目汇报'][index]} |`), '',
   `显式链接：[\`${names[0]}\`](/api/v1/workspace/file/download?sessionId=${id}&path=${encodeURIComponent(`${directories.get(id)}/${names[0]}`)})。`, '',
+  `文本文件：\`${textName}\`。`, '',
+  '[外部文件网页](https://example.com/report.docx)；' +
+    `[无效会话文件](/api/v1/workspace/file/download?sessionId=foreign-session&path=outputs/report.docx)。`, '',
   '普通代码：`node --test`、`unknown.docx`、`report.docx`、`failed.docx`。', '',
   id === taskA ? `精确相对路径：\`draft/report.docx\`；精确完整路径：\`${roots.get(id)}/archive/report.docx\`。`
     : '本任务独有文件：`only-in-b.txt`。', '',
@@ -44,6 +50,7 @@ interface Asset { bytes: Buffer; marker: string; kind: 'docx' | 'xlsx' | 'pptx' 
 const assets = new Map<string, Asset>()
 const errors: string[] = [], mutations: string[] = [], scans: string[] = []
 const contentReads: Array<{ sessionId: string; path: string; expectedRoot: string | null; bindingEpoch: string | null }> = []
+const downloads: Array<{ sessionId: string; path: string }> = []
 const directoryReads: Array<{ sessionId: string; path: string }> = []
 let app: ElectronApplication | undefined, page: Page, fixture = '', previewAllowed = false
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
@@ -59,6 +66,8 @@ async function docx(marker: string): Promise<Buffer> {
 async function createAssets(): Promise<void> {
   for (const id of [taskA, taskB]) {
     const tag = id === taskA ? 'A' : 'B', directory = directories.get(id)!
+    const textMarker = `正文文件内容 ${tag}\n保留中文、#、50% 与换行。\n`
+    assets.set(assetKey(id, `${directory}/${textName}`), { bytes: Buffer.from(textMarker), marker: textMarker, kind: 'txt' })
     const wordMarker = `INLINE_WORD_${tag}`
     assets.set(assetKey(id, `${directory}/${names[0]}`), { bytes: await docx(wordMarker), marker: wordMarker, kind: 'docx' })
     const workbook = new ExcelJS.Workbook(), sheet = workbook.addWorksheet('资料')
@@ -83,6 +92,7 @@ function history(sessionId: string): EngineHistoryRow[] {
   const rows: EngineHistoryRow[] = [{ id: run.userMessageId, role: 'user', content: titles.get(sessionId), createdAt: now - 100, conversationId, metadata }]
   const calls = names.map((name, index) => ({ name: index ? 'office_inspect' : 'read_file',
     args: { [index === 0 ? 'path' : index === 1 ? 'filePath' : 'file_path']: `${directories.get(sessionId)}/${name}` }, success: true }))
+  calls.push({ name: 'read_file', args: { path: `${directories.get(sessionId)}/${textName}` }, success: true })
   if (sessionId === taskA) for (const directory of ['archive', 'draft']) calls.push({ name: 'read_file', args: { path: `${directory}/report.docx` }, success: true })
   else calls.push({ name: 'read_file', args: { file: 'notes/only-in-b.txt' }, success: true })
   if (sessionId === taskA) calls.push({ name: 'read_file', args: { path: literalName }, success: true })
@@ -114,6 +124,14 @@ const server = createServer((request, response) => { void (async () => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1'), path = url.pathname, id = url.searchParams.get('sessionId') ?? ''
   response.setHeader('content-type', 'application/json')
   if (path.startsWith('/api/') && request.headers['x-aether-instance-token'] !== token) throw new Error(`Unauthenticated ${path}`)
+  if (path === '/api/v1/workspace/file/download') {
+    const relative = url.searchParams.get('path') ?? '', asset = assets.get(assetKey(id, relative))
+    downloads.push({ sessionId: id, path: relative })
+    if (!asset) throw new Error(`Invalid download ownership ${id}: ${relative}`)
+    response.setHeader('content-type', 'application/octet-stream')
+    response.setHeader('content-length', asset.bytes.length)
+    response.end(asset.bytes); return
+  }
   if (path === '/api/v1/workspace/file/content') {
     const relative = url.searchParams.get('path') ?? '', asset = assets.get(assetKey(id, relative))
     const read = { sessionId: id, path: relative, expectedRoot: url.searchParams.get('expectedRoot'), bindingEpoch: url.searchParams.get('bindingEpoch') }
@@ -296,11 +314,15 @@ async function verifyReferences(id: string): Promise<void> {
   if (id === taskA) for (const path of ['draft/report.docx', `${roots.get(id)}/archive/report.docx`])
     await expect(answer().getByRole('link', { name: path, exact: true })).toHaveCount(1)
 }
-async function openDocument(id: string, index: number): Promise<void> {
+async function openDocument(id: string, index: number, entry: 'link' | 'menu' = 'link'): Promise<void> {
   const relative = `${directories.get(id)}/${names[index]}`, asset = assets.get(assetKey(id, relative))!, before = contentReads.length
   previewAllowed = true
   await focusTestWindow()
-  await table().getByRole('link', { name: names[index], exact: true }).click()
+  const link = table().getByRole('link', { name: names[index], exact: true })
+  if (entry === 'menu') {
+    await openFileMenu(link)
+    await fileMenu().getByRole('menuitem', { name: '打开文件', exact: true }).click()
+  } else await link.click()
   await expect.poll(() => contentReads.slice(before).some(read => read.sessionId === id && read.path === relative)).toBe(true)
   const panel = work().locator('.work-artifact-panel-v2:visible')
   await expect(panel).toHaveAttribute('data-document-session', id)
@@ -310,7 +332,9 @@ async function openDocument(id: string, index: number): Promise<void> {
   await expect(preview).toBeVisible()
   if (asset.kind === 'xlsx') await expect(preview.getByRole('cell', { name: asset.marker, exact: true })).toBeVisible()
   else {
-    await expect(preview.locator('[data-document-pages]')).toHaveAttribute('data-document-pages', /^[1-9]\d*$/)
+    // DOCX exposes flowing preview sections; only slides have a fixed page count.
+    const countAttribute = asset.kind === 'docx' ? 'data-document-sections' : 'data-document-pages'
+    await expect(preview.locator(`[${countAttribute}]`)).toHaveAttribute(countAttribute, /^[1-9]\d*$/)
     await expect(preview.frameLocator('iframe').first().getByText(asset.marker, { exact: true })).toBeVisible()
   }
   expect(contentReads.slice(before).every(read => read.sessionId === id)).toBe(true)
@@ -349,7 +373,7 @@ test.afterEach(async ({}, info) => {
     const path = info.outputPath('inline-file-links-failure.png')
     await page.screenshot({ path }); await info.attach('文件链接失败窗口', { path, contentType: 'image/png' })
   }
-  await info.attach('文件读取与会话归属', { body: JSON.stringify({ contentReads, directoryReads, scans, mutations, errors }, null, 2), contentType: 'application/json' })
+  await info.attach('文件读取与会话归属', { body: JSON.stringify({ contentReads, downloads, directoryReads, scans, mutations, errors }, null, 2), contentType: 'application/json' })
   expect(errors).toEqual([]); expect(scans).toEqual([]); expect(mutations).toEqual([])
 })
 test.beforeEach(async () => {
@@ -363,6 +387,7 @@ test.afterAll(async () => {
       const target = resolve(fixture)
       if (dirname(target) !== fixtureRoot || !basename(target).startsWith('inline-file-links-profile-')) throw new Error(`Unsafe fixture cleanup: ${target}`)
       rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      if (readdirSync(fixtureRoot).length === 0) rmdirSync(fixtureRoot)
     }
   }
 })
@@ -423,4 +448,114 @@ test('Work table inline filenames open real Office previews using only the curre
   await expect(answer().getByRole('link', { name: 'only-in-b.txt', exact: true })).toHaveAttribute('href', 'notes/only-in-b.txt')
   await openDocument(taskB, 0)
   expect(contentReads.filter(read => read.sessionId === taskB).map(read => read.path)).toEqual([`deliverables/${names[0]}`])
+})
+
+const fileMenu = (): Locator => page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: '打开文件', exact: true }) })
+async function selectMenuTask(id: string): Promise<void> {
+  const hideWorkspace = work().getByRole('button', { name: '收起工作区', exact: true })
+  if (await hideWorkspace.isVisible()) await hideWorkspace.click()
+  await work().locator('.work-sidebar__task').filter({ hasText: titles.get(id)! }).click()
+  await expect(work().getByRole('heading', { name: titles.get(id)!, exact: true })).toBeVisible()
+  await verifyReferences(id)
+  await settleConversation()
+  previewAllowed = false
+}
+async function openFileMenu(link: Locator, keyboard = false): Promise<void> {
+  await focusTestWindow()
+  if (keyboard) { await link.focus(); await page.keyboard.press('Shift+F10') }
+  else await link.click({ button: 'right' })
+  await expect(fileMenu()).toBeVisible()
+  await expect(fileMenu()).toHaveAttribute('data-motion-state', 'open')
+  await expect(fileMenu()).toHaveCSS('opacity', '1')
+}
+
+test('正文文件右键菜单：按需操作、键盘入口及外链边界', async ({}, info) => {
+  await selectMenuTask(taskA)
+  const before = contentReads.length, beforeDownloads = downloads.length
+  const link = answer().getByRole('link', { name: textName, exact: true })
+  await openFileMenu(link)
+  for (const label of ['打开文件', '打开方式', '另存为…', '复制路径', '复制文件内容', '在资源管理器中显示'])
+    await expect(fileMenu().getByRole('menuitem', { name: label, exact: true })).toBeVisible()
+  await expect(fileMenu().getByRole('menuitem', { name: '打开方式', exact: true })).toBeDisabled()
+  await expect(fileMenu().getByRole('menuitem', { name: '在资源管理器中显示', exact: true })).toBeDisabled()
+  expect(contentReads).toHaveLength(before); expect(downloads).toHaveLength(beforeDownloads)
+  await page.screenshot({ path: info.outputPath('file-link-context-menu.png') })
+  await expect(work().getByRole('region', { name: '任务工作区', exact: true })).toBeHidden()
+  await page.keyboard.press('Escape'); await expect(fileMenu()).toBeHidden()
+  await openFileMenu(link, true)
+  await page.keyboard.press('Escape'); await expect(fileMenu()).toBeHidden()
+  await expect(link).toBeFocused()
+
+  for (const name of ['外部文件网页', '无效会话文件']) {
+    await answer().getByRole('link', { name, exact: true }).click({ button: 'right' })
+    await expect(fileMenu()).toHaveCount(0)
+  }
+  expect(contentReads).toHaveLength(before); expect(downloads).toHaveLength(beforeDownloads)
+})
+
+test('正文文件右键菜单：复制路径和内容保留特殊字符与会话归属', async () => {
+  for (const id of [taskA, taskB]) {
+    await selectMenuTask(id)
+    const link = answer().getByRole('link', { name: textName, exact: true })
+    const relative = `${directories.get(id)}/${textName}`, before = contentReads.length
+    await openFileMenu(link)
+    await fileMenu().getByRole('menuitem', { name: '复制路径', exact: true }).click()
+    await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText())).toBe(`${roots.get(id)}/${relative}`)
+    expect(contentReads).toHaveLength(before)
+    previewAllowed = true
+    await openFileMenu(link, true)
+    await fileMenu().getByRole('menuitem', { name: '复制文件内容', exact: true }).click()
+    await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText().replace(/\r\n/g, '\n'))).toBe(assets.get(assetKey(id, relative))!.marker)
+    expect(contentReads.slice(before)).toEqual([{ sessionId: id, path: relative, expectedRoot: roots.get(id), bindingEpoch: `binding-${id}` }])
+    await expect(work().getByRole('region', { name: '任务工作区', exact: true })).toBeHidden()
+  }
+  await app!.evaluate(({ clipboard }) => clipboard.writeText('保留剪贴板原文'))
+  previewAllowed = true
+  await openFileMenu(table().getByRole('link', { name: names[0], exact: true }))
+  await fileMenu().getByRole('menuitem', { name: '复制文件内容', exact: true }).click()
+  await expect(page.getByText('此文件不是文本，无法复制文件内容。', { exact: true })).toBeVisible()
+  expect(await app!.evaluate(({ clipboard }) => clipboard.readText())).toBe('保留剪贴板原文')
+})
+
+test('正文文件右键菜单：另存为保存原字节，取消不下载', async () => {
+  await selectMenuTask(taskA)
+  const destination = join(fixture, 'saved-original.xlsx'), canceledPath = join(fixture, 'canceled.xlsx')
+  const link = answer().getByRole('link', { name: literalName, exact: true })
+  const before = contentReads.length, beforeDownloads = downloads.length
+  await app!.evaluate(({ dialog }, filePath) => {
+    Object.assign(globalThis, { fileLinkSaveOriginal: dialog.showSaveDialog, fileLinkSaveCount: 0 })
+    dialog.showSaveDialog = async () => {
+      const state = globalThis as unknown as { fileLinkSaveCount: number }; state.fileLinkSaveCount++
+      return { canceled: false, filePath }
+    }
+  }, destination)
+  try {
+    await openFileMenu(link)
+    await fileMenu().getByRole('menuitem', { name: '另存为…', exact: true }).click()
+    await expect.poll(() => existsSync(destination)).toBe(true)
+    expect(readFileSync(destination).equals(assets.get(assetKey(taskA, literalName))!.bytes)).toBe(true)
+    expect(downloads.slice(beforeDownloads)).toEqual([{ sessionId: taskA, path: literalName }])
+    expect(contentReads).toHaveLength(before)
+    await app!.evaluate(({ dialog }, filePath) => {
+      dialog.showSaveDialog = async () => {
+        const state = globalThis as unknown as { fileLinkSaveCount: number }; state.fileLinkSaveCount++
+        return { canceled: true, filePath }
+      }
+    }, canceledPath)
+    await openFileMenu(link)
+    await fileMenu().getByRole('menuitem', { name: '另存为…', exact: true }).click()
+    await expect.poll(() => app!.evaluate(() => (globalThis as unknown as { fileLinkSaveCount: number }).fileLinkSaveCount)).toBe(2)
+    expect(existsSync(canceledPath)).toBe(false)
+    expect(downloads).toHaveLength(beforeDownloads + 1)
+    expect(contentReads).toHaveLength(before)
+  } finally {
+    await app!.evaluate(({ dialog }) => {
+      dialog.showSaveDialog = (globalThis as unknown as { fileLinkSaveOriginal: typeof dialog.showSaveDialog }).fileLinkSaveOriginal
+    })
+  }
+})
+
+test('正文文件右键菜单：打开文件沿用右侧成果预览', async () => {
+  await selectMenuTask(taskB)
+  await openDocument(taskB, 1, 'menu')
 })

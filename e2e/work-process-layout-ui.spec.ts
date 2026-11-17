@@ -1,8 +1,9 @@
 /** Real Electron + authenticated history/SSE: each prose-delimited tool batch
  * folds above three displayed activities (including a command's file receipts)
  * and scrolls independently when opened.
- * Reasoning visibility is a local session preference; navigation and final
- * answers remain usable with folded batches. Build first. */
+ * Reasoning visibility is a local session preference; only the latest reasoning
+ * item opens automatically. Tool details stay collapsed until clicked or located.
+ * Navigation and final answers remain usable with folded batches. Build first. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -12,7 +13,7 @@ import type { ChatSsePayload, EngineFileChange } from '../src/shared/ipc'
 import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-history'
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
-const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'process-bulk-changes')
+const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp', 'thinking-only-disclosure')
 const token = 'process-layout-token', model = 'process-layout-model', now = Date.now() - 60_000
 const settled = 'work-process-layout-settled', live = 'work-process-layout-live', paged = 'work-process-layout-paged', threshold = 'work-process-layout-threshold', thinkingOnly = 'work-process-layout-thinking-only', workspaceRoot = '/remote/process-layout'
 const titles = new Map([[settled, '核对完整文档处理过程'], [live, '继续检查文档处理过程'], [paged, '核对长过程的分页阅读'], [threshold, '核对三步与四步的边界'], [thinkingOnly, '只含思考和最终回复']])
@@ -176,7 +177,7 @@ async function selectTask(id: string): Promise<void> {
 }
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
   if (await page.locator('html').getAttribute('data-appearance') === appearance) return
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('button', { name: '设置', exact: true }).first().click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   await settings.getByRole('tab', { name: '外观', exact: true }).click()
   await settings.getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
@@ -549,14 +550,21 @@ test.describe.serial('Work 展开过程阅读', () => {
     await toggle().click(); await expectProcessHeaderLayout(false)
   })
 
-  test('运行中的最新阶段默认展开，活动定位展开目标且不覆盖手动收起', async ({}, info) => {
+  test('运行中的最新阶段保留摘要，工具详情默认收起且支持手动与活动定位展开', async ({}, info) => {
     await selectTask(live)
     await expect(toggle()).toHaveAttribute('aria-expanded', 'true')
     await expectProcessHeaderLayout(true, false)
     await expect(viewport().locator('.work-message__process-note')).toHaveText([0, 13, 33].map(index => `${noteText}（阶段 ${index + 1}）`))
     await expect(sectionWithCount(5).locator('.work-process-section__toggle')).toHaveAttribute('aria-expanded', 'true')
     await expect(receipt(live, 37)).toHaveCount(1)
-    await expect(receipt(live, 37).locator('button.logline')).toHaveAttribute('aria-expanded', 'true')
+    const runningTool = receipt(live, 37).locator('button.logline')
+    await expect(runningTool).toHaveAttribute('aria-expanded', 'false')
+    await expect(runningTool).toBeDisabled() // This in-flight call has no output yet.
+    const completedTool = receipt(live, 36).locator('button.logline')
+    await expect(completedTool).toHaveAttribute('aria-expanded', 'false')
+    await completedTool.click(); await expect(completedTool).toHaveAttribute('aria-expanded', 'true')
+    await expect(receipt(live, 36).locator('.logline__detail')).toContainText('PROCESS_RECEIPT_36')
+    await completedTool.click(); await expect(completedTool).toHaveAttribute('aria-expanded', 'false')
     await expect.poll(() => streams.has(live)).toBe(true)
     const outer = conversation().locator('.work-conversation__scroll'), feedback = conversation().locator('.work-turn-feedback')
     await outer.evaluate(element => { element.scrollTop = element.scrollHeight })
@@ -588,6 +596,7 @@ test.describe.serial('Work 展开过程阅读', () => {
       await expectProcessHeaderLayout(true, false)
       await expect(sectionWithCount(5).locator('.work-process-section__toggle')).toHaveAttribute('aria-expanded', 'true')
       await expect(receipt(live, 37)).toBeFocused()
+      await expect(runningTool).toHaveAttribute('aria-expanded', 'true')
       await expectContainedReceipt(receipt(live, 37))
     }
     await toggle().click(); await expectProcessHeaderLayout(false, false)
@@ -607,6 +616,52 @@ test.describe.serial('Work 展开过程阅读', () => {
     await expect(previewButton).toHaveAttribute('aria-expanded', 'false')
     const path = info.outputPath('work-process-focused-running.png')
     await page.screenshot({ path, animations: 'disabled' }); await info.attach('运行中的过程阅读', { path, contentType: 'image/png' })
+  })
+
+  test('只自动展开最新思考，后续工具收起旧思考，手动选择持续保留', async ({}, info) => {
+    await selectTask(live)
+    if (await toggle().getAttribute('aria-expanded') !== 'true') await toggle().click()
+    const preferences = page.getByRole('dialog', { name: '对话偏好', exact: true })
+    await conversation().getByRole('button', { name: '对话偏好', exact: true }).click()
+    const visibility = preferences.getByRole('switch', { name: '显示思考', exact: true })
+    if (!await visibility.isChecked()) await visibility.click()
+    await preferences.getByRole('button', { name: '关闭对话偏好', exact: true }).click()
+    await expect.poll(() => streams.has(live)).toBe(true)
+    const publish = (payload: ChatSsePayload): void => {
+      projections.push(payload)
+      streams.get(live)!.write(`id: ${ownedRun(live)!.runId}:${projections.length}\ndata: ${JSON.stringify(payload)}\n\n`)
+    }
+    const thought = (marker: string): Locator => viewport().locator('.work-message__thinking').filter({ hasText: marker })
+    publish({ thinking: 'LATEST_THOUGHT_A：先核对输入，再读取文件。' })
+    const first = thought('LATEST_THOUGHT_A'), firstButton = first.locator('button.logline')
+    await expect(firstButton).toHaveAttribute('aria-expanded', 'true')
+    await expect(first.locator('.logline__detail--thinking')).toBeVisible()
+
+    publish({ toolStart: { id: toolId(live, 38), name: 'read_file', args: { path: `${workspaceRoot}/latest-thought.txt` } } })
+    const tool = receipt(live, 38), toolButton = tool.locator('button.logline')
+    await expect(toolButton).toHaveAttribute('aria-expanded', 'false')
+    await expect(firstButton).toHaveAttribute('aria-expanded', 'false')
+    await expect(first.locator('.logline__detail--thinking')).toHaveCount(0)
+    publish({ toolEnd: { id: toolId(live, 38), name: 'read_file', output: 'THOUGHT_TOOL_RESULT：读取完成。', success: true } })
+    await expect(toolButton).toHaveAttribute('aria-expanded', 'false')
+    await expect(tool.locator('.logline__detail')).toHaveCount(0)
+    publish({ thinking: 'LATEST_THOUGHT_B：已有读取结果，继续核对结论。' })
+    const latest = thought('LATEST_THOUGHT_B'), latestButton = latest.locator('button.logline')
+    await expect(latestButton).toHaveAttribute('aria-expanded', 'true')
+    await expect(firstButton).toHaveAttribute('aria-expanded', 'false')
+    await expect(toolButton).toHaveAttribute('aria-expanded', 'false')
+
+    await firstButton.click(); await expect(firstButton).toHaveAttribute('aria-expanded', 'true')
+    await latestButton.click(); await expect(latestButton).toHaveAttribute('aria-expanded', 'false')
+    publish({ thinking: ' THOUGHT_CONTINUED：补齐检查说明。' })
+    await expect(latest).toContainText('THOUGHT_CONTINUED')
+    await expect(latestButton).toHaveAttribute('aria-expanded', 'false')
+    publish({ toolStart: { id: toolId(live, 39), name: 'read_file', args: { path: `${workspaceRoot}/next-thought.txt` } } })
+    await expect(receipt(live, 39).locator('button.logline')).toHaveAttribute('aria-expanded', 'false')
+    await expect(firstButton).toHaveAttribute('aria-expanded', 'true')
+    await expect(latestButton).toHaveAttribute('aria-expanded', 'false')
+    const path = info.outputPath('latest-thinking-only.png')
+    await page.screenshot({ path, animations: 'disabled' }); await info.attach('最新思考与收起的工具详情', { path, contentType: 'image/png' })
   })
 
   test('单次命令的 150 条文件记录进入工具列表，新正文自动收起并可完整重开', async ({}, info) => {
@@ -635,7 +690,7 @@ test.describe.serial('Work 展开过程阅读', () => {
     await expect(button).toHaveAttribute('aria-expanded', 'false')
     await expect(files).toHaveCount(0)
     publish({ toolStart: { id: toolId(bulk, 1), name: 'execute_cmd', args: { command: 'mh doctor' } } })
-    await expect(receipt(bulk, 1).locator('button.logline')).toHaveAttribute('aria-expanded', 'true')
+    await expect(receipt(bulk, 1).locator('button.logline')).toHaveAttribute('aria-expanded', 'false')
     await expect(button).toHaveAttribute('aria-expanded', 'false')
 
     await setSectionOpen(group, true)

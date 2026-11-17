@@ -11,10 +11,10 @@ import { test } from 'node:test'
 import ts from 'typescript'
 
 function fixture() {
-  const handlers = new Map(), launches = [], revealed = [], recoveries = [], cache = new Map()
+  const handlers = new Map(), launches = [], revealed = [], selected = [], recoveries = [], cache = new Map()
   const state = {
     trusted: true, mode: 'embedded', settingsMode: 'embedded', allowed: true,
-    directory: true, missing: false, spawnError: '', revealError: '', beforeDetected: () => {},
+    directory: true, file: true, missing: false, spawnError: '', revealError: '', beforeDetected: () => {},
     exitCode: 0, exitSignal: null, stderr: '', recoveryStatus: 'unchanged', recoveryError: null,
     installations: [
       { app: { id: 'vscode', label: 'VS Code', available: true }, command: { executable: 'C:\\Apps\\Code.exe', kind: 'vscode' } },
@@ -24,11 +24,11 @@ function fixture() {
   const dependencies = {
     electron: {
       ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
-      shell: { openPath: async value => { revealed.push(value); return state.revealError } }
+      shell: { openPath: async value => { revealed.push(value); return state.revealError }, showItemInFolder: value => selected.push(value) }
     },
     'node:path': path.win32,
     'node:os': os,
-    'node:fs/promises': { stat: async () => { if (state.missing) throw new Error('ENOENT'); return { isFile: () => true, isDirectory: () => state.directory } } },
+    'node:fs/promises': { stat: async () => { if (state.missing) throw new Error('ENOENT'); return { isFile: () => state.file, isDirectory: () => state.directory } } },
     'node:child_process': { execFile: (command, args, options, callback) => {
       recoveries.push({ command, args, options })
       callback(state.recoveryError, JSON.stringify({ status: state.recoveryStatus }))
@@ -71,7 +71,7 @@ function fixture() {
     state.beforeDetected(); return state.installations
   } }
   load(new URL('./open-with-ipc.ts', import.meta.url)).registerOpenWithIpc()
-  return { state, launches, revealed, recoveries, launcher,
+  return { state, launches, revealed, selected, recoveries, launcher,
     open: (directory, app) => handlers.get('system:open-with')({}, directory, app),
     list: () => handlers.get('system:get-open-with-apps')({}) }
 }
@@ -228,6 +228,33 @@ test('launch arguments follow each editor protocol without evaluating user text'
   assert.deepEqual(plain(f.launcher.openWithLaunchArguments('mac-app', directory, '/Applications/Cursor.app')), ['-a', '/Applications/Cursor.app', directory])
 })
 
+test('files launch as one literal argument from their parent directory without project-window recovery', async () => {
+  const f = fixture(), file = "C:\\项目 files\\正文 #20% & '内容'.txt"
+  f.state.directory = false
+  await f.open(file, 'vscode')
+  assert.deepEqual(plain(f.launches[0].args), ['--new-window', file])
+  assert.equal(f.launches[0].options.cwd, path.win32.dirname(file))
+  assert.equal(f.launches[0].options.shell, false)
+  assert.equal(f.recoveries.length, 0)
+  f.state.installations.push({ app: { id: 'notepad-plus-plus', label: 'Notepad++', available: true },
+    command: { executable: 'C:\\Apps\\notepad++.exe', kind: 'notepad-plus-plus' } })
+  await f.open(file, 'notepad-plus-plus')
+  assert.deepEqual(plain(f.launches[1].args), [file])
+  assert.equal(f.launches[1].options.cwd, path.win32.dirname(file))
+  assert.deepEqual(plain(f.launcher.openWithLaunchArguments('mac-app', '/Users/me/正文.md', '/Applications/Cursor.app', 'file')),
+    ['-a', '/Applications/Cursor.app', '/Users/me/正文.md'])
+})
+
+test('File Explorer selects a file without opening its contents or waiting for app discovery', async () => {
+  const f = fixture(), file = 'C:\\project\\file.txt'
+  f.state.directory = false
+  f.state.beforeDetected = () => { throw new Error('File reveal should not wait for application discovery') }
+  await f.open(file, 'file-explorer')
+  assert.deepEqual(f.selected, [file])
+  assert.deepEqual(f.revealed, [])
+  assert.equal(f.launches.length, 0)
+})
+
 test('File Explorer opens the directory itself and reports native open errors', async () => {
   const f = fixture()
   f.state.beforeDetected = () => { throw new Error('Project directory should not wait for application discovery') }
@@ -258,7 +285,7 @@ test('source changes during installation lookup are rejected before any launch',
   assert.equal(f.revealed.length, 0)
 })
 
-test('unknown applications, relative paths, unauthorized paths, files and deleted projects are rejected', async () => {
+test('unknown applications, relative paths, unauthorized paths, special entries and deleted targets are rejected', async () => {
   const f = fixture()
   await assert.rejects(f.open('C:\\project', 'cmd /c calc'), /不支持/)
   await assert.rejects(f.open('C:\\project', 'terminal'), /不支持/)
@@ -266,11 +293,23 @@ test('unknown applications, relative paths, unauthorized paths, files and delete
   for (const value of ['relative', '', 'C:\\project\0extra', 42]) await assert.rejects(f.open(value, 'vscode'), /有效/)
   f.state.allowed = false
   await assert.rejects(f.open('C:\\project', 'vscode'), /outside workspace/)
-  f.state.allowed = true; f.state.directory = false
+  f.state.allowed = true; f.state.directory = false; f.state.file = false
   await assert.rejects(f.open('C:\\project', 'vscode'), /不存在/)
   f.state.directory = true; f.state.missing = true
   await assert.rejects(f.open('C:\\project', 'vscode'), /不存在/)
   assert.equal(f.launches.length, 0)
+})
+
+test('file authorization and local-engine checks survive asynchronous app discovery', async () => {
+  const f = fixture(), file = 'C:\\project\\file.txt'
+  f.state.directory = false
+  f.state.beforeDetected = () => { f.state.allowed = false }
+  await assert.rejects(f.open(file, 'vscode'), /outside workspace/)
+  f.state.allowed = true
+  f.state.beforeDetected = () => { f.state.mode = 'remote' }
+  await assert.rejects(f.open(file, 'vscode'), /远程/)
+  assert.equal(f.launches.length, 0)
+  assert.equal(f.selected.length, 0)
 })
 
 test('unavailable apps and native spawn failures are returned to the caller', async () => {

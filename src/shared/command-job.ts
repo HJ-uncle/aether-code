@@ -40,7 +40,11 @@ export interface CommandJobOutput {
   job: CommandJobSnapshot
   entries: CommandOutputEntry[]
   nextCursor: number
+  /** UTF-8 bytes consumed in the first entry after nextCursor; pass back unchanged. */
+  nextOffset?: number
   earliestCursor: number
   truncated: boolean
   hasMore: boolean
+  /** A bounded recent view; omitted earlier logs remain on disk. */
+  tail?: boolean
 }

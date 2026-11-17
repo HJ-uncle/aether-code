@@ -159,7 +159,12 @@ const message = (suffix: string): Locator => transcript().locator(`[data-message
 async function openChildren(): Promise<void> {
   const tab = workspace().getByRole('tab', { name: '子代理', exact: true })
   if (await tab.isVisible()) await tab.click()
-  else { await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '子代理', exact: true }).click() }
+  else {
+    await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click()
+    // The activity menu varies with the running count; the home keeps one child destination.
+    await page.getByRole('menu', { name: '更多工作区', exact: true }).getByRole('menuitem', { name: '新建首页标签', exact: true }).click()
+    await work().getByRole('tabpanel', { name: '工作区首页', exact: true }).getByRole('button', { name: /^子代理 / }).click()
+  }
   await expect(panel()).toBeVisible()
 }
 async function selectChild(name: 'A' | 'B' | 'C'): Promise<void> {
@@ -247,11 +252,15 @@ test.describe.serial('Work 子代理自动完整历史', () => {
 
     const rich = message('rich-answer')
     await rich.getByRole('button', { name: '展开过程', exact: true }).click()
-    await expect(rich.getByRole('button', { name: '显示思考', exact: true })).toHaveAttribute('aria-pressed', 'false')
+    await expect(rich.getByRole('button', { name: '显示思考', exact: true })).toHaveCount(0)
     const tool = rich.locator('.work-tool-activity')
     await expect(tool).toHaveCount(1)
-    await expect(tool.locator('.compact-tool-row > button')).toHaveAttribute('aria-expanded', 'false')
-    await expect(rich.locator('.logline__detail, .work-message__thinking')).toHaveCount(0)
+    // Opening a process reveals its newest step; each receipt still collapses independently.
+    await expect(tool.locator('.compact-tool-row > button')).toHaveAttribute('aria-expanded', 'true')
+    await expect(tool.locator('.logline__detail')).toContainText('TOOL_OUTPUT_BEGIN')
+    await expect(rich.locator('.work-message__thinking')).toHaveCount(0)
+    await tool.locator('.compact-tool-row > button').click()
+    await expect(tool.locator('.logline__detail')).toHaveCount(0)
     await tool.locator('.compact-tool-row > button').click()
     await expect(tool.locator('.logline__detail')).toContainText('TOOL_OUTPUT_BEGIN')
     await tool.locator('.compact-tool-row > button').click()
@@ -260,17 +269,31 @@ test.describe.serial('Work 子代理自动完整历史', () => {
     await expect(rich.locator('.work-tool-activity')).toHaveCount(0)
 
     const reasoning = message('thinking-only')
-    await reasoning.getByRole('button', { name: '展开过程', exact: true }).click()
-    await expect(reasoning.getByRole('button', { name: '显示思考', exact: true })).toHaveAttribute('aria-pressed', 'false')
+    await expect(reasoning.getByRole('button', { name: '展开过程', exact: true })).toHaveCount(0)
     await expect(reasoning.locator('.work-message__thinking')).toHaveCount(0)
-    await reasoning.getByRole('button', { name: '显示思考', exact: true }).click()
-    await expect(reasoning.locator('.work-message__thinking .logline')).toHaveAttribute('aria-expanded', 'false')
+    // Child archives inherit the parent's display preference, exposed in the composer.
+    await work().getByRole('button', { name: '对话偏好', exact: true }).click()
+    const preferences = page.getByRole('dialog', { name: '对话偏好', exact: true })
+    const showThinking = preferences.getByRole('switch', { name: '显示思考', exact: true })
+    await expect(showThinking).not.toBeChecked()
+    await showThinking.click()
+    await expect(showThinking).toBeChecked()
+    await preferences.getByRole('button', { name: '关闭对话偏好', exact: true }).click()
+    await expect(reasoning.locator('.work-message__thinking')).toHaveCount(0)
+    await reasoning.getByRole('button', { name: '展开过程', exact: true }).click()
+    await expect(reasoning.locator('.work-message__thinking .logline')).toHaveAttribute('aria-expanded', 'true')
+    await expect(reasoning.locator('.logline__detail--thinking pre')).toHaveText(thinking)
+    await reasoning.locator('.work-message__thinking .logline').click()
     await expect(reasoning.locator('.logline__detail--thinking')).toHaveCount(0)
     await reasoning.locator('.work-message__thinking .logline').click()
     await expect(reasoning.locator('.logline__detail--thinking pre')).toHaveText(thinking)
-    await reasoning.getByRole('button', { name: '隐藏思考', exact: true }).click()
-    await expect(reasoning.locator('.logline__detail--thinking')).toHaveCount(0)
     await reasoning.getByRole('button', { name: '收起过程', exact: true }).click()
+    await expect(reasoning.locator('.logline__detail--thinking')).toHaveCount(0)
+    await work().getByRole('button', { name: '对话偏好', exact: true }).click()
+    await showThinking.click()
+    await expect(showThinking).not.toBeChecked()
+    await preferences.getByRole('button', { name: '关闭对话偏好', exact: true }).click()
+    await expect(reasoning.getByRole('button', { name: '展开过程', exact: true })).toHaveCount(0)
     await expect(transcript().locator('.work-message__process, .work-message__thinking, .work-tool-activity')).toHaveCount(0)
     await rich.scrollIntoViewIfNeeded()
     const screenshot = info.outputPath('full-history-collapsed-process.png')

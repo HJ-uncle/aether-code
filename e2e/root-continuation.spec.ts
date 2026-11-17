@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join, resolve, dirname } from 'node:path'
-import { canonicalAdmissionJson, freezeQueueRequest, assertFrozenQueueRequest, parseExactContinuation, type AdmissionContext, type ExactAdmission } from '../src/main/next-turn-admission-protocol'
+import { canonicalAdmissionJson, freezeQueueRequest, assertFrozenQueueRequest, parseExactContinuation, parseAdmissionContext, queueTransport, type AdmissionContext, type ExactAdmission } from '../src/main/next-turn-admission-protocol'
 import { NextTurnDispatcher, type QueueDispatchGateway } from '../src/main/next-turn-dispatcher'
 import { NextTurnQueueStore } from '../src/main/next-turn-queue-store'
 import { NextTurnQueueMutationService } from '../src/main/next-turn-queue-service'
@@ -33,6 +33,17 @@ function exactWire(frozen: ReturnType<typeof freezeQueueRequest>, run = resumed(
   const request = JSON.parse(frozen.wireBody!).continuation
   return { protocolVersion: 1, status: 'accepted', receipt: { ...request, ...run.continuationReceipt, requestKey: request.requestKey, bodyDigest: request.bodyDigest }, run }
 }
+
+test('retired Code journal ownership is rejected instead of becoming a Work admission', () => {
+  const retired = { ...scope, owner: 'code' as const }
+  const before = JSON.stringify(retired)
+  expect(() => queueTransport(retired.owner)).toThrow('不会自动投递')
+  expect(() => parseAdmissionContext({ protocolVersion: 1, sessionId: scope.taskId,
+    transport: { toolProfile: 'code', runLifetime: 'durable', subagentProtocol: 2 } }, scope.taskId, retired.owner)).toThrow('不会自动投递')
+  expect(() => freezeQueueRequest(retired, { sessionId: scope.taskId, message: '旧队列原文' }, 1, null)).toThrow()
+  expect(JSON.stringify(retired)).toBe(before)
+  expect(queueTransport(scope.owner)).toEqual({ toolProfile: 'general', runLifetime: 'durable', subagentProtocol: 2 })
+})
 
 test('continued attempt updates task status and timing while old attempt observations stay terminal', () => {
   const stopped: SessionStatusTask = { id: 'task', status: 'stopped', updatedAt: 3,

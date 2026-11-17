@@ -1,4 +1,3 @@
-import { getActiveEditor } from './active-editor'
 import { getDocument } from './editor-store'
 import { fileIdentity } from './file-identity'
 import { languageForPath, monaco, peekModel } from './monaco-setup'
@@ -90,12 +89,8 @@ export async function prepareReferenceLocations(
   locations: monaco.languages.Location[],
   token: monaco.CancellationToken
 ): Promise<monaco.languages.Location[]> {
-  const active = getActiveEditor()
   const target = getDocument(source.uri.fsPath)?.sessionFileTarget
-  const editor =
-    active?.getModel() === source
-      ? active
-      : monaco.editor.getEditors().find((candidate) => candidate.getModel() === source)
+  const editor = monaco.editor.getEditors().find((candidate) => candidate.getModel() === source)
   const owner = editor?.getId() ?? source.uri.toString()
   const query = (queries.get(owner) ?? 0) + 1
   const queryEpoch = epoch
