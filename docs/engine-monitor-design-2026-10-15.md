@@ -1,5 +1,9 @@
 # Aether 引擎监控页设计
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 已落地的 MVP
 
 Work 模式新增「引擎监控」页。它复用现有 `EngineSnapshot` 推送和 Work 本地任务状态，展示引擎 phase、PID、端口、版本/build、实例、数据目录、运行时来源、错误，以及 Work/定时会话两条 lane。任务行是可键盘访问的按钮，可以回到任务并继续查看现有的子 Agent 面板；每条 lane 最多渲染前 24 项。

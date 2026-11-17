@@ -1,5 +1,9 @@
 # Wuzu 子代理 UI、事件归属与历史回放调研
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 调研日期：2026-09-29。范围：D:\web\wuzu-client 当前工作区代码；只读源码、运行现有纯函数测试，没有修改 Wuzu 或 Aether 业务代码，没有读取 .env 或凭据。
 
 已读 Wuzu 根 AGENTS.md 与 .wuzu/rules/rules.md；`rg --files -g AGENTS.md` 仅找到根文件。以下行号均是本次读取时的工作区行号，不代表某个 Git 提交。

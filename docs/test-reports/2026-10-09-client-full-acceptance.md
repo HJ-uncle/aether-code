@@ -1,6 +1,12 @@
 # 客户端完整验收：2026-10-09
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 以本轮 Playwright 原始 JSON 为准；workers 固定为 1，retries 为 0。
+
+后续汇总的输出约定（2026-11-17）：`node scripts/summarize-client-acceptance.mjs <Playwright结果.json> [输出.md]` 默认生成 `.e2e-tmp/client-acceptance-summary/report.md` 与同名 JSON，并自动创建目录。显式输出参数仍可使用；本历史报告及以下冻结版本、失败记录不随默认汇总更新。
 
 **结果：758 项，758 通过，0 失败，0 显式跳过，0 未运行；117 个文件。**
 

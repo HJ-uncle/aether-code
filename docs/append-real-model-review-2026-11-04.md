@@ -1,5 +1,9 @@
 # 运行中追加要求：真实模型会话审查
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 审查日期：2026-11-04。项目：Aether Code / AE。
 
 **最终 r11 / round-5 的 Work 与 Code 真实模型追加专项均通过。**两份 final archive 已完整逐条审查：Work 34 条、Code 28 条，共 62 条记录、21 次工具调用；五条运行中追加各执行一次，下一轮独立执行，停止均正常取消。未发现重复执行、跨会话归属或公开 controller 封套泄漏。仍有模型遵循首步指令、总结简洁性及工具输出开销的优化空间，详见最终问题表。

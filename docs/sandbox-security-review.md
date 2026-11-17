@@ -1,5 +1,9 @@
 # Workspace Shell 与引擎安全边界审计
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 当前实现不能认定为安全沙箱。隔离测试已证明：Workspace Shell 的路径检查没有限制外部程序的操作系统权限；在 `safe` 模式下，解释器仍可读写工作区外的测试文件、绕过引擎网络检查。接口层还存在认证、角色和租户隔离缺口。在完成下述修复与复验前，不应将它作为运行不可信代码或承载互不信任租户的安全边界。
 
 本报告记录审计时的代码和测试结果，并非修复完成证明，也不证明当前运行中的本地或远程实例已经更新。本文编写阶段仅复核已有证据，没有追加攻击测试、修改生产代码或重启用户服务。
@@ -24,6 +28,8 @@
 | API 测试夹具 | `D:\dev\aether-code\.e2e-tmp\audit-engine-boundaries-qMkzkJ` |
 
 Shell 副本和原始文件的 SHA-256 均为 `202b104e054f92314738c42c3b82e122a82b9d99cade9e11653428664722d861`。夹具位于临时测试目录，可能被后续清理；`docs` 下的 JSON 是保留证据。
+
+后续复验的输出约定（2026-11-17）：在前端仓库运行 `node --import ../ai-agent-engine/node_modules/tsx/dist/loader.mjs scripts/audit-engine-boundaries.mjs` 时，新报告默认写入 `.e2e-tmp/audit-engine-boundaries/report.json`，会自动创建目录；末尾可显式传入输出 JSON 路径。该命令会执行隔离引擎探测，本文更新未运行它。上表历史证据仍指向原文件，不会被默认复验覆盖。
 
 ## 结果统计与口径修正
 

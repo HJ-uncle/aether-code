@@ -1,5 +1,9 @@
 # Codex 实现对照与 Aether 演进
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 **用户最新顺序（2026-10-13 16:46 UTC）**：先完整核对Codex功能块并接入可用能力，再审查差距与不合理流程、优化引擎，最后启动正式运行测试。研究/实现准入完成前不新建正式root、不模型预检。仅收尾已启动的本地合成关闭对照；功能入口要核对操作、副作用、持久化与恢复，不能只对齐视觉或添加无效控件。
 
 已独立验证native unwind 11帧，故障在Node inspector I/O线程WebSocket写入：`TcpHolder::WriteRaw → WsHandler::Write → InspectorSocket::Write → InspectorIo::ThreadMain`；主线程CrBrowserMain54112与fault72220不同，rdi=0/read0x148。官方MODULE与准确半开函数/源码行映射已匹配。三关闭入口（自动quit、产品窗口IPC、无Node inspector的直接启动＋Chromium CDP）同profile两次关闭/重启对照，最新 `wTyAQj-native-close-matrix-v2.result.json` 15/15、0skip/0flaky、准确client/tests稳定。原48420 native失败不抹掉，具体竞态原因仍待vendor源码复核；不得将复跑或无调试器通过概括为原问题已修复。

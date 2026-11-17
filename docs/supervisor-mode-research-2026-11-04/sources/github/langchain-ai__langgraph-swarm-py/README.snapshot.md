@@ -1,5 +1,9 @@
 # 🤖 LangGraph Multi-Agent Swarm
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../../../../README.md)；文档状态见[全量清单](../../../../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 A Python library for creating swarm-style multi-agent systems using [LangGraph](https://github.com/langchain-ai/langgraph). A swarm is a type of [multi-agent](https://langchain-ai.github.io/langgraph/concepts/multi_agent) architecture where agents dynamically hand off control to one another based on their specializations. The system remembers which agent was last active, ensuring that on subsequent interactions, the conversation resumes with that agent.
 
 ![Swarm](static/img/swarm.png)

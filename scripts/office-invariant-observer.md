@@ -1,5 +1,9 @@
 # PMO 私有 staging 的只读不变量观察器
 
+> **状态核对（2026-11-17）：历史 campaign 的观察方案。** 对应 `office-invariant-observer.mjs` 仍提供可导入的有界文件观察器，但下文的 PID、root、444 个文件、字节数和 `.e2e-tmp` 注入入口属于当时的运行，不是当前有效身份或通用启动命令。复用必须重新绑定已确认的 runner、基线与输出目录；不能据本文连接旧 PID 或宣称当前产品验收通过。文末测试数字仅为历史记录。
+>
+> 当前产品操作见[使用指南](../docs/user-guide.md)，可达页面与源码见[功能覆盖表](../docs/feature-map.md)。以下原文保留用于追溯。
+
 辅助测试已经准备，**尚未在真实 runner 启动**。不改产品，不请求引擎或 UI，不连接新实例，不暂停模型。使用现有 runner PID **9080**、当前 PMO root **b459b097-fc3b-432f-aba4-8bfaf442e18e**。
 
 由 root 决定启动时，通过既有 `.e2e-tmp/recover-owned-office-runner.mjs` 加载下面三个自包含 `recover(c)` 入口；不要直接运行 campaign 主程序：

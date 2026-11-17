@@ -1,5 +1,9 @@
 # Codex 资源监控审计与 Aether 对标
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 审计日期：2026-10-15。依据为用户提供的 `E:\rea\codex-src\` 解包文件。它包含打包后的 Electron / Webview 代码，不包含完整 Rust app-server 源码。本文只把能够从这些文件直接确认的行为写为事实；未检出某项指标不等于产品所有运行时均不支持该指标。
 
 ## 结论

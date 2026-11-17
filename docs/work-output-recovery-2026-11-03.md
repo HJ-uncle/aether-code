@@ -1,5 +1,9 @@
 # Work 输出上限与自动恢复修复
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 真实原因
 
 2026-11-03 的围棋任务在 `deepseek-v4.1-flash-1017` 上失败，根运行记录为 `OUTPUT_LIMIT / output_limit`。只读历史显示服务端使用 Anthropic 协议，连续返回 `max_tokens`；被截断的段落只有思考内容，没有完整工具或正文。

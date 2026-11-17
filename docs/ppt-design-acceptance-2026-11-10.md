@@ -1,5 +1,9 @@
 # PPT 内容设计与原文件逐页验收
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 范围与结果
 
 本次替换旧的固定 PPT 生成器，只保留一套内容驱动流程。没有 classic/quick/preset 双轨模板；旧 title/bullets/table 输入仍进入同一生成器。移除强制蓝色边条和 Aether 页脚，增加可选主题、图文、对照、时间线、引述、自定义元素及可编辑原生图表/表格。Skill 详细指南按需读取，参数以工具 schema 为准，不重复提供旧模板。

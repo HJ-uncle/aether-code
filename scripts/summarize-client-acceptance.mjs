@@ -1,11 +1,13 @@
-/** Summarize the exact Playwright JSON, retaining every file and every skip/failure. */
+/** Summarize Playwright JSON: node scripts/summarize-client-acceptance.mjs input.json [output.md].
+ * Default artifacts stay in .e2e-tmp/client-acceptance-summary; explicit output paths remain supported.
+ */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 if (!process.argv[2]) throw new Error('Playwright JSON result is required')
 const input = resolve(root, process.argv[2])
-const output = resolve(root, process.argv[3] ?? 'docs/test-reports/2026-10-09-client-full-acceptance.md')
+const output = resolve(root, process.argv[3] ?? '.e2e-tmp/client-acceptance-summary/report.md')
 const report = JSON.parse(readFileSync(input, 'utf8'))
 const rows = [], details = []
 function feature(file) {

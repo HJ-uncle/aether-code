@@ -1,5 +1,9 @@
 # Work Git 首屏加载与遗留占用验收（2026-11-05）
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 用户现场是旧会话的 workspace session lease 遗留：owner PID 35812 已结束，Git 仓库占用已经有核验通过的恢复归档，但会话绑定锁仍在。当前绑定表不再包含该旧会话，旧恢复入口无法释放它。每次 `/workspace/bind` 等待 30 秒后返回 `Resource is busy`；后台刷新再重复等待。
 
 前一轮验收不足：功能测试先等待引擎就绪、提前绑定临时任务和预热 Code Git，再打开 Work。没有覆盖用户已有任务跨进程恢复，也没有实测此 150 文件仓库的首屏耗时。此前功能用例通过不能证明这个路径通过。

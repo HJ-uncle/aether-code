@@ -1,5 +1,9 @@
 # 内置浏览器接入与验收报告
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-10-08。客户端：`D:\dev\aether-code`；配套引擎：`D:\dev\ai-agent-engine`。
 
 本次已把真实 Chromium 页面接入 Aether 的现有编辑区，并打通设置、HTML 保存运行和 AI 同页操作。用户看到的网页与 AI 工具操作的网页是同一个 WebContents。

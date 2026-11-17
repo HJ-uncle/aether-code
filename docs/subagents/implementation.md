@@ -1,5 +1,9 @@
 # 子代理 P0/P1 交付记录
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-09-29。依据 [decision.md](./decision.md) 实施，保留现有多模型 ReAct；P2 不在本次交付范围。
 
 同日后续发现累计预算默认值与搜索参数问题，原因、用户纠正和修复边界见 [incident-2026-09-29.md](./incident-2026-09-29.md)。以下配置说明已按该次纠正更新。

@@ -1,5 +1,9 @@
 # AE 引擎对「总负责人／管理与验收」的能力审计
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 调研日期：2026-11-04（Asia/Shanghai）。读取的引擎提交为 `d25d93a68ce44b5bc5498584434b40c9ac9b7441`；读取时 `git status --short` 为空。本次只做源码、接口及数据结构调研，未调用模型、启动 Electron、运行测试、修改源码或用户配置。下文“已存在”指可定位的实现，不替代新模式的端到端验收。
 
 ## 结论

@@ -1,5 +1,9 @@
 # Code / Work 共享输入框与模型菜单验收
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-10-12。范围：本轮输入框统一、上下文用量、AI 润色位置和模型选择改动。
 
 ## 完成的体验

@@ -1,5 +1,9 @@
 # R4 最终客户端终态恢复验收
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 2026-10-09T15:20:17.125Z 至 15:20:34.320Z，真实 Electron 连接认证 remote 引擎 http://127.0.0.1:12499；最终客户端 bundle 为 index-DDqvcJ92.js。
 
 结果：客户端恢复 PASS。正序、倒序共 10 次选择及刷新；5 个会话完整 archive、原始用户消息顺序、每条 ID/turn、requested/actual/输入栏模型、两个项目与子 Agent/命令任务归属全部核对。rendererErrors=[]，正常关闭 Electron。

@@ -1,5 +1,9 @@
 # Work 办公 Skill 与文档交付适配记录
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-10-15（Asia/Shanghai）。本轮范围是 Word/Excel 的统一办公入口、可靠生成与定点编辑，以及 Work 成果原文件交付。已完成当前配套构建、定向检查和真实 Electron Work 链路验收。
 
 ## 参考来源与适配选择

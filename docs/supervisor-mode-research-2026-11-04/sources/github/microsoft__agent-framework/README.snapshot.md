@@ -1,5 +1,9 @@
 ![Microsoft Agent Framework](docs/assets/readme-banner.png)
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../../../../README.md)；文档状态见[全量清单](../../../../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 # Welcome to Microsoft Agent Framework!
 
 [![Microsoft Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)

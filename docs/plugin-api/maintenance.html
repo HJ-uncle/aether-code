@@ -4,26 +4,39 @@
 <style>body{max-width:900px;margin:48px auto;padding:0 24px;font:16px/1.75 system-ui,sans-serif;color:CanvasText;background:Canvas;color-scheme:light dark}pre{padding:16px;background:color-mix(in srgb,CanvasText 6%,Canvas);overflow:auto}code{font-family:ui-monospace,monospace}a{color:LinkText}</style></head>
 <body><main><h1>维护 Aether 插件 API 参考</h1>
 <p>这是前端仓库内的独立静态 HTML 项目。公共内容唯一来源是 <code>content/*.html</code>，不再从 Markdown 构建。部署只需要 <code>dist/</code>；本说明、实现快照和检查脚本不会进入公开站点。</p>
-<h2>开发与构建</h2><p>在前端仓库根目录安装已有依赖后运行：</p>
+<h2 id="development">开发与构建</h2><p>在前端仓库根目录安装已有依赖后运行：</p>
 <pre><code>npm run docs:dev       # http://127.0.0.1:4177；修改内容后刷新
 npm run docs:build     # 生成 docs/plugin-api/dist/
 npm run docs:check     # HTML、示例、SDK/挂载覆盖与实现快照
 npm run docs:test      # 真实浏览器交互与离线/窄屏检查
 npm run docs:package   # 打包可离线使用的纯 HTML 站点</code></pre>
 <p>也可以在本目录运行 <code>npm run build</code>、<code>npm run dev</code>、<code>npm run check</code>。依赖复用前端仓库的 Node 工具链，无单独的运行服务器或生产配置。构建后可直接打开 <a href="dist/index.html">dist/index.html</a>。</p>
-<h2>目录职责</h2><ul>
+<h2 id="files">目录职责</h2><ul>
 <li><code>pages.mjs</code>：页面标题、分类、简介和输出文件名。</li>
 <li><code>content/*.html</code>：公开参考正文；标题使用稳定 id，保留既有深链接。</li>
 <li><code>template.html</code>、<code>assets/</code>：共用布局、主题、搜索与代码复制。</li>
 <li><code>scripts/build.mjs</code>：生成静态页面、页内目录、搜索索引和语法高亮。</li>
 <li><code>scripts/check.mjs</code>、<code>contract.snapshot.json</code>：实现与文档的交叉检查及经审阅指纹。</li>
 <li><code>dist/</code>：可部署成品；不要直接编辑。</li></ul>
-<h2>功能变更必须同步</h2><ol>
+<h2 id="change-review">功能变更必须同步</h2><ol>
 <li>修改实现和对应 HTML。检查方法签名、入参、返回值、权限、适用位置、运行限制及完整例子。</li>
 <li>运行 <code>npm run docs:check</code>。源码变化会被指出，尚未新增的接口也不能遗漏。</li>
 <li>完成实际代码与文档交叉审阅，确认仅优化内部实现时公开契约仍未变化。</li>
 <li>显式运行 <code>npm run docs:review</code> 记录确认；该命令不是自动生成文档，也不能替代审阅。</li>
 <li>运行 <code>npm run docs:check</code>、<code>npm run docs:test</code> 和变更对应的业务测试。前端 <code>npm run build</code> 已包含同步检查。</li></ol>
 <p>检查默认使用同级 <code>ai-agent-engine</code> 仓库及其依赖，可用 <code>AETHER_ENGINE_SOURCE_DIR</code> 指定。缺少配对源码时检查失败，独立 HTML 构建仍可使用。检查不启动真实引擎，不读取用户数据库或密钥。</p>
-<h2>证据和限制</h2><p>测试报告、截图、临时配置和隔离示例均放前端仓库 <code>.e2e-tmp/plugin-api-site/</code>。覆盖和指纹检查可发现遗漏与未审阅实现变动，不能证明所有业务语义正确；涉及真实模型、MCP、文件或权限行为的变更仍须跑相应测试。</p>
+<h2 id="review-map">人工交叉审阅地图</h2>
+<p>下表中的引擎路径相对同级 <code>ai-agent-engine</code>，前端路径相对本仓库。源码地图只放本维护页和引擎内部维护文档，不复制到公开正文。审阅以当前实现为准，不能凭旧容量数字、工具名称存在或类型声明推断实际可用性。</p>
+<table><thead><tr><th>领域</th><th>实现入口</th><th>正文</th></tr></thead><tbody>
+<tr><td>清单、源文件、Schema、修订</td><td>引擎 <code>src/plugins/service.ts</code>、<code>schema.ts</code>、<code>project.ts</code>、<code>runtime.ts</code></td><td><a href="content/manifest.html">插件清单</a></td></tr>
+<tr><td>SDK、能力与管理权限</td><td>引擎 <code>sdk-contract.ts</code>、<code>capability-contract.ts</code>、<code>capability-runtime.ts</code>、<code>capabilities.ts</code>、<code>access.ts</code>（均位于 <code>src/plugins/</code>）</td><td><a href="content/platform.html">平台 API</a>、<a href="content/permissions.html">权限</a></td></tr>
+<tr><td>Agent、工具范围、恢复与实时权威</td><td>引擎 <code>src/plugins/agent-capability.ts</code>、<code>agent-tool-registry.ts</code>、<code>agent-execution-root.ts</code>、<code>agent-registry-authority.ts</code></td><td><a href="content/platform.html#agents-tools">Agent API</a></td></tr>
+<tr><td>贡献、目标与当前界面</td><td>引擎 <code>src/plugins/contributions.ts</code>、<code>host-context.ts</code>；前端 <code>src/renderer/src/features/extensions/host.ts</code>、<code>slots.tsx</code>、<code>interactions.ts</code>，以及各会话、消息、工作区与输入框实际挂载</td><td><a href="content/contributions.html">挂载区域</a>、<a href="content/page.html">页面 API</a></td></tr>
+<tr><td>沙箱、系统交互、浏览器标签</td><td>前端扩展目录 <code>ExtensionPage.tsx</code>、<code>webview-document.ts</code>；<code>features/browser/PluginBrowserSurface.tsx</code>；主进程 <code>src/main/plugin-ui.ts</code>、<code>plugin-ui-documents.ts</code>、<code>plugin-download.ts</code>、<code>plugin-host.ts</code></td><td><a href="content/page.html">页面 API</a></td></tr>
+<tr><td>原生声明组件</td><td>引擎 <code>src/plugins/native-ui.ts</code>；前端扩展目录 <code>NativeExtensionPage.tsx</code>、<code>native-document.ts</code></td><td><a href="content/native.html">原生组件</a></td></tr>
+<tr><td>事件、服务、持久调度、引擎生存期</td><td>引擎 <code>src/plugins/lifecycle-runtime.ts</code>、<code>background-runtime.ts</code>；前端扩展目录 <code>services.ts</code>；主进程 <code>src/main/plugin-background.ts</code>、<code>engine/host.ts</code></td><td><a href="content/events.html">事件与后台</a>、<a href="content/page.html#services">服务</a></td></tr>
+<tr><td>示例与产物语义</td><td>引擎 <code>src/plugins/templates.ts</code>、<code>application.ts</code>、<code>artifacts.ts</code>；<code>docs/examples/workbench-extension/</code></td><td><a href="content/manifest.html">插件清单</a>及对应示例</td></tr>
+</tbody></table>
+<p>至少核对：完整参数和返回值、已声明与已授权权限、管理角色和会话确认、开发与发布差异、目标绑定、流式取消/背压、旧修订与连接切换、所有实际挂载、错误返回和仍存在的结构限制。当前只有一个默认界面；浏览器承载不等于浏览器控制，代码预览不等于全部编辑器，服务内存计时不等于持久后台调度。</p>
+<h2 id="evidence">证据和限制</h2><p>测试报告、截图、临时配置和隔离示例均放前端仓库 <code>.e2e-tmp/plugin-api-site/</code>。覆盖和指纹检查可发现遗漏与未审阅实现变动，不能证明所有业务语义正确；涉及真实模型、MCP、文件或权限行为的变更仍须跑相应测试。记录区分静态人工审阅、模拟、真实宿主和真实模型验证；没有运行的部分明确标记未验证。一次文档审阅不能作为此前业务测试通过的替代证据。</p>
 </main></body></html>

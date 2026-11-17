@@ -1,5 +1,9 @@
 # Codex 功能对照后的实施与准入
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 2026-10-14 14:00 北京时间：顶栏已应用，补充要求历史继续收口
 
 root 的顶栏三叶已实际 guarded apply：`MenuBar.tsx`、独立 `menu-bar.css` 和永久 `e2e/menu-bar-responsive.spec.ts`，应用 journal `.ae/tmp/current-joint-candidate-20261014-Z9jo7k/titlebar-application.jsonl` SHA `add81637c5bfe4d78ae1f752dfe8b5fbb28dd69b466145bed65d17f60317ce43`。准确候选原始 typecheck/build0、source/output稳定；永久 Electron 两项 **2/2 passed，0 skipped/failed/flaky，5.53秒**，报告 SHA `9419dae7346a949c0b506ce091b85484ca274b20a45ba3e2ab80d16ea10947c9`。四宽度、两模式和真实持久主题切换，菜单完整性、键盘焦点与设置命令副作用均验证。三叶前像全部一致，未覆盖用户其他源码、公共 out 或 Git 元数据；公共新联合构建仍待其他增量收口后进行。

@@ -1,5 +1,9 @@
 # Work 性能优化实施与验证
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 2026-10-12，依据 [调研方案](work-performance-investigation-2026-10-12.md) 实施。源码和开发构建已更新；没有修改实际用户配置、重启实际用户实例或发布安装包。工作树中的既有改动保留，本文只记录本次性能工作。
 
 ## 实测结果

@@ -1,5 +1,9 @@
 # Codex 本地解包客户端生态审查
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 审查日期：2026-11-03。样本：`E:/rea/codex-src`，`openai-codex-electron` **26.1007.21434 / build 13901**，Electron 42.3.0。
 
 这份报告研究用户提供的打包客户端。它与本次实际工具表、官方在线文档、固定提交的开源 Rust 工具目录是四种独立证据；不能把版本、账号、平台和功能开关差异合并成一个“所有人都可调用”的工具全集。

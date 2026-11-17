@@ -1,5 +1,9 @@
 # Office campaign 准入协调器
 
+> **状态核对（2026-11-17）：候选 harness 模块，非当前产品提交链路。** `office-verified-submit.mjs` 及其 adapter 仍存在；`run-office-company-campaign.mjs` 未静态接入该协调器，本文不能证明当前 runner 已完成现场安装。模块需要调用方提供真实 ports、身份与持久 journal；单独运行该文件不会替用户发送任务。下文的接入约束与离线测试属于模块合同，不是默认会话的用户操作步骤，旧 runner／DOM 还需重新适配。
+>
+> 当前产品操作见[使用指南](../docs/user-guide.md)，可达页面与源码见[功能覆盖表](../docs/feature-map.md)。以下原文保留用于追溯。
+
 `office-verified-submit.mjs` 是独立、尚未接入当前 runner 的 harness 模块。导入模块不会启动窗口、引擎、模型会话或定时器。它只负责一次 UI 提交与随后准入证据的核验，不改变产品 API。
 
 ## 接入边界

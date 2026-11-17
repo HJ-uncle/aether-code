@@ -1,5 +1,9 @@
 # Aether 引擎生态与工具完整清单
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 调研日期：2026-11-03。源码基线：当前工作区 `D:\dev\ai-agent-engine`（含已有未提交改动）；本次只读审查产品代码，未调用真实模型、MCP 服务或生产写接口。附带会话是历史证据，不能证明其当时运行二进制与当前源码完全一致。
 
 本文件和 [engine-tools.json](engine-tools.json) 对照注册工厂，列出 **76 个静态可注册能力**：71 个非记忆能力 + 5 个按 scope 启用的记忆能力，含 3 个技能接口和 15 个浏览器工具。Code 基础允许集为 **48 个**，可以按会话配置再加入 5 个真实内置记忆实现；扩展 MCP 另计。general/Work 默认使用 balanced OSM、session memory 时可注册全部 76 个，真实单次请求还会被自定义 Agent、allowedTools、OSM、技能和 MCP 绑定进一步缩窄。这不是该历史会话的运行时工具快照。

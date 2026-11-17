@@ -1,5 +1,9 @@
 # Code → Work 功能对齐与单工作台迁移评估
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-11-05（初稿 2026-11-04）  
 更新：追加浏览器过程归类、图片恢复和 Work 原始数据入口精简；各阶段验证分见第 10 节  
 对象：Aether，Electron + React + TypeScript 桌面应用  

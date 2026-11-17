@@ -1,5 +1,9 @@
 # Work 待验收事项（只读证据整理）
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 整理时间：2026-10-12。来源：`work-full-e2e-audit.md`、`work-soak-evidence-audit.md`，并对照已经记录的引擎回归。此记录不修改或重启产品，不启动测试实例。正式运行开始后，产物保持冻结；新增结果应追加证据，不覆盖原失败。
 
 ## 后续定向回归已验证修复的具体问题

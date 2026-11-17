@@ -1,5 +1,9 @@
 # 会话模型、思考选择与队列隔离修复
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 实际问题：正式 R4 的 S2 服务端 configuredModel/actualModel 均为 qwen3.8-flash，原客户端输入栏却显示全局默认 DeepSeek。续聊会把 DeepSeek 明确写入请求，因此并非只影响显示。
 
 ## 最终行为

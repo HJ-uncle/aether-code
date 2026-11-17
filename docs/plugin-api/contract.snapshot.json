@@ -319,15 +319,15 @@
     "assets/app.js": "c0d62078c5098c1455ace38c8fdbe3069ea49338c0d249e0de5f05c0e16db1be",
     "assets/styles.css": "8035e3bc5acd9e535e4cbf7192054df712b9477bb0d1da7f43f105f4b229b2cd",
     "assets/tokens.css": "b39f5ab52021243bfdd3be4208cc186b0cb9c1ddd133464d71ed8ee808a6299d",
-    "content/contributions.html": "0715cf4ddc37ff2aa6d5ed93acbfb5d7910e74e45d79669e6c72cbf0754c9226",
-    "content/events.html": "ce516bd0e693d812ca0206db84938f2315ca431d3ae8a498e6f24cb20305c4b7",
-    "content/manifest.html": "6f3a82beaca913912a9dd10fd6ba1642de3adf49d71afae0c6432746eabf69bb",
+    "content/contributions.html": "f02f37ee0c392c12a0c45697300be2b9bd491ea2454f8881f2f5a8b70628192a",
+    "content/events.html": "c90c1375d09b733dfa1521ff643c78208a5e0cf4db45b6a2d13f7c4b45f2001e",
+    "content/manifest.html": "a1a391bf0f80c266705e3775a3ddf37eafb64af7e755784f299b4f1e8760d657",
     "content/native.html": "06a7b02c01890fcd2d08e112a01a42702f1ab71b9f045dbc9544fb9329246246",
-    "content/overview.html": "54efd0476d29daf6f085d8487e3b9a4846ad08b77265e842ab12bd193b6c0869",
-    "content/page.html": "b784c3f0fbd8b871192ef3a3f6ec4e90b72bdc96054bf203e256750ba2db4acf",
-    "content/permissions.html": "1383695d821f113838ec76e25ff7d1740b902528abcc004657db9ebbad8b2161",
+    "content/overview.html": "75411c26335e2f5c651d745bcb6964a29cb69955f495892850cbaeea818405c6",
+    "content/page.html": "ff1009493d8407037e496546399a8ca3bfcbe2b9a402003cf674581773db8fe6",
+    "content/permissions.html": "ec9adb602d7c3bc8da57f4ad4669fedd9188a37238109768298d2a1bf8d236ba",
     "content/platform.html": "f02a59df854a710c0fe61bf2e28bfb886c24e12c559871c669c4f114356412a1",
-    "maintenance.html": "8dcf6cafe8ff79a53b45189662bdde58932ca281975a115d6d50e6bb3472ba20",
+    "maintenance.html": "5fb487c8cb16ff6df3431b522147ac2dde885d6c8767acd5a4baf8440507bf4e",
     "package.json": "ee4ee137a3dc39f9277294cf5926489d37918c37a0244a31c415f38ff4a916b1",
     "pages.mjs": "73e465ce0f0364b25f6c5e96c335e82fd6a7fb828ec74267bae4540431b9989d",
     "scripts/build.mjs": "9be34be987ff41a5cbeb1e6ce9b50dc28819a154d7aa1ab4209cc48cc8f7d79c",
@@ -337,5 +337,5 @@
     "scripts/serve.mjs": "e38c0a3107b45231f4f9a3b8bf46a64e0f9533069af55b7283ec8421e97df286",
     "template.html": "aaf4224e4c67d87eedee6c8b9bc81721b63205952791303ee8a3324a86dd9f6c"
   },
-  "reviewedAt": "2026-11-17T03:03:13.209Z"
+  "reviewedAt": "2026-11-17T04:30:13.608Z"
 }

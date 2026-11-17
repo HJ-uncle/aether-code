@@ -1,5 +1,9 @@
 # Work 逐轮成果恢复与界面修整
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 成果为何消失
 
 数据链路仍有 `/changes` 持久记录，右侧成果树可以读取。缺口位于 `WorkView.tsx` 的对话渲染：接入显式 `FinalResult` 后，只挂载 `WorkFinalDeliverables`，旧的 `WorkProgressPanel` 及其共享账本读取器不再挂载。历史会话、未发布清单的轮次因此出现“右侧有文件，回复下方没有成果”的现象。

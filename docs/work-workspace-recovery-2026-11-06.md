@@ -1,5 +1,9 @@
 # Work 工作目录恢复与紧凑面板
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 已核实的原因
 
 开发启动器每次生成独立的引擎构建目录，旧的开发环境未提供持久 `WORKSPACE_ROOT`。引擎默认 `./workspace` 因而跟随运行目录变化，而会话数据库保存在固定目录。未绑定项目的同一会话重启后会落到另一个 scratch 目录。

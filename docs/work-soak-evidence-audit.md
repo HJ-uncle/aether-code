@@ -1,5 +1,9 @@
 # Work 长测证据审计
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 本审计只读检查了 `scripts/work-soak-runner.mjs`、`.ae/soak/long-run-20261012/` 产物、`.ae/soak/mock-openai.mjs` 和引擎配置脚本。没有启动第二轮、删除运行产物或读取凭据。
 
 被审计运行是 `work-20261011180059-8b14ddae`，时间为 2026-10-11 18:00:59Z 至 2026-10-12 00:00:59Z。

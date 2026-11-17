@@ -1,5 +1,9 @@
 # 能力发现、执行协议与 Code 工作台回执实现
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-11-03。范围：本文件记录本次能力协议子任务已经实现并验证的内容；主报告负责浏览器恢复、命令变更管理和整体端到端验收。
 
 最新结果见 [主实施报告](ecosystem-implementation.md)：Code/Work 工作台的 8 项真实 Electron 验收已通过，包含下文建议的文件激活、未保存内容保护、同路径刷新和会话隔离。

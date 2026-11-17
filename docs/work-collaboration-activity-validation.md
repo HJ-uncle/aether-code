@@ -1,5 +1,9 @@
 # Work 子代理协作与原位活动验收（2026-10-12）
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 本轮对应「@Agent 被拒绝」与「活动回到对话内展开」两项反馈。沿用已安装的 ui-ux-pro-max、macos-design 指引，复用 Code 的消息、差异、命令、子代理卡片与主题令牌。
 
 ## 行为

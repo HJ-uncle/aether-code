@@ -1,5 +1,9 @@
 # 横向滚动覆盖检查（2026-11-09）
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 范围与方法
 
 扫描整个 `src/renderer/src` 的 CSS、TS/TSX 内联样式、`scrollLeft` / `scrollBy` 使用，以及 `@media` / `@container` 中的布局切换。逐项核对 `overflow-x:auto/scroll` 与 `overflow:auto/scroll`，再追到实际渲染组件，避免只搜索已有的 `data-scroll-axis` 标记。

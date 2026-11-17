@@ -1,41 +1,52 @@
-# Work 图标约定
+# 默认界面的图标约定
 
-Work 的导航、操作、状态和弹出菜单使用 `workbench/outline-icons.ts` 中的统一 SVG 目录：24×24 画布、1.5 描边、圆端点与圆连接，颜色继承所在控件。
+源码核对日期：2026-11-17。保留旧文档文件名，但 Aether 当前只有一个默认界面。图标来源为 [ui/outline-icons.ts](../src/renderer/src/ui/outline-icons.ts) 与 [ui/icons.tsx](../src/renderer/src/ui/icons.tsx)，不再使用旧 `workbench/outline-icons.ts` 路径或按 Work／Code 切换图标体系。
 
-`App` 根据当前模式设置 `IconProvider`，覆盖设置、确认弹窗及通知等全局宿主；保活的 Work / Code 子树各自固定图标风格。React portal 继承同一 Provider，不能只靠 `.work-view svg` 的 CSS 后代选择器实现。
+## 当前接线
 
-## 语义
+[App.tsx](../src/renderer/src/App.tsx) 用 `IconProvider variant="outline"` 包含应用、确认弹窗、Git 分歧策略弹窗与通知宿主；[ApplicationShell.tsx](../src/renderer/src/app/ApplicationShell.tsx) 的内容子树也明确使用相同轮廓样式。React portal 继承 Provider，因此菜单和浮层不依赖 `.work-view svg` 等 DOM 后代选择器。
 
-| 功能 | 图标 |
+普通轮廓图标采用 24×24 画布、1.5 描边、圆端点和圆连接，颜色继承所在控件。`Icon` 的通用目录仍保留部分品牌及特殊图形，不意味着还存在第二套产品界面。
+
+## 语义来源
+
+| 当前用途 | 图标 |
 | --- | --- |
-| 工作台 | `dashboard` |
-| 项目 / 工作区 | `folder-outline` |
-| Agent / 子代理集合 | `account-outline` / `users` |
-| 插件 / 内置插件管理工具包 | `puzzle` / `extensions` |
-| 浏览器 / 搜索 | `globe` / `search` |
-| 自动化 / 引擎监控 | `clock-outline` / `activity` |
-| 全局运行列表 | `list-play` |
-| 成果 / 资料 | `file-check` / `library` |
-| Skill / 知识库 / MCP | `package-variant-closed` / `book-open` / `plug` |
-| 刷新数据 / 重新执行 | `refresh` / `restart` |
-| 下载、导出 / 上传 | `download` / `upload-outline` |
+| 工作台／工作区首页 | `dashboard` |
+| 项目／工作区目录 | `folder-outline` |
+| Agent 管理／子代理集合 | `account-outline`／`users` |
+| 调研／执行／通用角色 | `agent-research`／`agent-executor`／`agent-general` |
+| 插件／内置插件管理工具包 | `puzzle`／`extensions` |
+| 浏览器／搜索 | `globe`／`search` |
+| 自动化／引擎监控 | `clock-outline`／`activity` |
+| 成果／资料 | `file-check`／`library` |
+| 技能／知识库／MCP | `package-variant-closed`／`book-open`／`plug` |
+| 刷新数据／重新执行 | `refresh`／`restart` |
+| 下载、导出／上传 | `download`／`upload-outline` |
+| 会话服务／消息历史 | `terminal`／`clock-outline` |
 
-同义操作（复制、删除、搜索等）的旧名称映射到同一几何。工具包菜单、输入框标签和历史引用共用目录；子代理按持久化的角色身份选择图标，不根据显示名称猜测身份。
+导航的事实来源是 [navigation.tsx](../src/renderer/src/app/navigation.tsx)，工作区为 [workspace-tabs.ts](../src/renderer/src/features/workspace/workspace-tabs.ts)。通知入口随自身状态选择图形，不把旧“全局运行列表”名称当作当前服务入口。子代理图标根据 [builtin-agents.ts](../src/shared/builtin-agents.ts) 的角色身份选择，不能根据显示名称猜测身份。
 
-## 尺寸与例外
+运行中的任务使用独立 Spinner；等待审批、等待补充、失败、中断与完成使用实际状态对应的图形和可访问文案。断开连接仅表示需要恢复确认，不能绘制为已完成。状态实现见 [TaskStatus.tsx](../src/renderer/src/features/sessions/TaskStatus.tsx) 与[侧栏任务模型](../src/renderer/src/features/sessions/sidebar-task.ts)。
 
-- 侧栏 18px，常规操作 16px，紧凑状态 12–14px，空态 24–28px；点击区域由按钮负责。
-- 图标在有文本或按钮标签时作为装饰，保持 `aria-hidden`，图标按钮必须保留可访问名称。
-- 文件类型、品牌标识保留自己的识别图形。进度圆环、图表及浏览器坐标图是数据可视化，不替换成操作图标。
-- 图片标注工具采用相同线宽，撤销/重做复用统一目录。
+## 尺寸、可访问性与例外
 
-## 验证
+常见尺寸为导航 18px、普通操作 16px、紧凑状态 12–14px、空态 24–28px，实际尺寸以相应组件为准；图标大小与按钮命中区域分别设置。
 
-先运行 `npm run build`，再运行：
+图标在已有文字时作为装饰，`Icon` 使用 `aria-hidden`。只显示图标的按钮仍须有稳定可访问名称，必要时有提示和键盘焦点；[IconButton](../src/renderer/src/ui/ui-primitives.tsx) 提供共享入口。手动刷新无需重复显示“刷新”文字，但不能因此丢失动作名称或忙碌反馈。
+
+文件类型、品牌、图像标注、图表和坐标可视化按自身语义保留。进度圆环不等于刷新动作，不把按钮整体旋转作为所有加载状态的通用实现。颜色和焦点来自 [tokens.css](../src/renderer/src/assets/tokens.css)，不为某个菜单复制新色板。
+
+## 当前验证入口
+
+先构建新产物，再选择现有集中配置：
 
 ```sh
+npm run build
 npx playwright test --config e2e/config/playwright.work-icons.config.ts
-npx playwright test --config e2e/config/playwright.mention-toolkit.config.ts --grep "@ 单列分组|MCP 管理工具包与插件共同选择|资源菜单紧凑"
+npx playwright test --config e2e/config/playwright.mention-toolkit.config.ts
 ```
 
-图标用例在隔离 Electron 配置中检查语义、尺寸、描边、门户继承、模式切换和全目录 SVG 边界，并输出深浅主题截图。不要用固定 SVG 子节点数量代替状态语义断言。
+图标配置当前选择 [work-home-ui.spec.ts](../e2e/work-home-ui.spec.ts) 和 [task-status-icons-ui.spec.ts](../e2e/task-status-icons-ui.spec.ts) 中的相应断言，覆盖导航、portal、主题、SVG 目录边界和任务状态；资源菜单配置选择 [attachment-references-ui.spec.ts](../e2e/attachment-references-ui.spec.ts)。测试文件保留的 `work` 名字不代表需要切换产品模式。产物路径由配置固定在 `.e2e-tmp/`。
+
+本次文档更新没有重新运行这些测试，也不宣称全部图标已完成当次视觉验收。验证应检查语义、可访问名称、实际状态与边界，不用固定 SVG 子节点数量替代功能断言。整体视觉实现见[设计说明](../design-system/aether-code/MASTER.md)。

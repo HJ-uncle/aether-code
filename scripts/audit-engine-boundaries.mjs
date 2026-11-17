@@ -1,5 +1,6 @@
 /** Authorized local audit: production route/policy code, disposable DB and fake PTY.
- * Run: node --import ../ai-agent-engine/node_modules/tsx/dist/loader.mjs scripts/audit-engine-boundaries.mjs
+ * Run: node --import ../ai-agent-engine/node_modules/tsx/dist/loader.mjs scripts/audit-engine-boundaries.mjs [output.json]
+ * Default output: .e2e-tmp/audit-engine-boundaries/report.json; historical docs evidence is not overwritten.
  * Vulnerable probes remain explicitly vulnerable in the JSON; a completed run is not a security pass.
  */
 import fs from 'node:fs'
@@ -11,6 +12,7 @@ import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const output = path.resolve(root, process.argv[2] ?? '.e2e-tmp/audit-engine-boundaries/report.json')
 const engine = path.resolve(root, '../ai-agent-engine')
 const requireEngine = createRequire(path.join(engine, 'package.json'))
 const scratch = path.join(root, '.e2e-tmp')
@@ -195,7 +197,8 @@ try {
   dbModule.getDb().close()
   const report = { createdAt: new Date().toISOString(), fixture, scope: 'Actual engine source; isolated DB; terminal route PTY stub; real command child processes',
     sourceHashes: Object.fromEntries(['terminal/index.ts','api/http/routes/terminal.ts','security/policy-engine.ts','auth/middleware.ts','workspace/manager.ts'].map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(engine,'src',file))).digest('hex')])), findings }
-  fs.writeFileSync(path.join(root, 'docs/sandbox-api-audit-results.json'), JSON.stringify(report, null, 2) + '\n')
+  fs.mkdirSync(path.dirname(output), { recursive: true })
+  fs.writeFileSync(output, JSON.stringify(report, null, 2) + '\n')
   console.log(JSON.stringify(findings, null, 2))
   process.exitCode = findings.some(item => item.status === 'inconclusive') ? 1 : findings.some(item => item.status === 'vulnerable') ? 2 : 0
   // Keep fixture evidence available for review. No recursive cleanup is performed here.

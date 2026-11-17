@@ -1,5 +1,9 @@
 # Word、PDF、Excel 生成与预览审查
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-11-10。范围：继 PPT 调整后，检查三类办公文件的技能说明、生成器、内容检查与 Work 原文件预览。使用隔离夹具，没有运行旧 E2E、导出界面测试或访问生产模型/用户办公文件。
 
 后续更新：Excel 已加入七种原生图表及 Work 预览，详见 [Excel 图表专项验收](xlsx-charts-acceptance-2026-11-10.md)。下文保留本轮 Word/PDF/Excel 内容审查的原始范围。

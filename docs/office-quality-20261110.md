@@ -1,5 +1,9 @@
 # Work 办公能力验收 · 2026-11-10
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 范围和标准
 
 使用真实 Work 会话及数据库配置的 `deepseek-v4.1-flash-1017`，围绕现有网页围棋项目生成 Word、Excel、PPT、PDF。新产物使用独立验收目录，保留既有文件。不开旧 E2E，不测试导出按钮，不使用 WPS、Office 或 LibreOffice。

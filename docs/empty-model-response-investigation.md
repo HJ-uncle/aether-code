@@ -1,5 +1,9 @@
 # 本地运行空回答故障排查（2026-10-08）
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 本次故障的已确认事实
 
 - 用户发送“帮我做一个五子棋”后，运行 `6eb0f92a-755d-47e8-93ac-f5e682202d4b` 在约 1.6 秒后失败，错误码 `EMPTY_OUTPUT`、结束原因 `empty_output`。

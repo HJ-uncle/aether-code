@@ -1,5 +1,9 @@
 # 新冻结引擎：R3 数据副本真实客户端回放
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 结果：完整回放 PASS，5 个会话各正反切换一次，共 10 次，刷新后恢复 PASS，rendererErrors=0。本轮使用完整验收，未启用 history-only。
 
 ## 固定身份与证据

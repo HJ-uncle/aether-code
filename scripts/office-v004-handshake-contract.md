@@ -1,5 +1,9 @@
 # v004 从 v002 恢复的严格校验合同
 
+> **状态核对（2026-11-17）：仍有独立 CLI 的离线恢复证据合同。** 同一 `verify-office-v003-handshake.mjs` 当前支持显式 v004、固定 v002 来源与拒用身份 ledger。核心参数合同仍由现有脚本实现，不代表旧 campaign 或当前 UI 已通过验收。文末 `.e2e-tmp` 现场探针和 2026-10-24 身份是历史接入说明，不能直接用于当前默认界面。报告应写仓库 `.e2e-tmp` 内且位于 company 外；本次未执行证据核验。
+>
+> 当前产品操作见[使用指南](../docs/user-guide.md)，可达页面与源码见[功能覆盖表](../docs/feature-map.md)。以下原文保留用于追溯。
+
 `verify-office-v003-handshake.mjs` 保留原函数名与默认 v003 行为。新参数仅允许 targetRevision 为 v003/v004，sourceRevision 与 baseRevision 都必须为 v002。v004 跳过被拒 v003，从六角色的 v002 原始字节输入建立新链路；这不代表 v002 业务已验收，也不撤销 v003 已发生的不可变性失败。
 
 ```powershell

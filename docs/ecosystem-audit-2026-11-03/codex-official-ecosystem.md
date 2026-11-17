@@ -1,5 +1,9 @@
 # Codex / ChatGPT 官方生态：在线资料对照
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 调研日期：2026-11-03。以下是实际抓取的官方文档，不是把当前会话安装的个人插件视为官方内置功能。旧 `developers.openai.com/codex/...` 链接有重定向，本文使用实际到达的 URL。抓取正文与索引保存于 [official-sources](official-sources/) 和 [official-source-index.json](official-source-index.json)。
 
 ## 资料的四个观察面

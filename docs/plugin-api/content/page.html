@@ -4,7 +4,7 @@
 <p>调用本页面 <code>tools</code> 白名单中的本地工具。</p>
 <pre><code class="language-js">const { result } = await $AE.invoke(&#39;count&#39;, { text: &#39;你好🍎&#39; })
 </code></pre>
-<p><code>tool</code> 是工具名；<code>args</code> 是参数对象，默认 <code>{}</code>。返回 <code>{ result, artifacts, stderr, durationMs, plugin: { id, revision, hash } }</code>，业务结果在 <code>result</code>。</p>
+<p><code>tool</code> 是工具名；<code>args</code> 是参数对象，默认 <code>{}</code>。返回 <code>{ result, artifacts, stderr, stderrTruncated?, durationMs, plugin: { id, revision, hash } }</code>，业务结果在 <code>result</code>。<code>stderrTruncated: true</code> 仅表示返回的日志尾部预览省略了早期内容。</p>
 <h2 id="navigate">navigate(page)</h2>
 <p>打开本插件声明的页面，<code>page</code> 为局部页面 ID。完成后返回 <code>null</code>。</p>
 <pre><code class="language-js">await $AE.navigate(&#39;preferences&#39;)
@@ -21,6 +21,7 @@
 })
 </code></pre>
 <p><code>fileName</code> 是文件名，不能带目录；<code>content</code> 为字符串；<code>encoding</code> 为 <code>utf8</code>（默认）或 <code>base64</code>。返回 <code>{ saved, bytes? }</code>，取消时 <code>saved: false</code>，不返回本机路径。</p>
+<p>文件名的 UTF-8 长度最多 240 字节，不能含控制字符、Windows 非法字符或保留设备名，也不能以点或空格结尾。Base64 必须使用标准字符、补齐方式和规范编码。每个窗口同时只允许一个插件保存流程；保存前会再次确认页面有效。文件内容不另设插件专属容量上限。</p>
 <h2 id="services">services</h2>
 <p>管理本插件通过 <code>contributes.services</code> 声明的服务。会话作用域中运行或等待处理的服务显示在当前会话的「更多工作区」弹层中；点击弹层内的「查看服务历史」可查看完成、停止或失败的记录。没有运行中的服务时，历史入口仍然可用；重新打开弹层时默认显示当前工作区与进行中内容。未运行的 <code>idle</code> 服务不显示在这两个列表中，仍可通过 SDK 读取和启动。参数 <code>id</code> 使用 <code>contributes.services[].id</code>，不要传带平台前缀的快照 ID。</p>
 <p>服务实例遵循声明的 <code>scope</code>，全局服务可通过插件页面和 SDK 管理。服务历史按会话区分，历史摘要不等同于可继续操作的服务实例。底部「活动」显示当前会话运行或等待处理的服务及未读通知；底部「历史」保留已读通知，服务历史仍在会话内查看。</p>
@@ -74,6 +75,7 @@ unsubscribe()
 })
 </code></pre>
 <p><code>kind</code> 可为 <code>info</code>（默认）、<code>warning</code>、<code>error</code>、<code>question</code>；<code>title</code>、<code>message</code> 必填；<code>buttons</code> 默认 <code>[&#39;好&#39;]</code>，最多 4 个。返回 <code>{ response, canceled }</code>：<code>response</code> 是按钮索引，多个按钮时最后一个作为取消按钮。当前不提供文本输入框。</p>
+<p>标题为 1–120 字符，消息为 1–10000 字符，每个按钮文案为 1–40 字符。每个窗口同时只允许一个插件消息对话框；等待已有对话框关闭后再发起下一个。</p>
 <h2 id="notify">ui.notify(input)</h2>
 <p>发送应用内通知并请求显示系统通知。权限：<code>ui.notifications</code>。</p>
 <pre><code class="language-js">const { shown } = await $AE.ui.notify({ title: &#39;处理完成&#39;, body: &#39;已生成 3 份报告&#39; })
@@ -148,6 +150,7 @@ await $AE.ui.editor.reveal({ line: 12, column: 1 })
 <p><code>insert</code> 不按光标位置插入。<code>submit</code> 表示提交动作已派发，不代表模型已经完成；草稿不可提交或目标已关闭时会报错。当前 API 不提供创建附件或自定义引用标签的方法。</p>
 <h2 id="page-environment">页面环境</h2>
 <p>页面不需要导入 SDK。脚本、样式内联，图片用 data URL 或页面生成的 blob；页面不直接请求外网，网络操作放到插件工具中。表单提交事件应调用 <code>event.preventDefault()</code>，再调用 SDK。</p>
+<p>页面在独立沙箱中运行，没有 Electron IPC、宿主组件或任意本地文件访问。平台内置浏览器的插件标签复用同一页面环境；普通 HTTP/HTTPS 标签不会注入 <code>$AE</code>，也不能通过输入插件页面地址获得身份。停用、修订替换或切换引擎后，旧页面和延迟回执会失效；页面关闭会释放事件订阅并取消页面拥有的流式请求。</p>
 <p>主题自动同步 <code>color-scheme</code>、<code>data-appearance</code> 和以下 CSS 变量，切换主题不会重载页面：</p>
 <pre><code class="language-css">/* 示例：继承平台配色 */
 main { background: var(--bg-surface); color: var(--fg); }

@@ -1,5 +1,9 @@
 # 现有窗口内的 Work 文档与资源验证
 
+> **状态核对（2026-11-17）：历史 runner 的 UI 验证接入记录。** 对应 helper 仍存在且导入不启动应用，但依赖既有 campaign 控制器、固定样本和旧 `#mode-work` DOM；当前默认界面没有该 ID，原 campaign 启动器还使用旧“Work 办公”切换入口。因此下列 `.e2e-tmp` 操作不能直接作为当前版本验证命令。需先适配并重新审阅身份、选择器与样本；本文件中的测试数量、Office 样本覆盖和 UI 结果不代表本次验收。
+>
+> 当前产品操作见[使用指南](../docs/user-guide.md)，可达页面与源码见[功能覆盖表](../docs/feature-map.md)。以下原文保留用于追溯。
+
 本工具只由 root 在现有 runner 的 `recover(c)` 调用。导入本身不访问 live；不启动应用、窗口、服务器或模型任务，也不导入 verified-submit adapter。它不替代产品 build 或真实截图检查。
 
 ## 执行入口

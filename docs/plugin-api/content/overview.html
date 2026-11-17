@@ -1,4 +1,5 @@
 <p>用插件扩展 Aether 的会话、工作区和界面，并调用平台已有的 AI、Agent、Skills、MCP 与知识库能力。本文对应 <code>apiVersion: 1</code>。</p>
+<p>Aether 使用一个默认界面。插件入口、会话、成果和工作区属于同一界面；本文的挂载位置不要求切换 Work 或 Code 模式。</p>
 <h2 id="get-started">开始使用</h2>
 <p>在「插件 → 开发模式」打开自己的插件目录，按需绑定会话和授权，修改后刷新即可调试。也可以在会话中添加 <code>@插件管理</code>，让 AI 从模板创建工程。</p>
 <ul>
@@ -7,6 +8,9 @@
 <li><a href="platform.html#agents-example">Agent 示例</a>：启动任务、读取状态、取消与接续，以及可用的基础工具范围。</li>
 </ul>
 <p>验证页面插件时，除了工具的输入输出，还要实际走通点击、AI 返回、结果渲染和导出。默认脚手架的 Node 测试不覆盖页面；使用固定模型回复的测试也不能替代真实模型验证。</p>
+<h2 id="capability-boundaries">选择合适的扩展方式</h2>
+<p>确定性业务逻辑放在 Node 工具；简单表单可使用工具页面或 JSON 原生组件；需要自定义交互、流式输出或下载时使用 Webview。插件 Agent 可组合<a href="platform.html#engine-tool-catalogue">六类内置工具</a>、授权的 Skills、MCP 和本插件工具，范围与主会话 Agent 并不相同。</p>
+<p>当前没有公开的浏览器控制、Office 编辑器、成果面板控制或平台管理 SDK。内置浏览器可以承载插件页面，但不会因此向插件授予普通网页或其他标签的控制权。文件读写使用已授权的工作区 API；具体编辑器交互以<a href="page.html#editor">代码预览接口</a>为准。</p>
 <h2 id="platform-api">平台 API</h2>
 <p>以下接口可用于插件页面和平台启动的 Node 工具。<code>$AE</code> 自动提供，无需导入，也无需让用户重复填写模型密钥。</p>
 <table>

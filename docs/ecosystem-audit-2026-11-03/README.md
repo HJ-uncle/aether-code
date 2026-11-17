@@ -1,10 +1,14 @@
 # Aether 与 Codex：生态、工具和模型使用协议深度调研
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-11-03。对象：`D:\dev\aether-code` 客户端、`D:\dev\ai-agent-engine` 引擎、用户提供的围棋会话，以及 Codex 本地解包、官方开源实现和在线资料。
 
 后续实施见 [生态衔接优化与验证](ecosystem-implementation.md)。下文工具数量和问题描述保留调研时的快照，不能当作实施后的现状。
 
-后续工具精简见 [AE 工具精简与请求说明压缩](../../../ai-agent-engine/docs/tool-cleanup-2026-11-03.md)：删除 6 项工具，搜索改名为 `glob` / `grep`，15 项管理或队列工具按需选择；每次请求自动注入环境并发送完整工具参数，精简重复提示。以下清单保留为实施前的调研记录。
+后续工具名称、按需加载和权限已持续调整，当前说明见[系统工具](../../../ai-agent-engine/docs/docs/system-tools.md)与[桌面工具配置](../tool-profiles.md)。以下清单保留为实施前的调研记录。
 
 ## 结论先行
 

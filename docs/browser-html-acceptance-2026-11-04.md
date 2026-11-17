@@ -1,5 +1,9 @@
 # 浏览器与 HTML 运行验收记录
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 验收日期：2026-11-04。项目：`D:\dev\aether-code`。
 
 本轮已修复 Code / Work 浏览器展示归属、Work 原生页面尺寸、HTML 运行与本地标签复制，以及 Work 离线打开本地资料被引擎状态误拦截的问题。最终 **r9 的 HTML 完整链路 3/3、浏览器范围隔离 2/2、源码与实时预览 5/5 全部通过**，共 10 项真实 Electron 验收，分两次执行。下文保留 r7 的历史结果与失败证据，用于追踪问题修复。

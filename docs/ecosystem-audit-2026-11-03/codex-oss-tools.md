@@ -1,5 +1,9 @@
 # 官方开源 Codex：引擎工具与发现协议
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 版本锁定：[`616cab3a3529`](https://github.com/openai/codex/commit/616cab3a3529f572c3385098c12698278770ea98)，提交时间见 [revision.json](codex-oss/revision.json)。
 
 公开源码注册项目录；包含互斥版本、托管工具形态和内部测试项，不是任何单个会话的工具总数。inputs/outputs 是人工核对摘要；完整静态定义见 sourceFiles，动态覆盖以运行时为准。

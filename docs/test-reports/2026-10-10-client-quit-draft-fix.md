@@ -1,5 +1,9 @@
 # 快速退出时最新编辑草稿丢失修复
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 ## 已证实缺口
 
 第二完整轮 789 项：787 PASS、1 FAIL、1 serial 未运行、0 显式跳过、flaky0。失败发生在 editor-groups 重启恢复：右组最新 recovered right draft 未恢复，显示磁盘内容 left batch saved。原 JSON/log/trace 均保留在 client-r4-contract-converged-full-20261009.* 与独立 trace 目录。

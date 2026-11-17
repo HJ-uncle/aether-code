@@ -1,5 +1,9 @@
 # 服务预览安全审计
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 审计日期：2026-11-05。项目：`D:\dev\aether-code`。
 
 用户已取消新增本地文件预览。本轮仅检查现有 HTTP/HTTPS 服务预览、编辑器“运行 HTML”使用的内置 HTTP 服务，以及 Electron 页面与工作台的权限边界。没有修改产品源码，也没有将下列问题标记为已修复。

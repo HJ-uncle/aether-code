@@ -1,5 +1,9 @@
 # Code 模式与公共页面性能优化记录
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-10-12。本文补充 [Work 模式调研报告](D:/dev/aether-code/docs/work-performance-investigation-2026-10-12.md)，覆盖公共图形与日志策略、Code 分栏和消息渲染边界，并列出浏览器与设置页的后续工作。原始测量、排除样本、构建完整性与逐项回归记录汇总于 [验证证据 JSON](D:/dev/aether-code/docs/code-performance-verification-evidence-2026-10-12.json)。
 
 ## 1. 当前可以确认的结论

@@ -1,5 +1,9 @@
 # AI 内置浏览器执行链路调查与验证
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 日期：2026-10-10。
 
 ## 依据与范围
@@ -72,3 +76,7 @@ npx playwright test e2e/browser-multitab-ui.spec.ts --repeat-each=3
 旧引擎继续兼容启动及已有浏览器操作；缺少取消能力时客户端会明确提示升级。旧引擎内部的 PORT/HOST 继承和停止同步能力不因仅更新客户端而自动修复。
 
 本轮验证覆盖上述浏览器链路，不等于全产品所有功能或 7×24 小时稳定性认证，也不是对某个真实外部模型所有决策的保证。
+
+<!-- snapshot-links-rebased -->
+
+快照原位置：`docs/browser-workflow-reliability.md`。相对链接已按原位置重定位，历史实现描述与验收结论保持原样。

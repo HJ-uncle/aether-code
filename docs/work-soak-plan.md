@@ -1,5 +1,9 @@
 # Work 一小时真实引擎工程压力测试
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 `scripts/work-soak-runner.mjs` 是一个真实引擎 API 长测 runner。它不依赖 Electron UI，不会占用桌面单实例，适合在 UI 验收之外单独运行。默认只做引擎发现和计划生成；只有显式传入 `--execute` 才会调用模型。它会记录模型 provider/base URL（不记录密钥），并拒绝把指向本机回环地址的 `qwen3.8-flash` 当作真实模型执行；只有明确进行受控 fixture 测试时才使用 `--allow-local-model`。
 
 ## 覆盖范围

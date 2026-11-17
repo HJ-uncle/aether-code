@@ -1,5 +1,9 @@
 # 生态衔接优化与验证
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](../README.md)；文档状态见[全量清单](../../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 2026-11-03。实施对象：`D:\dev\ai-agent-engine` 与 `D:\dev\aether-code`。本次采用调研中 Codex 的能力发现、执行身份、真实回执与恢复模式，落实到 Aether 现有引擎和客户端；不是把静态工具数量当作能力完成度。
 
 ## 已实现

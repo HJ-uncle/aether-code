@@ -1,5 +1,9 @@
 # 现有 Office runner 的界面与性能复核
 
+> **状态核对（2026-11-17）：历史并发 campaign 的探针方案。** `office-ui-load-probe.mjs` 是可导入 helper，仍依赖旧 `#mode-work`、会话工具栏以及六条既有 admission；下文的 2026-10-24 路径和 v003/v004 ID 属于历史。当前默认界面不能直接沿用这些定位和 runner 注入命令。统计与身份函数可以单独复用，现场 UI 兼容和性能结论必须重新验证；准备状态与旧测试结果不等于当前已运行。
+>
+> 当前产品操作见[使用指南](../docs/user-guide.md)，可达页面与源码见[功能覆盖表](../docs/feature-map.md)。以下原文保留用于追溯。
+
 这是**准备好的 helper，尚未在真实 runner 执行**。导入模块只定义函数，不启动 Electron、不连接另一个页面、不发模型请求。
 
 本阶段报告固定标为 **“五角色应用并发、六会话切换”**。G2 必须等待 PMO 完成后才允许第二波，因此 PMO 是预期已完成的第六会话；活跃负载只要求 finance、people、sales、operations、compliance 的五个实际固定根。

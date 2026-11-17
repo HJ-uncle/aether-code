@@ -89,11 +89,11 @@ E2E 强制 `workers: 1`：应用用了 `requestSingleInstanceLock`（第二个�
 
 ### 当前基线
 
-**全量 103 条用例，应为 102 passed / 0 failed / 1 skipped。** 若有红，先假定是自己改坏了。
-（数字会随用例增删变动。核对方式：`npx playwright test --config e2e/config/playwright.config.ts --list` 看 Total，
-或挑纯函数 spec 跑一遍——它们不依赖真机，秒级完成。）
+用例数量随功能变化，不使用旧的固定通过数作为当前基线。运行
+`npx playwright test --config e2e/config/playwright.config.ts --list` 核对当前收集范围；
+通过、失败和跳过数以本轮真实报告为准。出现失败先检查本次变更，不自动归因于环境。
 
-唯一的 skip 是「内置终端多标签」：沙箱/CI 里 spawn 控制台进程被拒，
+历史报告中的「内置终端多标签」曾因沙箱/CI 里 spawn 控制台进程被拒而跳过，
 `node-pty` 报 `Cannot launch conpty`，pty 会话根本建不出来。属于**环境能力缺失**，
 不是代码缺陷。终端相关用例已按此改造——探测到失败态就断言「失败被如实告知」或跳过，
 不会留一条误导性的红。

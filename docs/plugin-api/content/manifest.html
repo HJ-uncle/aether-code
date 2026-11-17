@@ -147,6 +147,7 @@
 </tr>
 </tbody></table>
 <p>页面调用填写本地工具名，如 <code>count</code>。不要自行添加 <code>plugin_</code> 前缀。工具在平台中的全名总长最多 64 字符，插件 ID 较长时应缩短工具名。</p>
+<p><code>version</code> 由作者维护；平台的 <code>revision</code> 是保存草稿时生成的修订号，二者不同。发布固定修订及其内容哈希；继续编辑草稿不会立即替换已发布界面。</p>
 <h2 id="tool-protocol">工具输入与输出</h2>
 <p>每次调用读取一份 stdin JSON：</p>
 <pre><code class="language-json">{ &quot;tool&quot;: &quot;count&quot;, &quot;args&quot;: { &quot;text&quot;: &quot;你好🍎&quot; } }
@@ -155,13 +156,14 @@
 <pre><code class="language-json">{ &quot;result&quot;: { &quot;count&quot;: 3 }, &quot;artifacts&quot;: [] }
 </code></pre>
 <p>日志写 stderr；失败使用非零退出码。每次调用独立运行，不用内存变量保存长期状态；持久配置使用 <a href="platform.html#settings"><code>settings</code></a>。</p>
+<p>宿主写入请求后关闭 stdin，入口需读取到 EOF。stdout 的最后一个非空行作为 JSON 结果，也接受未包装的业务 JSON；只导出函数而不读取请求、输出结果不会被自动调用。非零退出码，或没有 <code>result</code> 的顶层 <code>{ error: "说明" }</code> / <code>{ error: { message: "说明" } }</code>，都视为失败。嵌套 <code>result</code> 的业务含义由插件负责验证。</p>
 <p>文件产物格式：</p>
 <pre><code class="language-json">{
   &quot;result&quot;: { &quot;message&quot;: &quot;报告已生成&quot; },
   &quot;artifacts&quot;: [{ &quot;path&quot;: &quot;report.md&quot;, &quot;content&quot;: &quot;# 检查结果\n&quot;, &quot;encoding&quot;: &quot;utf8&quot; }]
 }
 </code></pre>
-<p><code>encoding</code> 可为 <code>utf8</code>（默认）或 <code>base64</code>。产物数量和内容不设插件专属上限。产物回执不等于工作区文件已写入：写工作区用 <a href="platform.html#workspace-write"><code>workspace.write</code></a>，让用户选择保存位置用 <a href="page.html#download"><code>download</code></a>。</p>
+<p><code>encoding</code> 可为 <code>utf8</code>（默认）或 <code>base64</code>。产物数量和内容不设插件专属上限。工具测试和用户在插件页面中的调用只返回产物预览；主会话调用已选用插件的工具时，返回产物会按相对路径进入文件变更记录，可随会话回退，且不覆盖已有文件。插件代码主动写工作区用 <a href="platform.html#workspace-write"><code>workspace.write</code></a>，让用户选择保存位置用 <a href="page.html#download"><code>download</code></a>。直接使用 Node 文件或网络接口产生的副作用不自动进入这条产物回退流程。</p>
 <h2 id="development-and-distribution">调试与分发</h2>
 <ol>
 <li>在「插件 → 开发模式」打开工程目录，按需要绑定会话、启用权限。</li>
@@ -169,8 +171,11 @@
 <li>通过插件管理导入目录或 ZIP，完成测试后发布、启用。也可在管理页导出工程供别人导入。</li>
 </ol>
 <p>ZIP 根目录应直接包含 <code>aether-plugin.json</code>。GitHub 导入要求仓库采用平台支持的插件格式，并非任意仓库都可运行。</p>
+<p>导入得到草稿；发布会启用当前修订。使用涉及平台能力的功能前，还需授权该修订申请的权限。已发布页面可从插件列表直接打开；要让主会话 Agent 调用插件工具，需在该会话中选用对应插件。安装、发布、启用、权限授权和会话选用分别生效，打开过插件页面不会自动把工具加入会话。</p>
 <h2 id="file-constraints">文件约束</h2>
 <p>文件使用 UTF-8，路径使用 <code>/</code> 分隔的包内相对路径。源码文件数、单文件、工程和页面大小不设插件专属上限。不包含凭据、缓存、数据库或 <code>node_modules</code>。Webview 的脚本和样式内联，第三方依赖需预先打包进自包含文件。</p>
+<p>源码支持 <code>.mjs .js .cjs .json .md .txt .svg .html .css .yaml .yml .csv</code> 和 <code>.d.ts</code>；工具入口必须是 <code>.mjs</code>。路径最多 300 字符，不允许绝对路径、反斜杠、目录穿越、冒号、Windows 保留名称或仅大小写不同的重复文件；内容不得含 NUL。打包时不包含 <code>.git</code>、<code>.staging</code>、<code>.versions</code> 等内部目录。</p>
 <p><code>inputSchema</code> 支持常用类型、枚举、必填、范围和组合校验；不支持 <code>$ref</code>、正则 <code>pattern</code>、<code>patternProperties</code>、<code>format</code>、<code>uniqueItems: true</code> 或异步校验。复杂业务校验写在工具入口中。</p>
+<p>Schema 根类型必须为 <code>object</code>，序列化后最多 64 KiB；JSON 结构最多 4096 个值、24 层深度，子 Schema 最多 256 个、16 层深度。单个组合最多 8 个分支，组合分支累计最多 32 个，单个 <code>enum</code> 最多 64 个值。校验不自动转换类型、填充默认值或删除额外参数。</p>
 
 <p>Node 工具和工程测试默认不强加执行时限、V8 内存、输入输出字节配额。运行中的日志使用磁盘缓冲；返回的 <code>stderr</code> 是最多 64 KiB 的尾部预览，<code>stderrTruncated: true</code> 表示预览已省略更早日志，不影响完整结果。独立工程测试可主动设置 <code>AETHER_PLUGIN_TEST_TIMEOUT_MS</code>（正整数毫秒）限定运行时间，省略或 0 不附加时限。</p>

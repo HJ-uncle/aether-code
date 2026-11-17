@@ -1,5 +1,9 @@
 **成果与改动合并验收 · 2026-11-05**
 
+<!-- documentation-status: historical -->
+> 历史资料：保留原有调研、设计或验收条件，不代表当前版本全部行为或本轮测试结果。现行操作与源码入口见[文档首页](README.md)；文档状态见[全量清单](../../ai-agent-engine/docs/documentation-inventory.md)。状态标注：2026-11-17。
+
+
 已按调研建议完成 Work 入口合并。会话中同一文件在成果树中占一项，修改属于该文件的记录；Work 不再提供独立「改动」标签。Code 的改动托盘和 Git 操作继续使用原入口。
 
 **交互结果**
@@ -40,4 +44,4 @@ npx playwright test e2e/work-change-review-ui.spec.ts --grep "撤回较早记录
 - [修改记录](assets/artifacts-consolidation-2026-11-05/change-history.png)
 - [窄窗口待确认改动](assets/artifacts-consolidation-2026-11-05/pending-changes-narrow.png)
 
-调研依据保留在 [原调研记录](artifacts-changes-consolidation-research-2026-11-05.md)；其中代码位置与「未实施」描述对应调研阶段，实施结果以本验收记录为准。
+本文保留实施阶段的验收边界及截图；当前成果、文件改动与回退的操作见[使用指南](user-guide.md)。
