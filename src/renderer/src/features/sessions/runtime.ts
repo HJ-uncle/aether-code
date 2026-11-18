@@ -226,7 +226,7 @@ export function useSessionController() {
   const submitted = useRef(
     new Map<
       string,
-      { source: string; text: string; mentions: Mention[]; attachments: ChatAttachment[]; createdAt: number; preserveDraft: boolean
+      { source: string; attachments: ChatAttachment[]; createdAt: number
         previousRunId?: string; previousRunSeq?: number; admitted: boolean; epoch: number }
     >()
   )
@@ -456,11 +456,8 @@ export function useSessionController() {
         : freezeAttachmentReferences(draftAttachments(task.attachments, task.sources, mentions))
       const submission = {
         source,
-        text,
-        mentions: [...mentions],
         attachments: [...task.attachments],
         createdAt: Date.now(),
-        preserveDraft,
         previousRunId: chat.sessionModel?.runId ?? task.activity?.runId,
         previousRunSeq: task.activity?.seq,
         admitted: false,
@@ -702,18 +699,9 @@ export function useSessionController() {
       last.createdAt >= sent.createdAt &&
       !chat.streaming
     ) {
-      if (last.status === 'error' && task && !sent.preserveDraft) {
-        const draft = getSessionDraft(source, observedId)
-        const recovered = !hasNonResourceContent(draft) ? restoreMessageDraft(draft, { text: sent.text, mentions: sent.mentions }) : null
-        const attachments = [...task.attachments, ...sent.attachments]
-        updateTask(observedId, {
-          ...(recovered ? { draft: recovered.text, mentions: recovered.mentions,
-            resources: withDraftResourcePatch(task.resources, restoredResourcePatch(task.resources ?? {}, recovered)) } : {}),
-          attachments: attachments.filter(
-            (item, index) => attachments.findIndex((other) => other.path === item.path) === index
-          )
-        })
-      }
+      // Only admission consumes a draft. Rejection or uncertain delivery already
+      // leaves it intact; an execution failure must not restore a sent message
+      // or mix its attachments into a new draft. Explicit editing owns recovery.
       if (['done', 'error', 'aborted', 'interrupted'].includes(last.status))
         submitted.current.delete(observedId)
     }
@@ -774,12 +762,14 @@ export function useSessionController() {
   const createProjectTask = useCallback(async (path: string): Promise<string | undefined> => {
     if (epoch !== getEngineSource() || source !== getEngineStorageKey())
       throw new Error('工作区连接已变化，请重新打开项目菜单。')
-    if (!path || !getSessionState(source).tasks.some(task => !task.archived && task.workspacePath === path))
+    const project = path && getSessionState(source).tasks.find(task => !task.archived && task.workspacePath &&
+      sessionWorkspacePathKey(task.workspacePath) === sessionWorkspacePathKey(path))
+    if (!project || !project.workspacePath)
       throw new Error('此项目已不在当前列表中，请重新选择项目。')
     setError(null)
     // An explicit project starts a fresh unsent draft. Reusing or temporarily
     // rewriting Home would consume its session, attachments, or unsent text.
-    return createTask(undefined, [], path)
+    return createTask(undefined, [], project.workspacePath)
   }, [createTask, epoch, source])
 
   const selectTask = useCallback(

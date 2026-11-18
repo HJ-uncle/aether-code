@@ -325,6 +325,25 @@ const run = await $AE.agents.stream({ modelId, task: '审查需求并汇总结�
 <tr><td>子代理与协作</td><td><code>subagent</code>、<code>subagent_start</code>、<code>subagent_send</code>、<code>subagent_wait</code>、<code>subagent_cancel</code>、<code>subagent_participants</code>、<code>subagent_inbox</code>、<code>subagent_read_result</code>、<code>subagent_directory</code>、<code>subagent_followup</code>、<code>subagent_request_input</code></td></tr>
 <tr><td>Skill</td><td><code>list_skills</code>、<code>get_skill</code>、<code>run_skill_script</code></td></tr>
 </tbody></table>
+<h4 id="agents-file-reading">文件读取与续页</h4>
+<p><code>read_file</code> 的 <code>mode: "full"</code> 从头读取，仍受输出预算限制，不能同时传入 <code>start_line</code>、<code>end_line</code> 或 <code>start_column</code>；即使显式传入 <code>start_line: 1</code> 也会返回 <code>FULL_READ_RANGE_CONFLICT</code>。读取指定范围或继续上一页时使用 <code>mode: "auto"</code>。</p>
+<p>文本、JSON、CSV 的源文分页回执提供 <code>hasMore</code>、<code>nextStartLine</code>、<code>nextStartColumn</code>。有下一页时原样使用这两个游标，并保留本次请求的 <code>end_line</code>；列号从 1 开始，按 UTF-16 计数，不自行按字节或字符数量换算。JSON、CSV 的源文片段不一定是完整的数据记录。</p>
+<pre><code class="language-json">{
+  "path": "src/report.js",
+  "mode": "auto",
+  "start_line": 40,
+  "end_line": 160
+}</code></pre>
+<p>以上是模型调用 <code>read_file</code> 的参数示例。假设回执为 <code>hasMore: true</code>、<code>nextStartLine: 87</code>、<code>nextStartColumn: 1</code>，下一次调用为：</p>
+<pre><code class="language-json">{
+  "path": "src/report.js",
+  "mode": "auto",
+  "start_line": 87,
+  "start_column": 1,
+  "end_line": 160
+}</code></pre>
+<p><code>hasMore: false</code>、<code>rangeIsComplete: true</code> 表示请求范围读完；只有 <code>contentIsComplete: true</code> 才表示整个文件读完。较大文件的第 1–1 行读完时，前两项可以成立，而 <code>contentIsComplete</code> 仍为 <code>false</code>。带行号的展示内容不是原始字节；需要原文精确编辑时使用 <code>mode: "exact"</code> 及其 <code>content</code>、完整文件版本 <code>expectedHash</code>。</p>
+<p>批读使用 <code>files: [{ path, ... }]</code>。某项出现上述模式冲突时，整批在读取任何文件前返回失败；其他项也没有执行。范围参数通过基本格式检查且完整错误回执能放入输出预算时，回执中的 <code>retryWith</code> 提供该冲突项的单文件 <code>auto</code> 参数，重试仍检查当前授权与目标范围；它不是整批的重试结果。输出预算较小时会使用更短的错误回执，不会截断参数后当作完整建议。</p>
 <p><strong>命令等待：</strong>模型可用 <code>wait_command({ jobId, waitMs?, cursor?, cursorOffset? })</code> 等待一个命令，或用 <code>wait_commands({ jobs, waitMs? })</code> 并发等待 1–8 个不同命令。默认等待 10 秒、最多 60 秒；批量共用同一截止时间，<code>waitMs: 0</code> 立即读取。超时仍返回真实运行状态，不取消或重新启动进程。每项结果与错误独立，全部正文共享一次调用的输出预算。继续读取时，把各项返回的 <code>nextCursor</code>、<code>nextOffset</code> 原样作为 <code>cursor</code>、<code>cursorOffset</code>；<code>hasMore</code> 表示还有输出。<code>nextOffset</code> 按 UTF-8 字节计数并保持字符边界，不自行按 JavaScript 字符长度换算。命令只在当前会话授权范围内读取，子代理进一步限定到自己的运行。</p>
 <pre><code class="language-json">{
   "jobs": [

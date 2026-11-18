@@ -1,4 +1,5 @@
 import type { FinalResultItem } from '@shared/final-result'
+import { documentKindFor } from '../documents/document-kind'
 
 const MIME_EXTENSIONS: Record<string, string> = {
   'application/pdf': 'pdf',
@@ -17,4 +18,11 @@ export function finalResultPreviewFormat(item: Pick<FinalResultItem, 'mimeType' 
   const originalExtension = /\.([a-z\d]{1,16})$/i.exec(originalName)?.[1].toLowerCase()
   const extension = MIME_EXTENSIONS[item.mimeType.toLowerCase()] ?? originalExtension ?? 'bin'
   return `asset.${extension}`
+}
+
+/** The compact conversation cards are reserved for formats with a dedicated
+ * document renderer. Other published assets remain available in the full
+ * results workspace and through the immutable manifest. */
+export function isOfficeDocument(item: Pick<FinalResultItem, 'mimeType' | 'path'>): boolean {
+  return documentKindFor(finalResultPreviewFormat(item)) !== null
 }

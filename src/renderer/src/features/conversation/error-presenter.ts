@@ -54,6 +54,13 @@ function knownReason(raw: string, state: Record<string, unknown> | undefined): s
   // result that quotes an old error code become a new error card.
   const structured = `${textField(state?.errorCode) ?? ''} ${textField(state?.stopReason) ?? ''}`.trim()
   const haystack = (state ? structured : raw).toLowerCase()
+  const status = textField(state?.status)
+  if ((!state || status === 'failed' || status === 'interrupted') &&
+    (textField(state?.errorCode)?.toUpperCase() === 'REPEATED_FAILURE'
+      || textField(state?.stopReason)?.toLowerCase() === 'repeated_failure'
+      || !state && raw === 'Tool failure or repetition limit exceeded')) {
+    return '工具连续失败或重复调用，任务已停止。请补充新的处理方式后继续，避免重复执行。'
+  }
   if (haystack.includes('engine_restarted') || haystack.includes('engine restarted')) return '引擎已重启，这次任务未能继续。'
   if (haystack.includes('empty_output') || haystack.includes('no final answer')) return '模型没有返回最终回答。请重试；若持续发生，请检查模型服务配置。'
   if (haystack.includes('context_limit') || haystack.includes('context limit')) return '任务超过了模型上下文容量。请缩小范围或从当前结果继续。'
@@ -63,7 +70,6 @@ function knownReason(raw: string, state: Record<string, unknown> | undefined): s
   if (haystack.includes('step_limit') || haystack.includes('steps limit')) return '任务达到最大执行步骤，已停止继续运行。请拆分任务后重试。'
   if (haystack.includes('usage_limit') || haystack.includes('rate limit')) return '模型服务达到用量或速率限制，请稍后重试。'
   if (haystack.includes('authorization') || haystack.includes('needs approval')) return '任务正在等待授权，完成授权后可继续执行。'
-  const status = textField(state?.status)
   // HTTP/SSE envelopes are provider diagnostics, not a user-facing answer.
   // A successful or pending structured state must not be reclassified from a
   // quoted transport error in its text; known structured reasons take priority.

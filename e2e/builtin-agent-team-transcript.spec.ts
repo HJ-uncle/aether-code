@@ -395,6 +395,23 @@ test('a known structured failure reason takes precedence over an accompanying 50
   }
 })
 
+test('repetition failures explain recovery while preserving the original diagnostic', () => {
+  const raw = 'Tool failure or repetition limit exceeded'
+  const summary = '工具连续失败或重复调用，任务已停止。请补充新的处理方式后继续，避免重复执行。'
+  for (const context of [
+    undefined,
+    { status: 'failed' as const, runId: 'repeat-root', error: { code: 'REPEATED_FAILURE', message: raw } },
+    { status: 'failed' as const, runId: 'repeat-root', stopReason: 'repeated_failure' },
+  ]) {
+    expect(presentSessionError(raw, context)).toMatchObject({ summary, retryable: true })
+    expect(presentSessionError(raw, context).detail).toContain(raw)
+  }
+  for (const status of ['succeeded', 'waiting', 'running'] as const) {
+    expect(presentSessionError(raw, { status, runId: 'not-failed' }).summary).not.toBe(summary)
+  }
+  expect(presentSessionError('日志引用：' + raw).summary).not.toBe(summary)
+})
+
 test('authoritative success and waiting states cannot be reclassified by a quoted 500 SSE example', () => {
   for (const status of ['succeeded', 'waiting'] as const) {
     // Start with the diagnostic itself so only the authoritative state, not

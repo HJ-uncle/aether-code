@@ -1,6 +1,6 @@
-/** Real Electron: compact final-delivery tiles, bounded PNG thumbnails, image
- * decode failures, shared image/Office/PDF previews and byte-exact downloads.
- * All assets belong to an authenticated immutable manifest in an isolated fixture. */
+/** Real Electron: compact final-delivery tiles for Office/PDF documents and
+ * byte-exact downloads. Non-document assets stay in the immutable manifest but
+ * are intentionally absent from the compact card surface. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
@@ -22,6 +22,8 @@ const token = 'disposable-final-delivery-token', sessionId = 'work-final-deliver
 const title = '最终交付附件列表', now = Date.now() - 10_000
 const names = { tiny: '透明像素.png', landscape: '横向设计稿.png', portrait: '竖向长图.png', broken: '损坏图片.png',
   xlsx: '项目明细.xlsx', docx: '项目说明.docx', pptx: '项目汇报.pptx', pdf: '交付摘要.pdf' }
+const officeIds = ['xlsx', 'docx', 'pptx', 'pdf'] as const
+const nonOfficeIds = ['tiny', 'landscape', 'portrait', 'broken'] as const
 type AssetId = keyof typeof names
 type Asset = { name: string; bytes: Buffer; mimeType: string; kind: 'file' | 'image' }
 const assets = new Map<AssetId, Asset>()
@@ -191,16 +193,17 @@ async function waitForTileLayout(viewport?: { width: number; height: number }): 
     })
     const stable = snapshot.signature === previous
     previous = snapshot.signature
-    return stable && !snapshot.animating && snapshot.count === assets.size && (!viewport ||
+    return stable && !snapshot.animating && snapshot.count === officeIds.length && (!viewport ||
       snapshot.width === viewport.width && snapshot.height === viewport.height)
   }, { message: 'Wait for the requested viewport and settled attachment geometry' }).toBe(true)
 }
 
 async function verifyCompactTiles(viewport?: { width: number; height: number }): Promise<void> {
-  await expect(deliveries().locator('article')).toHaveCount(assets.size)
+  await expect(deliveries().locator('article')).toHaveCount(officeIds.length)
   await waitForTileLayout(viewport)
   const heights: number[] = []
-  for (const [id, asset] of assets) {
+  for (const id of officeIds) {
+    const asset = assets.get(id)!
     for (const action of ['预览', '下载']) {
       const button = row(id).getByRole('button', { name: `${action} ${asset.name}`, exact: true })
       await expect(button).toBeEnabled(); await expect(button).toHaveText(action)
@@ -242,18 +245,6 @@ async function verifyCompactTiles(viewport?: { width: number; height: number }):
     expect(overflow).toBeLessThanOrEqual(2)
   }
   expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(4)
-  for (const id of ['tiny', 'landscape', 'portrait'] as const) {
-    // The thumbnail is decorative and belongs to the static file information.
-    const thumbnail = row(id).locator('.work-final-deliverable__thumbnail img')
-    await expect.poll(() => thumbnail.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
-    const bounds = await thumbnail.boundingBox()
-    if (!bounds) throw new Error(`Missing thumbnail ${id}`)
-    expect(bounds.width).toBeLessThanOrEqual(34); expect(bounds.height).toBeLessThanOrEqual(34)
-  }
-  await expect.poll(() => row('tiny').locator('.work-final-deliverable__thumbnail img').evaluate(element => {
-    const image = element as HTMLImageElement
-    return [image.naturalWidth, image.naturalHeight]
-  })).toEqual([1, 1])
   await verifyDocumentGlyphs()
 }
 
@@ -303,30 +294,11 @@ test.describe.serial('Work 最终交付附件列表', () => {
     }
   })
 
-  test('附件卡片紧凑同高，静态名称和缩略图不会误触预览，右键操作保持可用', async ({}, info) => {
-    await expect(row('broken').getByRole('alert')).toContainText('缩略图暂不可用')
+  test('只显示办公文档卡片，隐藏图片等非办公文件且保留右键操作', async ({}, info) => {
+    for (const id of nonOfficeIds) await expect(row(id)).toHaveCount(0)
+    expect(reads.filter(id => nonOfficeIds.includes(id as typeof nonOfficeIds[number]))).toEqual([])
     await verifyCompactTiles()
-    const first = await row('tiny').boundingBox(), second = await row('landscape').boundingBox(), third = await row('portrait').boundingBox()
-    if (!first || !second || !third) throw new Error('Missing attachment tile geometry')
-    expect(Math.abs(first.y - second.y)).toBeLessThanOrEqual(2)
-    expect(second.x).toBeGreaterThanOrEqual(first.x + first.width)
-    expect(third.y).toBeGreaterThanOrEqual(first.y + first.height)
-    for (const target of [row('landscape').locator('strong'), row('landscape').locator('.work-final-deliverable__thumbnail')]) {
-      await target.click(); await expect(preview()).toHaveCount(0)
-      await target.dblclick(); await expect(preview()).toHaveCount(0)
-      await expect(page.getByRole('dialog', { name: names.landscape, exact: true })).toHaveCount(0)
-    }
-    const count = reads.filter(id => id === 'broken').length
-    const priorControls = await actionRects('broken')
-    await row('broken').getByRole('button', { name: `重新加载 ${names.broken}`, exact: true }).click()
-    await expect.poll(() => reads.filter(id => id === 'broken').length).toBeGreaterThan(count)
-    await expect(row('broken').getByRole('alert')).toContainText('缩略图暂不可用')
-    const nextControls = await actionRects('broken')
-    expect(nextControls).toHaveLength(2)
-    for (let index = 0; index < 2; index++) for (const dimension of ['x', 'y', 'width', 'height'] as const) {
-      expect(Math.abs(nextControls[index][dimension] - priorControls[index][dimension])).toBeLessThanOrEqual(1)
-    }
-    const information = row('landscape').getByRole('group', { name: names.landscape, exact: true })
+    const information = row('xlsx').getByRole('group', { name: names.xlsx, exact: true })
     const menu = page.locator('.context-menu:not(.context-menu--submenu):not([aria-hidden="true"])')
     await information.focus(); await information.press('Shift+F10')
     await expect(menu.getByRole('menuitem', { name: '复制文件路径', exact: true })).toBeEnabled()
@@ -339,23 +311,18 @@ test.describe.serial('Work 最终交付附件列表', () => {
     await page.screenshot({ path, animations: 'disabled' }); await info.attach('浅色附件列表', { path, contentType: 'image/png' })
   })
 
-  test('明确的预览按钮进入原有图片预览并可放大查看', async () => {
-    for (const [id, dimensions] of [['tiny', [1, 1]], ['landscape', [640, 360]], ['portrait', [240, 960]]] as const) {
-      await openAsset(id)
-      const image = preview().getByRole('img', { name: names[id], exact: true })
-      await expect.poll(() => image.evaluate(element => [(element as HTMLImageElement).naturalWidth, (element as HTMLImageElement).naturalHeight])).toEqual([...dimensions])
-      await preview().getByRole('button', { name: `放大查看 ${names[id]}`, exact: true }).click()
-      const dialog = page.getByRole('dialog', { name: names[id], exact: true })
-      await expect(dialog.getByRole('img', { name: names[id], exact: true })).toBeVisible()
-      await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0)
+  test('图片等非办公文件不进入卡片区，也不会因隐藏而读取资产', async () => {
+    for (const id of nonOfficeIds) {
+      await expect(row(id)).toHaveCount(0)
+      await expect(page.getByRole('button', { name: `预览 ${names[id]}`, exact: true })).toHaveCount(0)
     }
-    await closeWorkspace()
+    expect(reads.filter(id => nonOfficeIds.includes(id as typeof nonOfficeIds[number]))).toEqual([])
   })
 
   test('办公附件进入共享Excel、Word、PowerPoint与PDF预览', async () => {
     await openAsset('xlsx')
     await expect(preview().getByRole('cell', { name: 'DELIVERY_SHEET_READY', exact: true })).toBeVisible({ timeout: 60_000 })
-    for (const id of ['xlsx', 'docx', 'pptx', 'pdf'] as const) {
+    for (const id of officeIds) {
       const item = page.locator('.work-artifacts-workspace__files > button').filter({ hasText: names[id] })
       await expect(item).toHaveCount(1)
       const icon = item.locator('svg')
@@ -377,9 +344,10 @@ test.describe.serial('Work 最终交付附件列表', () => {
     await closeWorkspace()
   })
 
-  test('全部下载按钮只保存发布原件、不联动预览，包括无法解码的图片', async () => {
+  test('办公文档下载按钮只保存发布原件、不联动预览', async () => {
     await closeWorkspace()
-    for (const [id, asset] of assets) {
+    for (const id of officeIds) {
+      const asset = assets.get(id)!
       const target = join(downloadDirectory, asset.name)
       expect(existsSync(target)).toBe(false)
       await row(id).getByRole('button', { name: `下载 ${asset.name}`, exact: true }).click()

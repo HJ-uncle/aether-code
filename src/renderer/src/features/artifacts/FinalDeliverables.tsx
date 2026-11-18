@@ -6,7 +6,7 @@ import { Icon } from '@renderer/ui/icons'
 import { Spinner } from '@renderer/ui/ui-primitives'
 import { FileGlyph } from '../explorer/FileGlyph'
 import { FinalResult as FinalResultPreview } from './FinalResult'
-import { finalResultPreviewFormat } from './final-result-preview-format'
+import { finalResultPreviewFormat, isOfficeDocument } from './final-result-preview-format'
 import { downloadFinalResultAsset, readFinalResultAsset, useFinalAssetUrl, useFinalResultAsset } from './useFinalResultAsset'
 import './final-result.css'
 import { useDocumentContextMenu, type DocumentMenuOptions } from '@renderer/core/editor/useDocumentContextMenu'
@@ -17,13 +17,15 @@ export interface FinalDeliverablesProps {
   onOpenItem?: (result: FinalResult, item: FinalResultItem) => void
 }
 
-/** Only explicitly published files enter the answer. Tool screenshots and
- * changed paths keep their original process location. */
+/** Keep the compact conversation surface focused on published documents with
+ * a dedicated renderer. Images and source/config files remain in the full
+ * results workspace and immutable delivery manifest. */
 export function FinalDeliverables({ result, active = true, onOpenItem }: FinalDeliverablesProps): JSX.Element | null {
-  if (!result.items.length) return null
+  const items = result.items.filter(isOfficeDocument)
+  if (!items.length) return null
   return <section className="work-final-deliverables" aria-label="最终交付物" data-final-result-session={result.sessionId} data-final-result-run={result.runId}>
     <div className="work-final-deliverables__grid">
-      {result.items.map(item => <FinalDeliverable key={JSON.stringify([result.sessionId, result.runId, item.id, item.assetId])}
+      {items.map(item => <FinalDeliverable key={JSON.stringify([result.sessionId, result.runId, item.id, item.assetId])}
         result={result} item={item} active={active} onOpenItem={onOpenItem} />)}
     </div>
   </section>

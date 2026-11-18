@@ -170,10 +170,10 @@
   "sources": {
     "engine/src/api/http/plugin-capability-stream.ts": "87c804b11f19b31c0f6c4a19a120db611bca4452a8657877ecfd575ff50aa5d9",
     "engine/src/api/http/root-agent-events.ts": "974aeac388ac79bae095a455b54454e76854ad527525eeaf8288ec594fc35bce",
-    "engine/src/api/http/routes/chat.ts": "8b753ac2fcf66d47716ec07c396c395189f66378fead4eefc890339c3877fa53",
+    "engine/src/api/http/routes/chat.ts": "f9d182f4161a70134ff0f4ab5ef19ad8277d68c0aac68ad527853bc524df893f",
     "engine/src/api/http/routes/plugins.ts": "4b1d7519d56e90e34bfd3bfba284eee6ecc40b547b6b15a9c937360a2466db69",
     "engine/src/api/http/routes/tools.ts": "66cdd6b61cae2e8ed8b884ca5de7ff9d7e8d21d57d1639d79e6a01a7a417ce8c",
-    "engine/src/api/http/server.ts": "654705aa6f8ca98b4ef8201ec88515b27e357c90dcc687f06dd5f861e2960ceb",
+    "engine/src/api/http/server.ts": "d2bb70cb089d992c5b460a9d0f1ddc617f35fa6d91ebc2394461e1440743a5ce",
     "engine/src/core/agent-context/factory.ts": "f8e273141f8448ef694a03bf78ce84cad27b98e1ae704a46958fb919d1a71298",
     "engine/src/core/agent-management.ts": "e53dd60b4cde08c7b52cbd462d563fe8d1b4ab33bf047c138b89b301511e4544",
     "engine/src/core/runtime-events.ts": "3ca23cb05289ffd5edf0adb297caaab9ff2866def039a1fb88569e45ef9c7995",
@@ -326,7 +326,7 @@
     "content/overview.html": "75411c26335e2f5c651d745bcb6964a29cb69955f495892850cbaeea818405c6",
     "content/page.html": "ff1009493d8407037e496546399a8ca3bfcbe2b9a402003cf674581773db8fe6",
     "content/permissions.html": "a196d09c41ec5e4d22b1d2592b01ca19c5a56ae9abf7a06e6480f9861c9f383f",
-    "content/platform.html": "ebdf04c965712314aff05ea08b05d84260adae20b8174cabd3677e32f4db6833",
+    "content/platform.html": "abacd42229622fdc28a15f3cdce70bd7747737457ca403835b22a9a77eb6fb2b",
     "maintenance.html": "5fb487c8cb16ff6df3431b522147ac2dde885d6c8767acd5a4baf8440507bf4e",
     "package.json": "ee4ee137a3dc39f9277294cf5926489d37918c37a0244a31c415f38ff4a916b1",
     "pages.mjs": "73e465ce0f0364b25f6c5e96c335e82fd6a7fb828ec74267bae4540431b9989d",
@@ -337,5 +337,5 @@
     "scripts/serve.mjs": "e38c0a3107b45231f4f9a3b8bf46a64e0f9533069af55b7283ec8421e97df286",
     "template.html": "aaf4224e4c67d87eedee6c8b9bc81721b63205952791303ee8a3324a86dd9f6c"
   },
-  "reviewedAt": "2026-11-17T10:59:35.019Z"
+  "reviewedAt": "2026-11-18T05:08:22.605Z"
 }

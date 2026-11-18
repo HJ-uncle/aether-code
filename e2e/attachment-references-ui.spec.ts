@@ -1,5 +1,5 @@
 /** Real Electron: Default workspace attachment identity, native drag caret/ghost and
- * cancellation, long-text clipboard paste, durable drafts and model-facing receipts.
+ * cancellation, long-text clipboard paste, durable drafts, admission/failure and model-facing receipts.
  * Build first; run serially with --config e2e/config/playwright.attachment-references.config.ts. */
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
@@ -29,6 +29,10 @@ const resourceBases = Array.from({ length: 3 }, (_, index) => ({ id: `resource-k
 type Mode = 'work'
 interface UploadedFile { sessionId: string; path: string; bytes: Buffer; type: string }
 interface DraftFile { path: string; name: string; type: string; attachmentId: string; referenceLabel?: string; inlineReference?: boolean }
+// Upload tokens are deliberately live-process-only; persisted identity is the
+// checked path and attachment metadata, all of which must survive reload.
+const durableAttachments = (files: Array<DraftFile & { remoteUploadId?: string }> = []): DraftFile[] =>
+  files.map(({ remoteUploadId: _token, ...file }) => file)
 interface ResourceBindings { skills: string[]; mcpServers: string[]; knowledgeBases: string[] }
 interface SavedDraft { text?: string; draft?: string; mentions: Array<{ source?: string; attachmentId?: string; path?: string; displayText: string; textOffset?: number }>; attachments?: DraftFile[]; resources?: ResourceBindings & { knowledgeBaseMentionsConsumed?: string[] } }
 interface ClipboardSnapshot { text: string; html: string; rtf: string; image: string | null }
@@ -67,6 +71,11 @@ let toolkitDirectorySupported = true
 let extraToolkits: SessionToolkit[] = []
 let mcpReadCount = 0
 let mcpReceiptProbe: { emit: (payload: ChatSsePayload) => void; finish: () => void } | undefined
+type AdmittedFailureKind = 'code' | 'stopReason'
+let nextAdmittedFailure: AdmittedFailureKind | undefined
+let admittedFailureProbe: { fail: () => void } | undefined
+const repeatedFailureSummary = '工具连续失败或重复调用，任务已停止。请补充新的处理方式后继续，避免重复执行。'
+const repeatedFailureDiagnostic = 'FIXTURE_REPEATED_TOOL_DIAGNOSTIC: read_file repeatedly returned the same page.'
 const unavailableToolkits = new Set<string>()
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = '', generation = 0
 let redPng = Buffer.alloc(0), bluePng = Buffer.alloc(0)
@@ -78,7 +87,8 @@ const fileKey = (owner: string, path: string): string => JSON.stringify([owner, 
 const currentRun = (owner: string): RootRun | undefined => runs.get(owner)?.at(-1)
 
 function resetHistory(): void {
-  histories.clear(); runs.clear(); admissions.clear(); sessionToolkits.clear(); rejectNextChatFor = null; generation++
+  if (admittedFailureProbe) throw new Error('An admitted-failure fixture must finish before resetting history')
+  histories.clear(); runs.clear(); admissions.clear(); sessionToolkits.clear(); rejectNextChatFor = null; nextAdmittedFailure = undefined; generation++
   for (const [sessionId, title] of titles) {
     files.set(fileKey(sessionId, selectionFile), { sessionId, path: selectionFile, bytes: Buffer.from('Workspace selection fixture'), type: 'text/plain' })
     const now = Date.now() - 10_000
@@ -168,6 +178,26 @@ const server = createServer((request, response) => { void (async () => {
     runs.set(owner, [...(runs.get(owner) ?? []), terminal]); histories.set(owner, [...(histories.get(owner) ?? []), user, assistant])
     if (isRecord(input.admission)) admissions.set(String(input.admission.requestKey), { admission: input.admission, run: terminal })
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    if (nextAdmittedFailure) {
+      const failureKind = nextAdmittedFailure; nextAdmittedFailure = undefined
+      let sequence = 0
+      const emit = (payload: ChatSsePayload): void => { response.write(`id: ${run.runId}:${++sequence}\ndata: ${JSON.stringify(payload)}\n\n`) }
+      const publishRun = (next: RootRun): void => {
+        runs.set(owner, [...(runs.get(owner) ?? []).slice(0, -1), next])
+        if (isRecord(input.admission)) admissions.set(String(input.admission.requestKey), { admission: input.admission, run: next })
+      }
+      publishRun(run)
+      histories.set(owner, [...(histories.get(owner) ?? []).slice(0, -1), { ...assistant, content: '' }])
+      emit({ run }); emit({ userMessage: user })
+      admittedFailureProbe = { fail: () => {
+        const finishedAt = Date.now()
+        const failed: RootRun = { ...run, version: 2, status: 'failed', updatedAt: finishedAt, finishedAt,
+          error: { message: repeatedFailureDiagnostic, ...(failureKind === 'code' ? { code: 'REPEATED_FAILURE' } : {}) },
+          ...(failureKind === 'stopReason' ? { stopReason: 'repeated_failure' } : {}) }
+        publishRun(failed); emit({ run: failed }); response.end('data: [DONE]\n\n'); admittedFailureProbe = undefined
+      } }
+      return
+    }
     if (input.message === 'MCP_RECEIPT_REFRESH_PROBE') {
       let sequence = 0
       const emit = (payload: ChatSsePayload): void => { response.write(`id: ${run.runId}:${++sequence}\ndata: ${JSON.stringify(payload)}\n\n`) }
@@ -209,9 +239,9 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/mcp/servers' ? resourceMcp
     : path === '/api/v1/knowledge/bases' ? resourceBases
     : path === '/api/v1/models' ? [{ id: model, modelId: model, provider: 'openai', displayName: '附件测试模型', isEnabled: true, capabilities: { toolCalling: true, contextWindow: 200000 } }]
-    : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId, source: 'persisted', eventId: null, finished: true, history: rows, projection: [], run: current,
+    : path === '/api/v1/chat/snapshot' ? { schemaVersion: 1, sessionId, source: 'persisted', eventId: null, finished: current?.status !== 'running', history: rows, projection: [], run: current,
       runs: runs.get(sessionId) ?? [], subagentRuns: [], todos: [], changes: [], commandJobs: [] }
-    : path === '/api/v1/chat/status' ? { running: false, finished: true, run: current, lastEventId: null }
+    : path === '/api/v1/chat/status' ? { running: current?.status === 'running', finished: current?.status !== 'running', run: current, lastEventId: null }
     : path === '/api/v1/chat/runs' ? { runs: runs.get(sessionId) ?? [] }
     : path === '/api/v1/conversation/history' ? rows
     : path === '/api/v1/conversation/sessions' ? [...titles].map(([id, title]) => ({ sessionId: id, title, lastAt: Date.now(), messageCount: histories.get(id)?.length ?? 0 }))
@@ -1077,7 +1107,7 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await expect(input).toBeEmpty(); await expect(resourceChips(mode)).toHaveCount(0)
   })
 
-  for (const mode of ['work'] as const) test(`${mode}：资源消息被明确拒收后草稿与绑定保留，重试成功才清空`, async () => {
+  for (const mode of ['work'] as const) test(`${mode} P07：资源消息被明确拒收后正文、上传附件与绑定保留，重载后重试才清空`, async () => {
     await seed(mode)
     const input = composer(mode), beforeChats = chats.length, beforeRejected = rejectedChats.length
     const expected: ResourceBindings = { skills: [resourceSkills[0].id], mcpServers: [resourceMcp[1].id], knowledgeBases: [resourceBases[2].id] }
@@ -1085,13 +1115,22 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     await selectResource(mode, resourceSkills[0].name)
     await selectResource(mode, resourceMcp[1].name)
     await selectResource(mode, resourceBases[2].name)
+    await input.locator('xpath=ancestor::*[contains(@class, "input-composer")][1]').locator('input[type="file"]').setInputFiles([
+      { name: 'rejected-retained.txt', mimeType: 'text/plain', buffer: Buffer.from('REJECTED_ATTACHMENT_MUST_SURVIVE') },
+      { name: 'rejected-retained.png', mimeType: 'image/png', buffer: redPng }
+    ])
+    await expect(chips(mode)).toHaveText('rejected-retained.txt')
+    await expect(cards(mode)).toHaveCount(1)
     await expect.poll(() => resourceBindings(mode)).toEqual(expected)
     const saved = await savedDraft(mode)
+    expect(saved.attachments).toHaveLength(2)
+    const retainedAttachments = saved.attachments!.map(file => ({ name: file.path, attachmentId: file.attachmentId, displayName: file.name }))
     rejectNextChatFor = sessionId
     const send = surface(mode).getByRole('button', { name: '发送', exact: true })
     await expect(send).toBeEnabled(); await send.click()
     await expect.poll(() => rejectedChats.length).toBe(beforeRejected + 1)
-    expect(rejectedChats[beforeRejected]).toMatchObject(expected)
+    expect(rejectedChats[beforeRejected]).toMatchObject({ ...expected })
+    expect(rejectedChats[beforeRejected].attachments).toEqual(retainedAttachments.map(file => expect.objectContaining(file)))
     const recover = surface(mode).getByRole('button', { name: '找回未发送内容', exact: true })
     await expect.poll(async () => await recover.isVisible() || await send.count() > 0 && await send.isEnabled()).toBe(true)
     if (await recover.isVisible()) await recover.click()
@@ -1100,12 +1139,102 @@ test.describe.serial('附件引用真实拖拽与往返', () => {
     expect(await composerProse(mode)).toBe('REJECTED_RESOURCE_MESSAGE')
     await expect.poll(() => resourceBindings(mode)).toEqual(expected)
     expect((await savedDraft(mode)).mentions).toEqual(saved.mentions)
+    expect(durableAttachments((await savedDraft(mode)).attachments)).toEqual(durableAttachments(saved.attachments))
+    await page.reload(); await expect(input).toBeVisible()
+    expect(await composerProse(mode)).toBe('REJECTED_RESOURCE_MESSAGE')
+    await expect(chips(mode)).toHaveText('rejected-retained.txt')
+    await expect(cards(mode)).toHaveCount(1)
+    await expect.poll(() => resourceBindings(mode)).toEqual(expected)
+    expect((await savedDraft(mode)).mentions).toEqual(saved.mentions)
+    expect(durableAttachments((await savedDraft(mode)).attachments)).toEqual(durableAttachments(saved.attachments))
     expect(chats).toHaveLength(beforeChats)
     await send.click(); await expect.poll(() => chats.length).toBe(beforeChats + 1)
-    expect(chats[beforeChats]).toMatchObject(expected)
+    expect(chats[beforeChats]).toMatchObject({ ...expected })
+    expect(chats[beforeChats].attachments).toEqual(retainedAttachments.map(file => expect.objectContaining(file)))
     await expect(input).toBeEmpty(); await expect(resourceChips(mode)).toHaveCount(0)
+    await expect(cards(mode)).toHaveCount(0)
+    await expect.poll(async () => (await savedDraft(mode)).attachments ?? []).toEqual([])
     await expect.poll(() => resourceBindings(mode)).toEqual({ skills: [], mcpServers: [], knowledgeBases: expected.knowledgeBases })
   })
+
+  for (const [failureKind, keepLaterDraft] of [['code', false], ['stopReason', true]] as const) {
+    test(`Work P07/P08：已接纳后 ${failureKind} 失败不回填已提交内容${keepLaterDraft ? '，保留运行中新增草稿附件' : ''}，重载与诊断保持`, async () => {
+      await seed('work')
+      const input = composer('work'), beforeChats = chats.length
+      const originalText = `ADMITTED_FAILURE_ORIGINAL_${failureKind}`
+      await input.fill(originalText)
+      await selectResource('work', resourceSkills[0].name)
+      const fileInput = input.locator('xpath=ancestor::*[contains(@class, "input-composer")][1]').locator('input[type="file"]')
+      await fileInput.setInputFiles([
+        { name: `submitted-${failureKind}.txt`, mimeType: 'text/plain', buffer: Buffer.from('ADMITTED_ORIGINAL_FILE') },
+        { name: `submitted-${failureKind}.png`, mimeType: 'image/png', buffer: redPng }
+      ])
+      await expect(chips('work')).toHaveText(`submitted-${failureKind}.txt`)
+      await expect(cards('work')).toHaveCount(1)
+      const submittedFiles = (await savedDraft('work')).attachments!
+      expect(submittedFiles).toHaveLength(2)
+      nextAdmittedFailure = failureKind
+      try {
+        await surface('work').getByRole('button', { name: '发送', exact: true }).click()
+        await expect.poll(() => Boolean(admittedFailureProbe)).toBe(true)
+        await expect.poll(() => chats.length).toBe(beforeChats + 1)
+        const sentBody = parseMentionContent(String(chats[beforeChats].message)).body.trim()
+        expect(sentBody.startsWith(originalText)).toBe(true)
+        expect(sentBody.split(originalText)).toHaveLength(2)
+        expect(sentBody).toContain(resourceSkills[0].name)
+        expect(sentBody).toContain(submittedFiles.find(file => file.type === 'text/plain')!.path)
+        expect(chats[beforeChats].attachments).toEqual(submittedFiles.map(file => expect.objectContaining({
+          name: file.path, attachmentId: file.attachmentId, displayName: file.name
+        })))
+        await expect(input).toBeEmpty(); await expect(cards('work')).toHaveCount(0)
+        await expect.poll(async () => (await savedDraft('work')).attachments ?? []).toEqual([])
+        await expect.poll(() => resourceBindings('work')).toEqual({ skills: [], mcpServers: [], knowledgeBases: [] })
+
+        let expectedFiles: DraftFile[] = []
+        const laterText = 'UNSENT_DRAFT_WRITTEN_WHILE_RUNNING'
+        const expectedBindings: ResourceBindings = { skills: keepLaterDraft ? [resourceSkills[1].id] : [], mcpServers: [], knowledgeBases: [] }
+        if (keepLaterDraft) {
+          await input.fill(laterText)
+          await selectResource('work', resourceSkills[1].name)
+          await fileInput.setInputFiles([{ name: 'new-unsent-draft.txt', mimeType: 'text/plain', buffer: Buffer.from('NEW_ATTACHMENT_MUST_SURVIVE') }])
+          await expect(chips('work')).toHaveText('new-unsent-draft.txt')
+          expectedFiles = (await savedDraft('work')).attachments!
+          expect(expectedFiles).toHaveLength(1)
+          expect(submittedFiles.map(file => file.path)).not.toContain(expectedFiles[0].path)
+        }
+        const expectedDraft = await savedDraft('work')
+        admittedFailureProbe!.fail()
+        const notice = surface('work').locator('.work-error-notice--compact')
+        await expect(notice).toBeVisible()
+        await expect(surface('work').getByRole('button', { name: '找回未发送内容', exact: true })).toHaveCount(0)
+
+        const expectUnsentDraft = async (): Promise<void> => {
+          await expect.poll(() => composerProse('work')).toBe(keepLaterDraft ? laterText : '')
+          await expect(cards('work')).toHaveCount(0)
+          await expect(chips('work')).toHaveText(keepLaterDraft ? ['new-unsent-draft.txt'] : [])
+          await expect.poll(async () => ((await savedDraft('work')).attachments ?? []).map(file => file.path)).toEqual(expectedFiles.map(file => file.path))
+          const actual = await savedDraft('work')
+          expect(durableAttachments(actual.attachments)).toEqual(durableAttachments(expectedFiles))
+          expect(actual.mentions).toEqual(expectedDraft.mentions)
+          expect(actual.draft ?? actual.text ?? '').not.toContain(originalText)
+          for (const file of actual.attachments ?? []) expect(submittedFiles.map(sent => sent.path)).not.toContain(file.path)
+          await expect.poll(() => resourceBindings('work')).toEqual(expectedBindings)
+        }
+        await expectUnsentDraft()
+        await expect(notice.locator('.work-error-notice__reason')).toHaveText(repeatedFailureSummary)
+        await notice.getByRole('button', { name: '任务恢复更多操作', exact: true }).click()
+        await page.getByRole('menuitem', { name: '查看诊断详情', exact: true }).click()
+        const diagnostic = page.getByRole('dialog', { name: '诊断详情', exact: true })
+        await expect(diagnostic).toContainText(repeatedFailureDiagnostic)
+        await expect(diagnostic).toContainText(failureKind === 'code' ? '错误码：REPEATED_FAILURE' : '停止原因：repeated_failure')
+        await diagnostic.getByRole('button', { name: '完成', exact: true }).click()
+        await page.reload(); await expect(input).toBeVisible()
+        await expect(notice.locator('.work-error-notice__reason')).toHaveText(repeatedFailureSummary)
+        await expectUnsentDraft()
+        expect(chats).toHaveLength(beforeChats + 1)
+      } finally { admittedFailureProbe?.fail(); nextAdmittedFailure = undefined }
+    })
+  }
 
   for (const mode of ['work'] as const) test(`${mode}：旧资源绑定恢复为名称标签，重载不重复且发送字段保持`, async () => {
     await seed(mode)
