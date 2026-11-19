@@ -4,6 +4,7 @@ import type { BrowserContext, BrowserToolRequest, BrowserToolResult } from '../s
 import type { EngineSnapshot } from '../shared/ipc'
 import { engineHost } from './engine/host'
 import { engineTargetError } from './engine/protocol'
+import { assertTrustedCredentialTransport } from './account/transport-trust'
 
 interface BrowserExecutor {
   getSettings(): { aiEnabled: boolean }
@@ -181,6 +182,8 @@ export class BrowserEngineBridge {
 
   private async unregister(connection: Connection): Promise<void> {
     try {
+      // A release uses the old identity and its registration token, but never old HTTP consent.
+      assertTrustedCredentialTransport(connection.baseUrl)
       await this.request(connection.baseUrl, this.clientHeaders(connection), AbortSignal.timeout(3000), 'DELETE',
         `/browser/clients/${encodeURIComponent(connection.registration.clientId)}`)
       if (this.pendingRelease === connection) this.pendingRelease = null

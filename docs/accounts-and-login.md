@@ -1,16 +1,25 @@
 # 账号与登录
 
-源码核对日期：2026-11-17。本文说明当前默认界面的账号操作；引擎连接和模型配置分别见[用户指南](user-guide.md)。
+源码核对日期：2026-11-18。本文说明当前默认界面的账号操作；引擎连接和模型配置分别见[用户指南](user-guide.md)。
 
-## 先区分三种凭据
+## 先区分账号、引擎和模型凭据
 
 | 项目 | 用途 | 在哪里设置 |
 | --- | --- | --- |
 | 个人账号的恢复文件、恢复码或第三方登录 | 登录当前引擎服务上的账号，访问该账号的租户数据 | 右上角登录/头像 → 个人账号 |
-| 引擎实例令牌；高级用户认证 API Key/JWT | 访问部署方提供的引擎实例；高级认证用于已有服务账号 | 设置 → 引擎管理 → 远端服务 |
+| 实例令牌 | 进入指定引擎服务；同一服务的客户端使用部署方配置的值 | 设置 → 引擎管理 → 连接其他引擎 → 高级设置 |
+| 高级用户凭据（API Key 或 JWT） | 认证当前服务上的用户身份；已有个人账号可直接登录 | 同上，仅在使用高级服务认证时填写 |
 | 模型 API Key | 向模型提供方发起推理请求 | 设置 → 模型 |
 
 账号属于个人账号页显示的**当前服务地址**。本机服务上的账号不会自动变成另一台远端服务上的账号；登录也不自动迁移、同步原有本机历史或文件。本地内置模式可以不登录，直接使用本机工作空间。
+
+在引擎管理中编辑地址只改变草稿。主操作会先检查目标，再保存并应用连接；从这里进入个人账号也会先应用草稿，避免给服务 B 填了地址，却登录服务 A。地址或实例令牌有问题时先修正连接，账号页不会绕过这一步。
+
+服务可访问但要求账号登录时，页面会明确显示需要登录以及目标地址；进入个人账号完成登录后，会重新尝试连接。可信内网 HTTP 需要先在该目标的个人账号页完成信任。连接就绪与登录状态分别显示：服务健康并不代表账号永远有效。
+
+**自己部署服务时怎样配对？** 实例令牌由桌面或部署方在本机生成随机值，部署方将它写入引擎启动配置 `AETHER_INSTANCE_TOKEN` 并重启，客户端填写相同的值。本机内置引擎则由桌面自动生成并传递。
+
+**用户凭据能自己填吗？** API Key 可以手动输入，也可以随机生成后交给该服务的管理员登记。在独立服务上，`POST /auth/user` 要求同租户的 `admin` 权限；普通新账号不能自行登记。对已有租户登记新值会替换旧 API Key；连接设置本身不会调用此接口。JWT 需要受信签发方签发，不能用随机字符串代替。未填写新值时保留已有配置。使用个人账号登录时，可直接跳过高级用户凭据。
 
 ## 新账号与已有账号
 
@@ -61,7 +70,11 @@
 
 ```mermaid
 flowchart TD
-    A[右上角登录或头像] --> B[个人账号：核对当前服务]
+    S[引擎管理：填写目标服务] --> T[应用草稿并检查连接]
+    T -->|地址或连接凭据错误| U[显示错误并保留原连接]
+    T -->|需要登录或信任| B[个人账号：核对目标服务]
+    T -->|连接成功| B
+    A[右上角登录或头像] --> B
     B --> C{进入方式}
     C --> D[已有账号：恢复文件或恢复码]
     C --> E[创建账号：确认独立空间]
@@ -72,7 +85,10 @@ flowchart TD
     G --> H[主进程账号服务：固定服务与身份]
     H --> I[引擎认证接口：账号、会话与租户]
     I --> J[主进程保存凭证并更新连接身份]
-    J --> K[渲染层获得脱敏账号状态]
+    J --> R{引擎是否就绪}
+    R -->|否| Q[重新尝试连接当前目标]
+    R -->|是| K[渲染层获得脱敏账号状态]
+    Q --> K
     K --> L[会话、模型、资源使用对应账号数据]
     K --> M[保存登录凭证]
     L --> N[敏感操作需要时原地重验]
@@ -81,7 +97,7 @@ flowchart TD
 
 访问令牌、刷新令牌和恢复码由主进程管理，正常账号状态不会把这些明文返回界面。系统加密可用时使用 Electron `safeStorage` 保存；不可用时账号凭证只保留本次运行内存，并明确提示保存恢复文件。显式导出的恢复文件属于用户保存的敏感凭证。
 
-账号优先于高级 API Key/JWT。账号过期或退出后，不会静默恢复旧高级凭据；确需改用高级认证，应退出账号、重新输入凭据并保存。高级用户凭据按服务地址保存；实例连接令牌和模型密钥仍是另外两类凭据。
+账号优先于高级 API Key/JWT。账号过期或退出后，不会静默恢复旧高级凭据；确需改用高级认证，应退出账号、重新输入凭据并应用连接。高级用户凭据和实例令牌各自按服务地址保存，模型密钥另在「模型」中配置。使用 HTTP 连接非回环地址时，先在个人账号页确认信任该服务；确认前不会发送凭据。
 
 远端账号默认要求 HTTPS，本机回环地址允许 HTTP。可信内网 HTTP 必须在个人账号页显式信任当前完整地址，切换地址或端口需重新确认，可撤销信任。HTTP 会明文传输登录凭证。
 
@@ -92,6 +108,6 @@ flowchart TD
 - 界面：[AccountSettingsView.tsx](../src/renderer/src/features/account/AccountSettingsView.tsx)、[account-store.ts](../src/renderer/src/features/account/account-store.ts)。
 - 契约：[account.ts](../src/shared/account.ts)、[preload](../src/preload/index.ts)。
 - 凭证与连接：[账号服务](../src/main/account/service.ts)、[credential-store.ts](../src/main/account/credential-store.ts)、[remote-auth.ts](../src/main/engine/remote-auth.ts)。
-- 自动化入口：[account-simplify-ui.spec.ts](../e2e/account-simplify-ui.spec.ts)、[account-help-ui.spec.ts](../e2e/account-help-ui.spec.ts)、[account-main-contract.spec.ts](../e2e/account-main-contract.spec.ts)、[account-engine-integration.spec.ts](../e2e/account-engine-integration.spec.ts)。
+- 自动化入口：[account-simplify-ui.spec.ts](../e2e/account-simplify-ui.spec.ts)、[account-help-ui.spec.ts](../e2e/account-help-ui.spec.ts)、[account-main-contract.spec.ts](../e2e/account-main-contract.spec.ts)、[account-engine-integration.spec.ts](../e2e/account-engine-integration.spec.ts)、[engine-connection-flow.spec.ts](../e2e/engine-connection-flow.spec.ts)。
 
 本文本轮更新依据当前源码核对，不把历史测试数字当作重新执行结果。第三方生产供应商、生产 HTTPS 配置及长期连续运行仍需对应环境验证。

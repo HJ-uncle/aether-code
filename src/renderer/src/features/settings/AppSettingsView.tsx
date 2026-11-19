@@ -1,10 +1,11 @@
-import { useMemo, useState, useSyncExternalStore, type JSX } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type JSX } from 'react'
 import {
   DEFAULT_SETTINGS_SECTION,
   getSectionRequest,
   subscribeSectionRequest
 } from './app-settings-navigation'
 import { EngineSettingsView } from './EngineSettingsView'
+import { connectionEditor } from './engine-connection-editor'
 import { AccountSettingsView } from '../account/AccountSettingsView'
 import { AppearanceSettingsView } from './AppearanceSettingsView'
 import { CodeGraphSettingsView } from './CodeGraphSettingsView'
@@ -74,7 +75,7 @@ const SECTIONS: Section[] = [
     label: '引擎管理',
     icon: 'engine',
     group: '基础',
-    description: '管理引擎连接、启动方式和运行状态。',
+    description: '选择在哪里运行任务，查看当前连接。',
     component: EngineSettingsView
   },
   {
@@ -205,6 +206,8 @@ const SECTION_GROUPS: { label: Section['group']; items: Section[] }[] = [
 ]
 
 export function AppSettingsView(): JSX.Element {
+  // Keep the address when switching tabs; closing Preferences discards the draft.
+  useEffect(() => () => connectionEditor.clearDraft(), [])
   const extensionContext = useExtensionContext()
   const extensions = useSyncExternalStore(extensionRegistry.subscribe, extensionRegistry.getSnapshot)
   const sections: Section[] = useMemo(() => [...SECTIONS, ...extensions.settings.filter(item => extensionVisible(item.scope ?? 'global', item.when, extensionContext) &&

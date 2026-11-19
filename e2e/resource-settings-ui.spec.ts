@@ -10,7 +10,7 @@ import { ResourceSettingsFixture, initialResourceDocuments, initialResourceMemor
   resourceModel, resourceTasks, resourceToken, resourceWorkspace } from './fixtures/resource-settings'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp/resource-settings')
-const fixture = new ResourceSettingsFixture(), errors: string[] = []
+const fixture = new ResourceSettingsFixture({ canManageSkills: true }), errors: string[] = []
 let app: ElectronApplication | undefined, page: Page, profile = ''
 type Section = '技能' | '知识库' | '记忆'
 const settings = () => page.getByRole('dialog', { name: '设置', exact: true })
@@ -29,7 +29,7 @@ async function windowSize(width = 1320, height = 900): Promise<void> {
 }
 async function openSettings(section: Section, appearance: 'light' | 'dark' = 'light', width = 1320): Promise<void> {
   await windowSize(width)
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('complementary', { name: '应用导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
   await expect(settings()).toBeVisible()
   await settings().getByRole('tab', { name: '外观', exact: true }).click()
   await settings().getByRole('radio', { name: appearance === 'light' ? '浅色' : '深色', exact: true }).click()
@@ -77,7 +77,7 @@ test.beforeAll(async () => {
   const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
   for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN',
     'AETHER_IDE_REMOTE_AUTH_URL', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN'].includes(key.toUpperCase())) delete env[key]
-  env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = resourceToken; env.AETHER_GLOBAL_DIR = join(profile, 'global')
+  env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = resourceToken; env.AETHER_IDE_REMOTE_INSTANCE_TOKEN_URL = fixture.origin; env.AETHER_GLOBAL_DIR = join(profile, 'global')
   app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${profile}`], cwd: root, env })
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
   await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setContentSize(1320, 900); win.show(); win.focus() })

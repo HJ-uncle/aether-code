@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
 import { selectedAgentReference, useAgentReferences } from './AgentRefPicker'
 import { agentMentionSearch, type AgentReferenceIdentity } from './agent-references'
+import { isRemoteEngine } from '@renderer/core/engine/source'
 import { useFileReferences, type FileReferenceEntry } from './FileRefPalette'
 import { AttachmentOption } from './AttachmentRefPicker'
 import { attachmentMention, type AttachmentReference } from './attachment-references'
@@ -51,7 +52,7 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
   const keyword = showSearch ? search : query
   const agentAlias = agentMentionSearch(keyword)
   const agents = useAgentReferences(keyword)
-  const files = useFileReferences(agentAlias === null ? root : null, keyword)
+  const files = useFileReferences(root, keyword, sessionId, open && agentAlias === null && (Boolean(sessionId) || !isRemoteEngine()))
   const toolkits = useToolkitCatalogue(open && Boolean(onSelectToolkit), toolkitSessionId, toolkitAgentId, root)
   const attachmentOptions = useMemo<ReferenceOption[]>(() => agentAlias !== null ? [] : attachments
     .filter(reference => `${reference.label} ${reference.file.name}`.toLowerCase().includes(keyword.trim().toLowerCase()))
@@ -150,9 +151,10 @@ export function MentionRefPicker({ root, query, open = true, showSearch = false,
       {enabled ? <span className="mention-ref-picker__check" aria-hidden="true"><Icon name="check" size={14} /></span> : null}
     </button>
   }
-  const showFiles = agentAlias === null && Boolean(root) && (fileOptions.length > 0 || files.loading || files.error)
+  const hasFileScope = agentAlias === null && Boolean(root || sessionId)
+  const showFiles = hasFileScope && (fileOptions.length > 0 || files.loading || files.error)
   const showAgents = agentOptions.length > 0 || agents.loading || agents.error
-  const loading = agents.loading || toolkits.loading || Boolean(root && agentAlias === null && files.loading)
+  const loading = agents.loading || toolkits.loading || (hasFileScope && files.loading)
   return <div ref={rootRef} className="mention-ref-picker">
     {showSearch ? <input className="mention-ref-picker__search ui-input ui-input--compact" aria-label="搜索引用" autoFocus value={search}
       aria-controls={`${id}-list`} aria-activedescendant={active ? optionId(active) : undefined}

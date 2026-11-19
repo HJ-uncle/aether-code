@@ -3,22 +3,13 @@ import { useApp } from '@renderer/core/app-context'
 import { useEditor } from '@renderer/core/editor/editor-store'
 import { useProblems } from '@renderer/core/lsp/problems-store'
 import { openAppSettings } from '@renderer/features/settings/app-settings-navigation'
-import type { EnginePhase } from '@shared/ipc'
+import { connectionLabel } from '@renderer/core/engine/connection-status'
 import { extensionRegistry, extensionVisible, useExtensionContext } from '@renderer/features/extensions'
 import { executeExtensionCommand, runExtensionAction } from '@renderer/features/extensions/interactions'
 import { ServiceTray } from '@renderer/features/services/ServiceTray'
 import { extensionIcon } from './navigation'
 import { Icon } from '@renderer/ui/icons'
 import '../ui/status-bar.css'
-
-const PHASE_LABEL: Record<EnginePhase, string> = {
-  idle: '未启动',
-  installing: '安装中',
-  starting: '启动中',
-  ready: '就绪',
-  stopping: '关闭中',
-  error: '异常'
-}
 
 /**
  * 状态栏
@@ -33,9 +24,6 @@ export function StatusBar(): JSX.Element {
   const { byFile: problemFiles } = useProblems()
   const extensions = useSyncExternalStore(extensionRegistry.subscribe, extensionRegistry.getSnapshot)
   const context = useExtensionContext()
-
-  // A remote retry shares the starting phase but needs a distinct status label.
-  const remoteReconnecting = snapshot.mode === 'remote' && snapshot.phase === 'starting' && snapshot.error?.includes('正在重新连接') === true
 
   let problemErrors = 0
   let problemWarnings = 0
@@ -58,7 +46,7 @@ export function StatusBar(): JSX.Element {
           onClick={() => openAppSettings('general')}
         >
           <span className={`status-dot status-dot--${snapshot.phase}`} aria-hidden="true" />
-          引擎：{remoteReconnecting ? '重新连接中' : snapshot.mode === 'remote' && snapshot.phase === 'starting' ? '连接中' : PHASE_LABEL[snapshot.phase]}
+          引擎：{connectionLabel(snapshot)}
         </button>
       </div>
 

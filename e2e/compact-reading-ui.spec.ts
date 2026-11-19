@@ -13,7 +13,7 @@ import type { EngineHistoryRow } from '../src/renderer/src/core/engine/chat-hist
 import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
-const token = 'compact-reading-fixture-token', model = 'compact-reading-model', now = Date.now() - 10_000
+const token = 'compact-reading-fixture-token', secondToken = 'compact-reading-second-token', model = 'compact-reading-model', now = Date.now() - 10_000
 const taskA = 'work-compact-task-a', taskB = 'work-compact-task-b'
 const errors: string[] = [], mutations: string[] = []
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
@@ -114,7 +114,7 @@ function makeEngine(name: string) {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1'), path = url.pathname
     const id = url.searchParams.get('sessionId') ?? '', current = roots.get(id), rows = parentHistory(id)
     response.setHeader('content-type', 'application/json')
-    if (path.startsWith('/api/') && request.headers['x-aether-instance-token'] !== token) throw new Error(`Unauthenticated ${path}`)
+    if (path.startsWith('/api/') && request.headers['x-aether-instance-token'] !== (name === 'FIRST' ? token : secondToken)) throw new Error(`Unauthenticated ${path}`)
     // Retained Code surfaces probe these services during boot. This reading
     // fixture advertises them as unavailable instead of misclassifying their
     // capability registration as a user chat/change write.
@@ -233,7 +233,7 @@ async function selectChild(index: number): Promise<void> {
   await expect(scroller()).toHaveAttribute('aria-busy', 'false')
 }
 async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('complementary', { name: '应用导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   await settings.getByRole('tab', { name: '外观', exact: true }).click()
   await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
@@ -259,16 +259,20 @@ async function selectTask(engine: Engine, id: string): Promise<void> {
   await openChildren()
 }
 async function connectEngine(engine: Engine): Promise<void> {
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
+  await page.getByRole('complementary', { name: '应用导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   await settings.getByRole('tab', { name: '引擎管理', exact: true }).click()
-  const endpoint = settings.getByRole('textbox', { name: '远端地址', exact: true })
+  const endpoint = settings.getByRole('textbox', { name: '服务地址', exact: true })
   if (await endpoint.inputValue() !== origin(engine)) {
     await endpoint.fill(origin(engine))
-    await settings.getByRole('button', { name: '保存并重新连接', exact: true }).click()
+    if (engine === second && !(await page.evaluate(url => window.aether.settings.remoteTokenStatus(url), origin(second))).configured) {
+      await settings.locator('summary').filter({ hasText: '高级设置' }).click()
+      await settings.getByLabel('实例令牌', { exact: true }).fill(secondToken)
+    }
+    await settings.getByTestId('engine-connection-primary').click()
   }
-  await expect(settings.locator('.engine-status__hero')).toContainText(origin(engine))
-  await expect(settings.locator('.engine-status__badge')).toHaveText('已连接')
+  await expect(settings.getByRole('region', { name: '当前引擎连接' })).toContainText(origin(engine))
+  await expect.poll(() => page.evaluate(() => window.aether.engine.getSnapshot())).toMatchObject({ phase: 'ready', baseUrl: origin(engine) })
   await settings.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.locator('.modal-overlay:has([role="dialog"][aria-label="设置"])')).toHaveCount(0)
 }
@@ -280,7 +284,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin(first), autoStartEngine: true,
       remoteWorkspaceRoot: '/remote/compact', lastSessionId: '', lastModelId: model, appearance: 'light', lastFolder: '', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
-    for (const name of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(name.toUpperCase())) delete env[name]
+    for (const name of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN_URL'].includes(name.toUpperCase())) delete env[name]
     env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
     app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
@@ -454,9 +458,6 @@ test.describe.serial('子代理紧凑阅读', () => {
     // Native Windows clipboard text uses CRLF; compare every content character
     // after normalizing that platform newline convention only.
     await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText().replace(/\r\n/g, '\n'))).toBe(first.finalText)
-    // Leave this expanded for the memory assertions in the following scenario.
-    await summary.click()
-    await expect(instruction.locator('.message__bubble-content')).toContainText('INSTRUCTION_END_FIRST')
   })
 
   test('失败正文与状态只显示一次提示，不同轮次各自保留诊断和失败前正文', async ({}, info) => {
@@ -503,6 +504,8 @@ test.describe.serial('子代理紧凑阅读', () => {
 
   test('完整历史与展开滚动草稿保留，切父任务或引擎时旧快照不能串入当前对话', async () => {
     const instruction = message('instruction'), answer = message('answer')
+    await instruction.getByRole('button', { name: '展开用户消息全文', exact: true }).click()
+    await expect(instruction.locator('.message__bubble-content')).toContainText('INSTRUCTION_END_FIRST')
     const draft = panel().getByRole('textbox', { name: '继续交给 阅读代理 1', exact: true })
     await draft.fill('保留未发送的审阅要求，不应交给别的任务或引擎')
     await scroller().evaluate(element => { element.scrollTop = 120 })
@@ -537,15 +540,7 @@ test.describe.serial('子代理紧凑阅读', () => {
     first.holdArchive('compact-child-1', 1)
     await panel().getByRole('button', { name: '刷新子代理对话', exact: true }).click()
     await expect.poll(() => first.isHeld()).toBe(true)
-    await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: '设置', exact: true })
-    await settings.getByRole('tab', { name: '引擎管理', exact: true }).click()
-    await settings.getByRole('textbox', { name: '远端地址', exact: true }).fill(origin(second))
-    await settings.getByRole('button', { name: '保存并重新连接', exact: true }).click()
-    await expect(settings.locator('.engine-status__hero')).toContainText(origin(second))
-    await expect(settings.locator('.engine-status__badge')).toHaveText('已连接')
-    await settings.getByRole('button', { name: '关闭', exact: true }).click()
-    await expect(page.locator('.modal-overlay:has([role="dialog"][aria-label="设置"])')).toHaveCount(0)
+    await connectEngine(second)
     await expect(work().getByRole('heading', { name: second.title(taskA), exact: true })).toBeVisible()
     await openChildren(); await selectChild(1)
     await expect(message('tail-answer')).toContainText('TAIL_ANSWER_SECOND')
@@ -569,9 +564,9 @@ test.describe.serial('子代理紧凑阅读', () => {
     await connectEngine(second)
     await selectTask(second, taskA)
     const artifacts = workspace().getByRole('region', { name: '本会话成果与改动', exact: true })
-    const tab = workspace().getByRole('tab', { name: '成果', exact: true })
-    if (await tab.isVisible()) await tab.click()
-    else { await work().locator('.work-task-heading').getByRole('button', { name: '更多工作区', exact: true }).click(); await page.getByRole('menuitem', { name: '成果', exact: true }).click() }
+    // A ledger-only task opens its changes from the turn receipt; the activity menu only advertises live destinations.
+    await work().getByRole('region', { name: '本轮成果摘要', exact: true }).getByRole('button', { name: '查看本轮全部成果', exact: true }).click()
+    await artifacts.getByRole('button', { name: '返回成果', exact: true }).click()
     await expect(workspace().locator('[data-final-result-fallback="changes"]')).toBeVisible()
     await expect(artifacts).toHaveAttribute('data-session-id', taskA)
     await expect(artifacts.locator('.work-session-artifacts__header')).toContainText('2 个文件')

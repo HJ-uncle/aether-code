@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import { requestOrThrow } from '@renderer/core/engine/client'
 import { useApp } from '@renderer/core/app-context'
+import { engineConnectionKey, getEngineSource, getExpectedEngine } from '@renderer/core/engine/source'
 import { useWorkspace } from '@renderer/core/workspace/workspace-store'
 import { Icon } from '@renderer/ui/icons'
 import { SettingsContent, SettingsGroup } from './SettingsGroup'
@@ -52,11 +53,25 @@ function fmtBytes(bytes?: number): string {
 }
 
 export function CodeGraphSettingsView(): JSX.Element {
+  const { engine, ready } = useApp()
+  if (!ready) return <SettingsGroup title="代码图索引"><SettingsContent><p className="sg__note">连接引擎后即可查看代码索引。</p></SettingsContent></SettingsGroup>
+  return <ConnectedCodeGraphSettings key={engineConnectionKey(engine.snapshot)} />
+}
+
+function ConnectedCodeGraphSettings(): JSX.Element {
   const { engine, settings } = useApp()
   const isRemote = engine.snapshot.mode === 'remote'
-  const workspace = useWorkspace()
+  const workspace = useWorkspace(!isRemote)
   const projectRoot = isRemote ? settings.remoteWorkspaceRoot.trim() : workspace.root
   const sessionId = settings.lastSessionId || undefined
+  return <CodeGraphProjectSettings key={JSON.stringify([projectRoot, sessionId])} projectRoot={projectRoot} sessionId={sessionId} />
+}
+
+function CodeGraphProjectSettings({ projectRoot, sessionId }: { projectRoot: string | null; sessionId?: string }): JSX.Element {
+  const [expectedEngine] = useState(getExpectedEngine)
+  const [source] = useState(getEngineSource)
+  const mounted = useRef(false)
+  const polling = useRef(false)
   const [status, setStatus] = useState<CgStatus | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -71,6 +86,7 @@ export function CodeGraphSettingsView(): JSX.Element {
   }, [])
 
   const refresh = useCallback(async () => {
+    if (!mounted.current || source !== getEngineSource()) return
     if (!projectRoot && !sessionId) {
       setStatus(null)
       setLoadError(null)
@@ -82,25 +98,28 @@ export function CodeGraphSettingsView(): JSX.Element {
       const s = await requestOrThrow<CgStatus>({
         method: 'GET',
         path: '/codegraph/status',
-        query: { path: projectRoot || undefined, sessionId }
+        expectedEngine, query: { path: projectRoot || undefined, sessionId }
       })
       setStatus(s)
       setLoadError(null)
     } catch (e) {
       setLoadError(e instanceof Error ? e.message.slice(0, 80) : '状态查询失败')
     }
-  }, [projectRoot, sessionId])
+  }, [projectRoot, sessionId, expectedEngine, source])
 
   /** 索引任务期间轮询状态，结束后停在最终结果（status 自带统计） */
   const poll = useCallback(() => {
     stopPoll()
+    if (!mounted.current || source !== getEngineSource()) return
     pollRef.current = setInterval(() => {
+      if (polling.current) return
+      polling.current = true
       void (async () => {
         try {
           const s = await requestOrThrow<CgStatus>({
             method: 'GET',
             path: '/codegraph/status',
-            query: { path: projectRoot || undefined, sessionId }
+            expectedEngine, query: { path: projectRoot || undefined, sessionId }
           })
           setStatus(s)
           if (!s.indexing) {
@@ -111,13 +130,18 @@ export function CodeGraphSettingsView(): JSX.Element {
           stopPoll()
           setWorking(false)
           setActionError('状态查询失败')
+        } finally {
+          polling.current = false
         }
       })()
     }, 1500)
-  }, [projectRoot, sessionId, stopPoll])
+  }, [projectRoot, sessionId, stopPoll, source, expectedEngine])
 
   // 切换页面会让本组件卸载再挂载：卸载时必须停掉旧定时器，否则会泄漏多个轮询。
-  useEffect(() => stopPoll, [stopPoll, isRemote])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; stopPoll() }
+  }, [stopPoll])
 
   // 打开设置页 / 切换项目 / 重新挂载时加载一次。
   // refresh 开头可能同步 setState，挪进微任务避免 effect 执行期内联触发级联渲染
@@ -140,7 +164,7 @@ export function CodeGraphSettingsView(): JSX.Element {
       const r = await requestOrThrow<{ started: boolean; alreadyRunning?: boolean }>({
         method: 'POST',
         path: '/codegraph/index',
-        body: { path: projectRoot || undefined, sessionId, force: true }
+        expectedEngine, body: { path: projectRoot || undefined, sessionId, force: true }
       })
       if (r.started) {
         poll()
@@ -152,7 +176,7 @@ export function CodeGraphSettingsView(): JSX.Element {
       setWorking(false)
       setActionError(e instanceof Error ? e.message.slice(0, 80) : '请求失败')
     }
-  }, [projectRoot, sessionId, working, poll])
+  }, [projectRoot, sessionId, working, poll, expectedEngine])
 
   const run = status?.run
   const runActive = status?.indexing === true

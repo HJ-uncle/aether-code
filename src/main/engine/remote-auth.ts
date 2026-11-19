@@ -25,6 +25,11 @@ export function getRemoteAuth(url: string): { credential: RemoteAuthCredential |
       throw new Error('无法读取远端用户凭据，请重新输入或清除；原文件已保留。')
     }
   }
+  return getEnvironmentRemoteAuth(url)
+}
+
+/** Effective fallback after clearing a stored override, including during a draft probe. */
+export function getEnvironmentRemoteAuth(url: string): ReturnType<typeof getRemoteAuth> {
   // Environment credentials also need a destination; a later URL edit must not
   // send the operator's API key to an unrelated engine.
   const target = process.env.AETHER_IDE_REMOTE_AUTH_URL
@@ -65,7 +70,7 @@ export function withRemoteAuthChange<T>(url: string, value: RemoteAuthCredential
   const temporary = `${file}.${process.pid}.tmp`
   try {
     if (credential) {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error('系统密钥存储暂不可用，无法保存用户凭据')
+      if (!safeStorage.isEncryptionAvailable() || safeStorage.getSelectedStorageBackend?.() === 'basic_text') throw new Error('系统密钥存储暂不可用，无法保存用户凭据')
       mkdirSync(dirname(file), { recursive: true })
       writeFileSync(temporary, JSON.stringify({ version: 1, encrypted: true, value: safeStorage.encryptString(JSON.stringify(credential)).toString('base64') }), { mode: 0o600 })
       renameSync(temporary, file)

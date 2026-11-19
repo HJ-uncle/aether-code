@@ -90,7 +90,7 @@ export function ExcludeSettingsView({
   className
 }: ExcludeSettingsViewProps): JSX.Element {
   const scope = useSettingsScope()
-  const workspace = useWorkspace()
+  const workspace = useWorkspace(scope === 'workspace')
   const [rows, setRows] = useState<DraftRow[]>(() => toDraft(value))
 
   // 设置异步加载完成后对一次账：别处改了设置、或预设文件补了默认值，
@@ -191,7 +191,7 @@ export function useExcludeSettings(
 ): [FilesExclude, (next: FilesExclude) => void] {
   const { userSettings, updateSettings } = useApp()
   const scope = useSettingsScope()
-  const workspace = useWorkspace()
+  const workspace = useWorkspace(scope === 'workspace')
   const workspaceSettings = useSyncExternalStore(
     onWorkspaceSettingsChanged,
     () => getWorkspaceSettings(workspace.root),

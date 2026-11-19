@@ -10,12 +10,14 @@ import type { EngineHealthDiagnostics } from '../../shared/engine-diagnostics'
 import { getSettings } from '../settings-store'
 import { logger } from './logger'
 import { ensureEncryptionKey } from './secrets'
-import { getRemoteInstanceToken } from './remote-token'
+import { getEnvironmentRemoteInstanceToken, getRemoteInstanceToken } from './remote-token'
+import { ConnectionProbeError, probeEngineMeta, probeEngineTools, probeRemoteConnection, recoverCommittedAccount, remoteProofCurrent, type RemoteConnectionProof } from './remote-probe'
 import { authenticationIdentity, getRemoteAuth } from './remote-auth'
 import { remoteAuthHeaders } from './remote-auth-contract'
 import { remoteAuthTarget } from './remote-auth-contract'
 import { readAccountCredential } from '../account/credential-store'
-import { assertAccountTransport, ensureAccountSession, type AccountTarget } from '../account/service'
+import { ensureAccountSession, type AccountTarget } from '../account/service'
+import { assertTrustedCredentialTransport, CredentialTransportError } from '../account/transport-trust'
 import { prepareRemoteChatBody, validateRemoteWorkspaceRoot } from './remote-workspace'
 import { clearRemoteAttachments } from './remote-attachments'
 import { reserveAvailablePort } from './sdk/port-finder'
@@ -23,7 +25,7 @@ import { startProcess, type ProcessHandle } from './sdk/process-manager'
 import { OwnedProcessLedger } from './sdk/process-lifecycle'
 import { waitUntilReady } from './sdk/readiness-probe'
 import { isHealthProbeCurrent } from './health-probe'
-import { engineDataFile, migrateLegacyModels, resolveRuntime, runtimeEnvironment } from './runtime'
+import { engineDataFile, migrateLegacyModels, requireLocalRuntime, runtimeEnvironment } from './runtime'
 import {
   assertEngineHealth,
   engineIdentityOf,
@@ -32,10 +34,8 @@ import {
   normalizeEnginePath,
   isAccountRequestPath,
   parseEngineMeta,
-  classifyEngineProbeAuthFailure,
   remoteRequestError,
   remoteWorkspacePathError,
-  remoteInstanceToken,
   subagentProtocolHeaders,
   type EngineMeta
 } from './protocol'
@@ -71,7 +71,7 @@ export class EngineHost extends EventEmitter {
     runtimeSource: null,
     version: null,
     dataDir: null,
-    error: null,
+    error: null, connectionIssue: null, reconnectAttempt: 0, checkingConnection: false,
     updatedAt: Date.now()
   }
   private healthTimer: ReturnType<typeof setInterval> | null = null
@@ -82,6 +82,7 @@ export class EngineHost extends EventEmitter {
   private healthCheckOwner: AbortController | null = null
   private remoteReconnectTimer: ReturnType<typeof setTimeout> | null = null
   private remoteReconnectAttempt = 0
+  private remoteRetryReason: string | null = null
   /** Explicitly disabled by stop(); enabled while a remote target is selected. */
   private remoteReconnectEnabled = false
   private remoteTarget: { url: string; workspaceRoot: string } | null = null
@@ -127,8 +128,20 @@ export class EngineHost extends EventEmitter {
     return this.snapshot
   }
 
+  setCheckingConnection(checkingConnection: boolean): void {
+    if (Boolean(this.snapshot.checkingConnection) !== checkingConnection) this.patch({ checkingConnection })
+  }
+
   get baseUrl(): string {
     return this.snapshot.phase === 'ready' ? this.snapshot.baseUrl : ''
+  }
+  /** Narrow, main-only capability. It expires with the owned child and grants no administrator role. */
+  ownedAdminGate(): (() => string | undefined) | undefined {
+    const state = this.snapshot, handle = this.handle, epoch = this.transportController
+    if (!handle?.pid || !this.instanceToken || state.phase !== 'ready' || state.mode !== 'embedded' || state.adopted) return undefined
+    return () => this.handle === handle && this.transportController === epoch && !epoch.signal.aborted &&
+      this.snapshot.phase === 'ready' && this.snapshot.instanceId === state.instanceId && !handle.lifecycle.observation().exitObserved && !handle.lifecycle.observation().closeObserved
+      ? this.instanceToken : undefined
   }
   /** Saved connection preferences apply only when a new connection is started. */
   get remoteWorkspaceRoot(): string {
@@ -138,18 +151,24 @@ export class EngineHost extends EventEmitter {
     return this.transportController.signal
   }
   accountTarget(baseUrl?: string, toolProfile: ToolProfile = 'general'): AccountTarget {
-    const settings = getSettings()
+    // Discovery must be able to identify an untrusted service so the account UI
+    // can request consent; HTTP dispatch itself always checks transport trust.
     const active = !!baseUrl || this.snapshot.phase === 'ready'
-    const remote = active ? this.snapshot.mode === 'remote' : settings.engineMode === 'remote'
-    const url = remote ? remoteAuthTarget(baseUrl || (active ? this.snapshot.baseUrl : settings.remoteBaseUrl)) : (baseUrl || this.snapshot.baseUrl)
+    const settings = active ? null : getSettings()
+    const remote = active ? this.snapshot.mode === 'remote' : settings?.engineMode === 'remote'
+    const url = remote ? remoteAuthTarget(baseUrl || (active ? this.snapshot.baseUrl : settings!.remoteBaseUrl)) : (baseUrl || this.snapshot.baseUrl)
     const activeToken = remote && this.snapshot.mode === 'remote' && this.remoteTarget?.url === url ? this.instanceToken : ''
-    const token = remote ? (activeToken || getRemoteInstanceToken() || process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN || '') : this.instanceToken
+    const token = remote ? (activeToken || getRemoteInstanceToken(url) || getEnvironmentRemoteInstanceToken(url)) : this.instanceToken
     return { scope: remote ? url : 'embedded', url, headers: engineHeaders(token, toolProfile) }
   }
 
   async prepareRequestHeaders(baseUrl?: string, toolProfile: ToolProfile = 'general'): Promise<Record<string, string>> {
-    const target = this.accountTarget(baseUrl || this.baseUrl, toolProfile)
-    if (target.url) await ensureAccountSession(target)
+    const epoch = this.transportController, target = this.accountTarget(baseUrl || this.baseUrl, toolProfile)
+    const active = this.snapshot.mode === 'remote' ? this.remoteTarget?.url : this.snapshot.baseUrl
+    if (target.url && active && target.url !== active) throw new Error('连接已切换，本次请求已取消。')
+    if (target.url) await ensureAccountSession(target, epoch.signal)
+    // A delayed account refresh must not hand a caller bound to A the credentials of B.
+    if (epoch !== this.transportController || epoch.signal.aborted) throw new Error('连接已切换，本次请求已取消。')
     return this.requestHeaders(toolProfile)
   }
 
@@ -177,10 +196,10 @@ export class EngineHost extends EventEmitter {
     const target = this.snapshot.mode === 'remote' ? this.remoteTarget?.url ?? this.snapshot.baseUrl : ''
     const account = readAccountCredential(this.snapshot.mode === 'remote' && target ? remoteAuthTarget(target) : 'embedded')
     if (account.credential) {
-      if (target) assertAccountTransport(target)
       headers.Authorization = `Bearer ${account.credential.accessToken}`
     }
     else if (target && !account.managed) Object.assign(headers, remoteAuthHeaders(getRemoteAuth(target).credential))
+    if (target) assertTrustedCredentialTransport(target, !!(this.instanceToken || headers.Authorization || headers['X-API-Key']))
     return headers
   }
 
@@ -218,7 +237,17 @@ export class EngineHost extends EventEmitter {
     return transports
   }
 
-  async start(mode: 'embedded' | 'remote', remoteBaseUrl = '', remoteWorkspaceRoot = '', autoReconnect = false): Promise<EngineSnapshot> {
+  /** A candidate was checked without touching the live connection. Only a committed
+   * preference change may retire it and adopt this main-process-only proof. */
+  async startVerifiedRemote(proof: RemoteConnectionProof, root: string, signal?: AbortSignal): Promise<EngineSnapshot> {
+    signal?.throwIfAborted()
+    if (this.stopping || this.starting) await this.stop()
+    signal?.throwIfAborted()
+    return this.start('remote', proof.url, root, false, proof, signal)
+  }
+
+  async start(mode: 'embedded' | 'remote', remoteBaseUrl = '', remoteWorkspaceRoot = '', autoReconnect = false,
+    proof?: RemoteConnectionProof, owner?: AbortSignal): Promise<EngineSnapshot> {
     if (this.stopping) {
       const stopping = this.stopping
       try { await stopping } catch (error) {
@@ -231,8 +260,9 @@ export class EngineHost extends EventEmitter {
         }
       }
     }
+    owner?.throwIfAborted()
     if (this.starting) return this.starting
-    const normalizedRemote = remoteBaseUrl.trim().replace(/\/+$/, '')
+    const normalizedRemote = mode === 'remote' && remoteBaseUrl.trim() ? remoteAuthTarget(remoteBaseUrl) : ''
     const configuredRoot = mode === 'remote' ? validateRemoteWorkspaceRoot(remoteWorkspaceRoot) : ''
     // A direct start is an explicit user action. It supersedes a pending
     // reconnect attempt and starts the backoff from the beginning.
@@ -242,7 +272,7 @@ export class EngineHost extends EventEmitter {
       ? { url: normalizedRemote, workspaceRoot: configuredRoot }
       : null
     if (
-      this.snapshot.phase === 'ready' &&
+      !proof && this.snapshot.phase === 'ready' &&
       this.snapshot.mode === mode &&
       (mode === 'embedded' || this.snapshot.baseUrl === normalizedRemote)
     )
@@ -252,10 +282,13 @@ export class EngineHost extends EventEmitter {
     this.startupController?.abort()
     const controller = new AbortController()
     this.startupController = controller
-    const task = this.doStart(mode, normalizedRemote, configuredRoot, generation, controller.signal, !autoReconnect).finally(() => {
+    const signal = owner ? AbortSignal.any([controller.signal, owner]) : controller.signal
+    this.remoteRetryReason = null
+    const task = this.doStart(mode, normalizedRemote, configuredRoot, generation, signal, !autoReconnect, proof).finally(() => {
       if (this.starting === task) this.starting = null
       if (this.startupController === controller) this.startupController = null
-    })
+      if (this.current(generation, signal) && this.remoteRetryReason) this.scheduleRemoteReconnect(this.remoteRetryReason)
+    }).then(() => this.snapshot)
     this.starting = task
     return task
   }
@@ -270,7 +303,8 @@ export class EngineHost extends EventEmitter {
     remoteWorkspaceRoot: string,
     generation: number,
     signal: AbortSignal,
-    recoverClosedFailure: boolean
+    recoverClosedFailure: boolean,
+    proof?: RemoteConnectionProof
   ): Promise<EngineSnapshot> {
     try {
       this.healthLastSuccessAt = null
@@ -290,7 +324,7 @@ export class EngineHost extends EventEmitter {
       if (!this.current(generation, signal)) return this.snapshot
       this.patch({
         mode,
-        phase: 'starting',
+        phase: 'starting', connectionIssue: null, reconnectAttempt: this.remoteReconnectAttempt, accountId: null,
         baseUrl: '',
         port: null,
         pid: null,
@@ -306,7 +340,7 @@ export class EngineHost extends EventEmitter {
       })
       this.transportController = new AbortController()
       this.activeRemoteWorkspaceRoot = remoteWorkspaceRoot
-      if (mode === 'remote') await this.startRemote(remoteBaseUrl, generation, signal)
+      if (mode === 'remote') await this.startRemote(remoteBaseUrl, generation, signal, proof)
       else await this.startEmbedded(generation, signal)
     } catch (err) {
       if (!this.current(generation, signal)) return this.snapshot
@@ -315,66 +349,35 @@ export class EngineHost extends EventEmitter {
         error += `；关闭失败：${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
       }
       if (this.current(generation, signal)) {
-        this.patch({
-          phase: 'error',
-          baseUrl: '',
-          pid: this.handle?.pid ?? null,
-          error
-        })
+        const issue = err instanceof ConnectionProbeError ? err.issue : err instanceof CredentialTransportError ? 'http-trust-required' : null
+        this.patch({ phase: 'error', baseUrl: '', pid: this.handle?.pid ?? null, connectionIssue: issue, reconnectAttempt: 0, error })
+        if (mode === 'remote' && err instanceof ConnectionProbeError && err.retryable && this.remoteReconnectEnabled) this.remoteRetryReason = error
       }
     }
     return this.snapshot
   }
 
-  private async startRemote(url: string, generation: number, signal: AbortSignal): Promise<void> {
-    if (!url) throw new Error('未配置远端引擎地址')
-    // Prefer the encrypted setting; keep the environment variable as a migration and
-    // headless-launch fallback. Never return the secret through settings or snapshots.
-    // If an operator rotated the token and left an older encrypted value behind,
-    // retry once with the explicit environment value after an auth rejection. This
-    // keeps the stored credential private while allowing supervised deployments to
-    // rotate their token without being permanently pinned to stale local state.
-    const storedToken = getRemoteInstanceToken()
-    const environmentToken = process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN?.trim() ?? ''
-    this.instanceToken = remoteInstanceToken(url, storedToken || environmentToken)
-    let meta: EngineMeta
-    try {
-      meta = await this.handshake(url, signal)
-    } catch (error) {
-      const credentialRejected = error instanceof Error && error.message.startsWith('引擎拒绝连接凭据：')
-      if (!credentialRejected || !storedToken || !environmentToken || this.instanceToken === environmentToken) throw error
-      this.instanceToken = remoteInstanceToken(url, environmentToken)
-      meta = await this.handshake(url, signal)
-    }
+  private async startRemote(url: string, generation: number, signal: AbortSignal, verified?: RemoteConnectionProof): Promise<void> {
+    if (!url) throw new Error('未配置外部服务地址')
+    const candidate = verified && remoteProofCurrent(verified) ? verified : await probeRemoteConnection(url, {}, signal)
+    const proof = await recoverCommittedAccount(candidate, signal)
     if (!this.current(generation, signal)) return
-    this.patch({
-      phase: 'ready',
-      baseUrl: url,
-      port: portOf(url),
-      pid: null,
-      adopted: false,
-      entryPath: null,
-      runtimeSource: null,
-      dataDir: null,
-      error: null,
-      version: meta.version,
-      buildId: meta.buildId,
-      protocolVersion: meta.protocolVersion,
-      instanceId: meta.instanceId
-    })
-    // A successful handshake means the service is back. Do not carry an old
-    // network flap's attempt count into the next outage.
+    if (proof.issue) throw new ConnectionProbeError(proof.issue, proof.message!)
+    if (!remoteProofCurrent(proof)) throw new ConnectionProbeError(null, '连接设置或账号已变化，请重新连接。')
+    const { meta } = proof
+    this.instanceToken = proof.instanceToken
     this.remoteReconnectAttempt = 0
+    this.patch({
+      phase: 'ready', baseUrl: url, port: portOf(url), pid: null, adopted: false,
+      entryPath: null, runtimeSource: null, dataDir: null, error: null, connectionIssue: null, reconnectAttempt: 0,
+      version: meta.version, buildId: meta.buildId, protocolVersion: meta.protocolVersion, instanceId: meta.instanceId
+    })
     this.startHealthWatch()
   }
 
   private async startEmbedded(generation: number, signal: AbortSignal): Promise<void> {
     this.ownedProcesses.assertNoUnclosed()
-    const runtime = resolveRuntime()
-    if (!runtime)
-      throw new Error(
-        '未找到配套引擎运行时。开发时请构建同级引擎或设置 AETHER_IDE_ENGINE_ENTRY；安装包必须内置引擎。'
-      )
+    const runtime = requireLocalRuntime()
     this.patch({
       entryPath: runtime.entryPath,
       runtimeSource: runtime.source,
@@ -468,29 +471,9 @@ export class EngineHost extends EventEmitter {
     signal: AbortSignal,
     buildId?: string
   ): Promise<EngineMeta> {
-    const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]), redirect: 'error' as const }
-    const health = await fetch(`${baseUrl}/health`, options)
-    if (!health.ok) throw new Error(`/health 返回 HTTP ${health.status}`)
-    assertEngineHealth(await health.json())
-    const response = await fetch(`${baseUrl}/meta`, options)
-    if (!response.ok) throw new Error(`/meta 返回 HTTP ${response.status}`)
-    const meta = parseEngineMeta(await response.json(), buildId)
-    // Public metadata is insufficient to establish that the authenticated transport works.
-    const probe = await fetch(`${baseUrl}/api/v1/tools`, {
-      ...options,
-      headers: await this.prepareRequestHeaders(baseUrl)
-    })
-    const probeBody = await probe.json().catch(() => null) as { code?: unknown; message?: unknown } | null
-    if (probe.status === 401 || probe.status === 403) {
-      if (classifyEngineProbeAuthFailure(probeBody?.message) === 'user-credential') {
-        const account = readAccountCredential(this.accountTarget(baseUrl).scope)
-        if (account.managed || !getRemoteAuth(baseUrl).credential) throw new Error('目标引擎需要用户认证：请点击右上角登录，或在设置→个人账号中恢复已有账号；实例令牌仅用于实例校验。')
-        throw new Error('目标引擎拒绝了用户认证凭据：请检查高级用户认证中的 API Key 或 JWT 是否有效，或通过右上角登录账号。')
-      }
-      throw new Error('引擎拒绝连接凭据：请在设置→引擎→远端令牌中填写与目标引擎 AETHER_INSTANCE_TOKEN 一致的值，或在启动 Aether Code 的进程中设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN；保存后重新连接。')
-    }
-    if (!probe.ok) throw new Error(`引擎实例认证失败（HTTP ${probe.status}）`)
-    if (probeBody?.code !== 200 && probeBody?.code !== 0) throw new Error('引擎实例认证探针返回失败')
+    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)])
+    const meta = await probeEngineMeta(baseUrl, requestSignal, buildId)
+    await probeEngineTools(baseUrl, requestSignal, await this.prepareRequestHeaders(baseUrl), false)
     return meta
   }
 
@@ -540,7 +523,7 @@ export class EngineHost extends EventEmitter {
     this.startupController?.abort()
     this.startupController = null
     const startup = this.starting
-    this.patch({ phase: 'stopping', baseUrl: '' })
+    this.patch({ phase: 'stopping', baseUrl: '', connectionIssue: null, reconnectAttempt: 0 })
     try {
       // Signal already-spawned children before waiting for aborted readiness.
       await this.releaseResources()
@@ -556,7 +539,9 @@ export class EngineHost extends EventEmitter {
     }
     if (!this.current(generation)) return this.snapshot
     return this.patch({
-      phase: 'idle',
+      phase: 'idle', connectionIssue: null, reconnectAttempt: 0, accountId: null,
+      version: null, instanceId: undefined, buildId: undefined, protocolVersion: undefined,
+      entryPath: null, runtimeSource: null, dataDir: null,
       baseUrl: '',
       port: null,
       pid: null,
@@ -609,15 +594,14 @@ export class EngineHost extends EventEmitter {
       baseUrl: '',
       port: null,
       pid: null,
-      error: `${reason}；正在重新连接（第 ${attempt} 次，${Math.ceil(delay / 1000)} 秒后）`
+      connectionIssue: null, reconnectAttempt: attempt,
+      error: `${reason}；将在 ${Math.ceil(delay / 1000)} 秒后重试`
     })
     this.remoteReconnectTimer = setTimeout(() => {
       this.remoteReconnectTimer = null
       const target = this.remoteTarget
       if (!target || !this.remoteReconnectEnabled) return
-      void this.start('remote', target.url, target.workspaceRoot, true).then((snapshot) => {
-        if (snapshot.phase === 'error') this.scheduleRemoteReconnect('远端引擎暂时不可用')
-      })
+      void this.start('remote', target.url, target.workspaceRoot, true)
     }, delay)
   }
 

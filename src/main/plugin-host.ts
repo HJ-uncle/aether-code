@@ -31,7 +31,7 @@ async function authorize(event: IpcMainInvokeEvent, input: unknown, capability: 
     if (owner.isDestroyed() || signal.aborted || engineHost.requestSignal !== signal || active.phase !== 'ready' || active.baseUrl !== snapshot.baseUrl || active.instanceId !== snapshot.instanceId) throw new Error('插件所连接的引擎已变化。')
   }
   current()
-  const response = await fetch(`${snapshot.baseUrl.replace(/\/+$/, '')}${base}/capabilities/invoke`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+  const response = await fetch(`${snapshot.baseUrl.replace(/\/+$/, '')}${base}/capabilities/invoke`, { method: 'POST', redirect: 'error', headers: { ...headers, 'Content-Type': 'application/json' },
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]), body: JSON.stringify({ capability, method: 'host.authorize', args: {}, expectedRevision: plugin.revision,
       ...(plugin.devSessionId ? { hash: plugin.hash } : {}), ...(plugin.sessionId ? { sessionId: plugin.sessionId } : {}) }) })
   const body: unknown = await response.json()

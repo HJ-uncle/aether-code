@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX, type ReactNode } from 'react'
 import { DEFAULT_SETTINGS, type AppSettings, type EngineSnapshot, type RemoteAuthCredential } from '@shared/ipc'
+import { sameRemoteService } from '@shared/remote-service-url'
 import { useEngine } from './engine/useEngine'
 import { selectSessionId, sessionIdAfterSettingsUpdate, settingsPatchForSource } from './engine/session-selection'
 import { engineConnectionKey, getEngineStorageKey, getEngineSource, isEngineReady, sessionStorageKey, subscribeEngineSource } from './engine/source'
@@ -15,7 +16,7 @@ import { resetSecurityModeStore } from './engine/security-store'
 import { setContextKeys } from './platform/context-keys'
 import { AppContext, type AppContextValue } from './app-context'
 import { publishWorkspaceSelection } from './workspace/connection'
-import { getWorkspaceState, onWorkspaceChanged } from './workspace/workspace-store'
+import { workspacePreferencesRoot, onWorkspaceChanged } from './workspace/workspace-store'
 import { getWorkspaceSettings, onWorkspaceSettingsChanged } from './workspace/workspace-settings'
 
 /** 引擎阶段 → 上下文键，让命令/视图用 when 表达式声明可用性 */
@@ -70,17 +71,19 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const selectedSourceRef = useRef<string | null>(null)
   const [selectedSource, setSelectedSource] = useState<string | null>(null)
-  const workspace = useSyncExternalStore(onWorkspaceChanged, getWorkspaceState)
+  const preferenceRoot = useSyncExternalStore(onWorkspaceChanged, workspacePreferencesRoot)
   const workspaceSettings = useSyncExternalStore(
     onWorkspaceSettingsChanged,
-    () => getWorkspaceSettings(workspace.root),
+    () => getWorkspaceSettings(preferenceRoot),
     () => getWorkspaceSettings(null)
   )
   const connectionKey = engineConnectionKey(engine.snapshot)
-  const visibleSettings = useMemo<AppSettings>(
-    () => ({ ...settings, ...workspaceSettings }),
-    [settings, workspaceSettings]
-  )
+  const targetReady = engine.snapshot.phase === 'ready' && settingsLoaded && selectedSource === getEngineStorageKey() &&
+    (engine.snapshot.mode !== 'remote' || sameRemoteService(settings.remoteBaseUrl, engine.snapshot.baseUrl))
+  const hideRemoteSelection = engine.snapshot.mode === 'remote' && !targetReady
+  const visibleSettings = useMemo<AppSettings>(() => ({ ...settings, ...workspaceSettings,
+    ...(hideRemoteSelection ? { remoteWorkspaceRoot: '', lastSessionId: '' } : {})
+  }), [settings, workspaceSettings, hideRemoteSelection])
 
   useEffect(() => {
     publishSettings(visibleSettings)
@@ -92,7 +95,7 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       if (!alive) return
       sessionIdRef.current = value.lastSessionId
       setSettings(value)
-      publishSettings({ ...value, ...getWorkspaceSettings(getWorkspaceState().root) })
+      publishSettings({ ...value, ...getWorkspaceSettings(workspacePreferencesRoot()) })
       setSettingsLoaded(true)
     })
     return () => {
@@ -131,37 +134,43 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     const source = getEngineSource()
     let alive = true
     void (async () => {
-      const persisted = storageSource ? null : await getSettings()
+      // A ready snapshot can arrive before the connection IPC returns to the form.
+      // Load the selected service's preferences once before publishing any workspace path.
+      const persisted = await getSettings()
       if (!alive || source !== getEngineSource() || !isEngineReady()) return
       let saved = ''
       if (storageSource) {
         try { saved = localStorage.getItem(sessionStorageKey('aether:lastSessionId', storageSource)) ?? '' } catch { /* optional persistence */ }
       }
-      const sessionId = selectSessionId(storageSource, persisted?.lastSessionId ?? '', saved, () => globalThis.crypto.randomUUID())
+      const sessionId = selectSessionId(storageSource, persisted.lastSessionId, saved, () => globalThis.crypto.randomUUID())
       selectedSourceRef.current = storageSource
       if (storageSource) {
         try { localStorage.setItem(sessionStorageKey('aether:lastSessionId', storageSource), sessionId) } catch { /* optional persistence */ }
-      } else if (!persisted?.lastSessionId) {
+      } else if (!persisted.lastSessionId) {
         void persistSettings({ lastSessionId: sessionId }).catch(() => {})
       }
-      const next = { ...settings, lastSessionId: sessionId }
+      const next = { ...persisted, lastSessionId: sessionId }
       sessionIdRef.current = sessionId
       setSettings(next)
-      publishSettings({ ...next, ...getWorkspaceSettings(getWorkspaceState().root) })
+      publishSettings({ ...next, ...getWorkspaceSettings(workspacePreferencesRoot()) })
       publishWorkspaceSelection(next, storageSource)
       setSelectedSource(storageSource)
     })()
     return () => { alive = false }
-  }, [settingsLoaded, connectionKey, phase, settings])
+  }, [settingsLoaded, connectionKey, phase])
 
   const updateSettings = useCallback(async (patch: Partial<AppSettings>, remoteToken?: string, remoteAuth?: RemoteAuthCredential | null) => {
     const source = getEngineSource()
     const storageSource = getEngineStorageKey()
     const persistedPatch = settingsPatchForSource(storageSource, patch)
-    const next = Object.keys(persistedPatch).length > 0 || remoteToken !== undefined || remoteAuth !== undefined
+    let next = Object.keys(persistedPatch).length > 0 || remoteToken !== undefined || remoteAuth !== undefined
       ? await persistSettings(persistedPatch, remoteToken, remoteAuth)
       : await getSettings()
     const currentSource = getEngineSource()
+    if (currentSource !== source) {
+      next = await getSettings()
+      if (currentSource !== getEngineSource()) return
+    }
     if (source === currentSource && storageSource && patch.lastSessionId) {
       try { localStorage.setItem(sessionStorageKey('aether:lastSessionId', storageSource), patch.lastSessionId) } catch { /* optional persistence */ }
     }
@@ -175,10 +184,13 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
     }) }
     sessionIdRef.current = nextUserSettings.lastSessionId
     setSettings(nextUserSettings)
-    const visible = { ...nextUserSettings, ...getWorkspaceSettings(getWorkspaceState().root) }
+    const visible = { ...nextUserSettings, ...getWorkspaceSettings(workspacePreferencesRoot()) }
     publishSettings(visible)
     if (source === getEngineSource()) publishWorkspaceSelection(nextUserSettings, storageSource)
   }, [])
+
+  // Empty patches read the main-process preferences and preserve the selected source’s session.
+  const refreshSettings = useCallback(() => updateSettings({}), [updateSettings])
 
   const value = useMemo<AppContextValue>(
     () => ({
@@ -186,10 +198,11 @@ export function AppProvider({ children }: { children: ReactNode }): JSX.Element 
       settings: visibleSettings,
       userSettings: settings,
       updateSettings,
-      ready: engine.snapshot.phase === 'ready' && isEngineReady() && settingsLoaded && selectedSource === getEngineStorageKey(),
+      refreshSettings,
+      ready: targetReady && isEngineReady(),
       settingsLoaded
     }),
-    [engine, visibleSettings, updateSettings, settingsLoaded, selectedSource]
+    [engine, visibleSettings, settings, updateSettings, refreshSettings, settingsLoaded, targetReady]
   )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

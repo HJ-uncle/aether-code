@@ -18,7 +18,9 @@ export const IPC = {
     accountAction: 'account:action',
     engineGetSnapshot: 'engine:get-snapshot',
     engineDiagnostics: 'engine:diagnostics',
+    engineOpenAdmin: 'engine:open-admin',
     engineStart: 'engine:start',
+    engineApplyConnection: 'engine:apply-connection',
     engineStop: 'engine:stop',
     engineRestart: 'engine:restart',
     engineGetLocalRuntimes: 'engine:get-local-runtimes',
@@ -333,7 +335,19 @@ export type EnginePhase =
   | 'stopping' // 正在关闭
   | 'error' // 启动失败或异常退出
 
+export type EngineConnectionInput = Pick<AppSettings, 'engineMode' | 'preferredPort' | 'remoteBaseUrl' | 'autoStartEngine'> & {
+  /** Omitted uses the destination's saved root. An unqualified override only edits the currently selected remote service. */
+  remoteWorkspaceRoot?: string
+  /** Omitted = keep this destination's credential; empty/null = clear its stored value. */
+  instanceToken?: string
+  userCredential?: RemoteAuthCredential | null
+}
+
 export interface EngineSnapshot {
+  /** A draft is being verified. The existing connection/source is still authoritative. */
+  checkingConnection?: boolean
+  connectionIssue?: 'authentication-required' | 'http-trust-required' | 'instance-token' | null
+  reconnectAttempt?: number
   mode: EngineMode
   phase: EnginePhase
   /** 可用时的引擎地址，如 http://127.0.0.1:12323 */
@@ -431,7 +445,7 @@ export interface AppSettings {
   preferredPort: number
   /** remote 模式远端地址 */
   remoteBaseUrl: string
-  /** 新远端会话的服务端目录；空值使用服务端会话沙箱，已有会话沿用运行记录。 */
+  /** 兼容目录提示，仍供支持该设置的工具使用。Work 会话使用各自的工作区。 */
   remoteWorkspaceRoot: string
   /** 应用启动时是否自动拉起引擎 */
   autoStartEngine: boolean

@@ -16,6 +16,7 @@ export interface AppContextValue {
   /** 当前用户级设置；settings 在打开工作区后会叠加工作区覆盖值。 */
   userSettings: AppSettings
   updateSettings: (patch: Partial<AppSettings>, remoteToken?: string, remoteAuth?: RemoteAuthCredential | null) => Promise<void>
+  refreshSettings: () => Promise<void>
   /** 引擎是否可用（用于命令 when 条件） */
   ready: boolean
   /**

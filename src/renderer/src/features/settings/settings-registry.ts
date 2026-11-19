@@ -164,7 +164,7 @@ export const SETTINGS_DEFINITIONS: readonly SettingDefinition[] = [
   {
     key: 'aether.engine.mode',
     label: '引擎运行方式',
-    description: '选择本地内置引擎或远程引擎连接。',
+    description: '使用本机引擎，或通过服务地址连接其他引擎。',
     section: 'general',
     category: '引擎管理',
     scope: 'user',

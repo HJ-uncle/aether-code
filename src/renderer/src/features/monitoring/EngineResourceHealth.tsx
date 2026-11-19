@@ -475,8 +475,8 @@ export function EngineResourceHealth({ snapshot }: { snapshot: EngineSnapshot })
       </section>
       <footer className="engine-resource__footer">
         <span>
-          资源采样 {formatResourceTimestamp(resources?.sampledAt)}
-          {resources?.collection
+          资源采样 {processAvailable ? formatResourceTimestamp(resources.sampledAt) : '暂无样本'}
+          {processAvailable && resources.collection
             ? ` · 采集 ${Math.round(resources.collection.durationMs)} ms${resources.collection.cached ? ' · 缓存' : ''}`
             : ''}
         </span>

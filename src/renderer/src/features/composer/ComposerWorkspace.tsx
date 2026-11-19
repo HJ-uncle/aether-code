@@ -9,7 +9,6 @@ import './composer-workspace.css'
 
 interface WorkspaceSelection {
   history: readonly { path: string }[]
-  defaultPath: string | null
   busy: boolean
   reason: string | null
   onSelect: (path: string | null) => Promise<boolean>
@@ -64,10 +63,10 @@ export function ComposerWorkspace({ sessionId, selectedPath, runId, draft, ready
     return () => { current = false }
   }, [active, ready, draft, sessionId, scope, source])
   const current = resolved?.scope === scope ? resolved : undefined
-  const root = draft ? selectedPath ?? selection?.defaultPath : current?.root
+  const root = draft ? selectedPath : current?.root
   const name = root?.split(/[\\/]/).filter(Boolean).at(-1) || root
-  const label = name ? `${draft && !selectedPath ? '默认工作区' : '工作区'} · ${name}` : draft ? '默认工作区' : !ready ? '工作区未连接' : current?.error ? '工作区未确认' : '正在确认工作区…'
-  const detail = root ?? (draft ? '使用引擎配置的默认工作区，为任务创建独立目录。' : current?.error ?? (!ready ? '连接引擎后可确认当前工作区。' : '正在读取当前会话的工作区。'))
+  const label = name ? `工作区 · ${name}` : draft ? '默认工作区' : !ready ? '工作区未连接' : current?.error ? '工作区未确认' : '正在确认工作区…'
+  const detail = root ?? (draft ? '引擎会为这个任务创建独立目录。' : current?.error ?? (!ready ? '连接引擎后可确认当前工作区。' : '正在读取当前会话的工作区。'))
   const busy = picking || selection?.busy
   const disabled = Boolean(busy || selection?.reason)
   const history = selection?.history.filter(item => item.path.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) ?? []
@@ -103,10 +102,10 @@ export function ComposerWorkspace({ sessionId, selectedPath, runId, draft, ready
         <input type="search" aria-label="搜索工作区" placeholder="搜索工作区" value={query} onChange={event => setQuery(event.target.value)} />
       </label>}
       <button type="button" className="work-workspace-picker__item work-workspace-picker__item--default" aria-label="使用默认工作区" aria-pressed={!selectedPath}
-        title={selection.defaultPath ?? '使用设置中的默认位置，为每个任务创建独立目录。'}
+        title="为这个任务使用独立目录。"
         disabled={disabled} onClick={() => void select(null)}>
         <Icon name="folder-outline" size={15} aria-hidden="true" />
-        <span><strong>默认工作区</strong><small>{selection.defaultPath ? '使用设置中的目录' : '每个任务独立目录'}</small></span>
+        <span><strong>默认工作区</strong><small>每个任务使用独立目录</small></span>
         {!selectedPath && <Icon name="check" size={14} aria-hidden="true" />}
       </button>
       {!!selection.history.length && <>

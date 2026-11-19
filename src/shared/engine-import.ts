@@ -20,6 +20,8 @@ export interface EngineImportProgress {
 }
 
 export interface EngineRuntimeCatalog {
+  /** True when this client supports installing a package and can locate its own Node runtime. */
+  canImport: boolean
   activeId: string | null
   runtimes: EngineRuntimeInfo[]
 }

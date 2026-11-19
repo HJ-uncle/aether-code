@@ -17,6 +17,7 @@ import type { AccountProfileInput } from '../shared/account'
 import type {
   CopyIntoWorkspaceInput,
   EngineRequestInput,
+  EngineConnectionInput,
   EngineSnapshot,
   FilesExclude,
   LspMessage,
@@ -32,6 +33,7 @@ import { cancelRemoteAttachmentUpload, uploadRemoteAttachment } from './engine/u
 import { saveWorkspaceFile } from './engine/save-workspace-file'
 import { readWorkspaceAttachment } from './engine/read-workspace-attachment'
 import { engineHost } from './engine/host'
+import { openEngineAdmin } from './engine/admin-window'
 import { StreamAcknowledgement } from './engine/stream-acknowledgement'
 import { getEngineResourceSnapshot, getEngineStorageSnapshot } from './engine/diagnostics'
 import type { EngineDiagnostics } from '../shared/engine-diagnostics'
@@ -59,10 +61,12 @@ import { addSshKeyToAgent } from './git/ssh-agent'
 import { cancelClone, cloneRepository } from './git/git-clone'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { resolveRuntime } from './engine/runtime'
-import { clearRemoteInstanceToken, remoteInstanceTokenConfigured, setRemoteInstanceToken, withRemoteInstanceTokenChange } from './engine/remote-token'
-import { remoteAuthStatus, withRemoteAuthChange } from './engine/remote-auth'
+import { requireLocalRuntime, resolveRuntime } from './engine/runtime'
+import { getEnvironmentRemoteInstanceToken, remoteInstanceTokenConfigured } from './engine/remote-token'
+import { applyEngineConnection, assertEngineConnectionAvailable, cancelPendingEngineConnection, stopEngineConnection, connectionKeys, connectionInputForSettings } from './engine/connection'
+import { remoteAuthStatus } from './engine/remote-auth'
 import { importLocalRuntime } from './engine/import-local-runtime'
+import { canImportLocalRuntime } from './engine/runtime-import-support'
 import { getActiveRuntimeId, listLocalRuntimes, removeLocalRuntime, setActiveRuntimeId } from './engine/local-runtime-store'
 import type { EngineImportProgress, EngineRuntimeCatalog } from '../shared/engine-import'
 import { assertTrustedRenderer } from './ipc-security'
@@ -117,7 +121,7 @@ function ensureStreamSenderDestroyHandler(sender: WebContents): void {
 }
 
 function ensureNotActivatingRuntime(): void {
-  if (runtimeActivationBusy) throw new Error('正在切换本地引擎，请稍后再试')
+  if (runtimeActivationBusy || runtimeImportBusy) throw new Error('正在处理本地引擎，请稍后再试')
 }
 
 function broadcast(channel: string, payload: unknown): void {
@@ -136,12 +140,26 @@ export function registerIpcHandlers(): void {
     target: () => engineHost.accountTarget(),
     changed: state => broadcast(IPC.event.accountChanged, state),
     beforeIdentityChange: async () => {
+      cancelPendingEngineConnection()
       abortAllStreams()
       const [terminalFailures, browserFailures] = await Promise.all([
         remoteTerminalService.disposeForIdentityChange(), disconnectBrowserClients()
       ])
       const failures = [...terminalFailures, ...browserFailures]
       return failures.length ? '旧账号资源清理未完成：' + failures.join('；') + '。连接恢复后可重试清理。' : null
+    },
+    transportChanged: async (trusted) => {
+      cancelPendingEngineConnection()
+      const snapshot = engineHost.getSnapshot()
+      if (trusted && snapshot.connectionIssue !== 'http-trust-required') return
+      if (!trusted) {
+        abortAllStreams()
+        engineHost.accountIdentityChanged()
+        if (snapshot.phase === 'idle') return
+        await engineHost.stop()
+      }
+      const settings = getSettings()
+      await engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
     },
     identityChanged: async () => {
       abortAllStreams()
@@ -157,6 +175,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.accountAction, async (event, action: unknown, ...args: unknown[]) => {
     // Expected account failures are data, so Electron does not log a stack or
     // prepend its IPC implementation details to the user's error message.
+    assertTrustedRenderer(event, '账号操作')
     const invoke = (): unknown => {
     switch (action) {
       case 'getState': return accountService.getState()
@@ -210,6 +229,13 @@ export function registerIpcHandlers(): void {
     owner.sender.send(IPC.event.streamEvent, { ...event, streamId: owner.streamId })
   })
   // ── 生命周期 ──
+  ipcMain.handle(IPC.invoke.engineOpenAdmin, async (event) => {
+    assertTrustedRenderer(event, '打开引擎管理后台')
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    if (!parent) return { ok: false, message: '当前窗口已关闭。' }
+    try { await openEngineAdmin(parent); return { ok: true } }
+    catch (err) { return { ok: false, message: err instanceof Error ? err.message : '打开管理后台失败。' } }
+  })
   ipcMain.handle(IPC.invoke.engineGetSnapshot, (event) => {
     assertTrustedRenderer(event, '引擎状态读取')
     return engineHost.getSnapshot()
@@ -230,9 +256,20 @@ export function registerIpcHandlers(): void {
     return { identity, resources, storage, health: { ...engineHost.getHealthDiagnostics(), activeStreams: activeStreams.size } }
   })
 
+  ipcMain.handle(IPC.invoke.engineApplyConnection, async (event, input: EngineConnectionInput) => {
+    assertTrustedRenderer(event, '应用引擎连接')
+    try {
+      ensureNotActivatingRuntime()
+      return { ok: true, snapshot: await applyEngineConnection(input) }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : '连接失败，请重试。' }
+    }
+  })
+
   ipcMain.handle(IPC.invoke.engineStart, async (event) => {
     assertTrustedRenderer(event, '引擎启动')
     ensureNotActivatingRuntime()
+    assertEngineConnectionAvailable()
     const settings = getSettings()
     return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
   })
@@ -240,12 +277,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.engineStop, (event) => {
     assertTrustedRenderer(event, '引擎停止')
     ensureNotActivatingRuntime()
-    return engineHost.stop()
+    return stopEngineConnection()
   })
 
   ipcMain.handle(IPC.invoke.engineRestart, async (event) => {
     assertTrustedRenderer(event, '引擎重启')
     ensureNotActivatingRuntime()
+    assertEngineConnectionAvailable()
     const settings = getSettings()
     await engineHost.stop()
     return engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
@@ -254,6 +292,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.engineGetLocalRuntimes, (event): EngineRuntimeCatalog => {
     assertTrustedRenderer(event, '本地引擎读取')
     return {
+      canImport: canImportLocalRuntime(),
       activeId: getActiveRuntimeId(app.getPath('userData')),
       runtimes: listLocalRuntimes(app.getPath('userData'))
     }
@@ -263,8 +302,11 @@ export function registerIpcHandlers(): void {
   // archive extraction against arbitrary filesystem locations through this IPC.
   ipcMain.handle(IPC.invoke.engineImportLocalRuntime, async (event) => {
     assertTrustedRenderer(event, '本地引擎导入')
+    assertEngineConnectionAvailable()
     if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
-    if (getSettings().engineMode !== 'embedded') throw new Error('请先保存“本地内置”运行方式')
+    if (!canImportLocalRuntime()) throw new Error('此客户端无法导入本机引擎包，请使用完整的 Windows x64 客户端，或连接其他引擎。')
+    // Import only installs a version. It must be possible to repair a missing local
+    // runtime while an external connection remains active.
     runtimeImportBusy = true
     try {
       const options: Electron.OpenDialogOptions = {
@@ -287,17 +329,17 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.invoke.engineActivateLocalRuntime, async (event, id: unknown) => {
     assertTrustedRenderer(event, '本地引擎切换')
+    assertEngineConnectionAvailable()
     if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
     if (id !== null && typeof id !== 'string') throw new Error('无效的本地引擎标识')
     const settings = getSettings()
-    if (settings.engineMode !== 'embedded') throw new Error('请先保存“本地内置”运行方式')
     const userData = app.getPath('userData')
     const previousId = getActiveRuntimeId(userData)
     const previous = engineHost.getSnapshot()
     if (previous.phase === 'starting' || previous.phase === 'stopping' || previous.phase === 'installing') {
       throw new Error('引擎正在启动或停止，请等待完成后再切换')
     }
-    const restoreRunning = previous.phase === 'ready'
+    const restartRunningLocal = settings.engineMode === 'embedded' && previous.mode === 'embedded' && previous.phase === 'ready' && !previous.adopted
     let pointerChanged = false
     let stopped = false
     runtimeActivationBusy = true
@@ -308,7 +350,10 @@ export function registerIpcHandlers(): void {
       }
       // Resolve before stopping the existing engine so missing assets cannot
       // interrupt a working session. Failed activation restores the pointer.
-      if (!resolveRuntime()) throw new Error('未找到默认引擎；请先导入完整引擎包')
+      requireLocalRuntime()
+      // Selecting an installed version for a local draft is preparation only.
+      // The separate connection action owns stopping the current external service connection.
+      if (!restartRunningLocal || !pointerChanged) return previous
       abortAllStreams()
       stopped = true
       await engineHost.stop()
@@ -330,7 +375,7 @@ export function registerIpcHandlers(): void {
       if (stopped) {
         try {
           await engineHost.stop()
-          if (restoreRunning && pointerRestored) {
+          if (restartRunningLocal && pointerRestored) {
             const restored = await engineHost.start(settings.engineMode, settings.remoteBaseUrl, settings.remoteWorkspaceRoot)
             if (restored.phase !== 'ready') recoveryErrors.push(`原引擎重新启动失败：${restored.error || '引擎未就绪'}`)
           }
@@ -347,6 +392,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.invoke.engineDeleteLocalRuntime, (event, id: unknown): void => {
     assertTrustedRenderer(event, '本地引擎删除')
+    assertEngineConnectionAvailable()
     if (runtimeImportBusy || runtimeActivationBusy) throw new Error('正在处理本地引擎，请稍后再试')
     if (typeof id !== 'string') throw new Error('无效的本地引擎标识')
     const userData = app.getPath('userData')
@@ -474,67 +520,59 @@ export function registerIpcHandlers(): void {
 
   // ── 设置 ──
   ipcMain.handle(IPC.invoke.settingsGet, () => getSettings())
-  ipcMain.handle(IPC.invoke.settingsUpdate, (_event, patch: Partial<AppSettings>) => {
-    const connectionKeys: (keyof AppSettings)[] = ['engineMode', 'preferredPort', 'remoteBaseUrl', 'remoteWorkspaceRoot', 'autoStartEngine']
-    if (connectionKeys.some((key) => Object.prototype.hasOwnProperty.call(patch, key))) ensureNotActivatingRuntime()
-    const next = updateSettings(patch)
-    if (patch.graphicsMode !== undefined || patch.visualEffects !== undefined) publishGraphicsSnapshot()
+  ipcMain.handle(IPC.invoke.settingsUpdate, async (event, patch: Partial<AppSettings>) => {
+    assertTrustedRenderer(event, '更新设置')
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('设置格式无效')
+    // Keep connection settings and credentials out of the generic preferences writer.
+    const saved = getSettings()
+    const ordinary: Partial<AppSettings> = {}
+    for (const key of Object.keys(saved) as (keyof AppSettings)[]) {
+      if (Object.hasOwn(patch, key) && !connectionKeys.some(value => value === key)) Object.assign(ordinary, { [key]: patch[key] })
+    }
+    if (connectionKeys.some(key => Object.hasOwn(patch, key) && patch[key] !== saved[key])) {
+      ensureNotActivatingRuntime()
+      await applyEngineConnection(connectionInputForSettings(saved, patch))
+    }
+    const next = Object.keys(ordinary).length ? updateSettings(ordinary) : getSettings()
+    if (ordinary.graphicsMode !== undefined || ordinary.visualEffects !== undefined) publishGraphicsSnapshot()
     return next
   })
-  const remoteTokenStatus = (): RemoteTokenStatus => {
-    const stored = remoteInstanceTokenConfigured()
-    const environment = Boolean(process.env.AETHER_IDE_REMOTE_INSTANCE_TOKEN?.trim())
-    return {
-      configured: stored || environment,
-      source: stored ? 'stored' as const : environment ? 'environment' as const : 'none' as const
-    }
+  const remoteTokenStatus = (url = getSettings().remoteBaseUrl): RemoteTokenStatus => {
+    if (typeof url !== 'string') throw new Error('服务地址必须是字符串')
+    if (!url.trim()) return { configured: false, source: 'none' }
+    const source = remoteInstanceTokenConfigured(url) ? 'stored' : getEnvironmentRemoteInstanceToken(url) ? 'environment' : 'none'
+    return { configured: source !== 'none', source }
   }
-  ipcMain.handle(IPC.invoke.settingsRemoteTokenStatus, remoteTokenStatus)
-  ipcMain.handle(IPC.invoke.settingsRemoteAuthStatus, (_event, url: string): RemoteAuthStatus => {
-    if (typeof url !== 'string') throw new Error('远端地址必须是字符串')
+  ipcMain.handle(IPC.invoke.settingsRemoteTokenStatus, (event, url?: string) => {
+    assertTrustedRenderer(event, '实例令牌状态')
+    return remoteTokenStatus(url)
+  })
+  ipcMain.handle(IPC.invoke.settingsRemoteAuthStatus, (event, url: string): RemoteAuthStatus => {
+    assertTrustedRenderer(event, '用户认证状态')
+    if (typeof url !== 'string') throw new Error('服务地址必须是字符串')
     return remoteAuthStatus(url)
   })
-  ipcMain.handle(IPC.invoke.settingsSetRemoteToken, (_event, token: string) => {
+  // Older callers must follow the same validation and commit rules as the settings page.
+  async function applySavedToken(token: string): Promise<RemoteTokenStatus> {
     ensureNotActivatingRuntime()
-    if (typeof token !== 'string') throw new Error('远端令牌必须是字符串')
-    setRemoteInstanceToken(token)
-    return remoteTokenStatus()
+    const saved = getSettings()
+    if (saved.engineMode !== 'remote' || !saved.remoteBaseUrl) throw new Error('请先选择要连接的服务。')
+    await applyEngineConnection({ ...saved, instanceToken: token })
+    return remoteTokenStatus(saved.remoteBaseUrl)
+  }
+  ipcMain.handle(IPC.invoke.settingsSetRemoteToken, (event, token: string) => {
+    assertTrustedRenderer(event, '设置实例令牌')
+    return applySavedToken(token)
   })
-  ipcMain.handle(IPC.invoke.settingsClearRemoteToken, () => {
-    ensureNotActivatingRuntime()
-    clearRemoteInstanceToken()
-    return remoteTokenStatus()
+  ipcMain.handle(IPC.invoke.settingsClearRemoteToken, (event) => {
+    assertTrustedRenderer(event, '清除实例令牌')
+    return applySavedToken('')
   })
-  ipcMain.handle(IPC.invoke.settingsSaveEngine, (_event, patch: Partial<AppSettings>, token?: string, auth?: RemoteAuthCredential | null) => {
+  ipcMain.handle(IPC.invoke.settingsSaveEngine, async (event, patch: Partial<AppSettings>, token?: string, auth?: RemoteAuthCredential | null) => {
+    assertTrustedRenderer(event, '保存引擎连接')
     ensureNotActivatingRuntime()
-    if (token !== undefined && typeof token !== 'string') throw new Error('远端令牌必须是字符串')
-    // Never spread a credential-bearing object into ordinary persisted settings.
-    const connection = {
-      engineMode: patch.engineMode,
-      preferredPort: patch.preferredPort,
-      remoteBaseUrl: patch.remoteBaseUrl,
-      remoteWorkspaceRoot: patch.remoteWorkspaceRoot ?? getSettings().remoteWorkspaceRoot,
-      autoStartEngine: patch.autoStartEngine
-    }
-    if (!['embedded', 'remote'].includes(connection.engineMode ?? '') ||
-      typeof connection.remoteBaseUrl !== 'string' || typeof connection.autoStartEngine !== 'boolean' ||
-      !Number.isInteger(connection.preferredPort) || connection.preferredPort! < 1 || connection.preferredPort! > 65535) {
-      throw new Error('引擎连接设置无效')
-    }
-    const save = (): AppSettings => updateSettings(connection)
-    const withAuth = (): AppSettings =>
-      withRemoteAuthChange(
-        typeof connection.remoteBaseUrl === 'string' ? connection.remoteBaseUrl : getSettings().remoteBaseUrl,
-        auth,
-        save
-      )
-    const next = token === undefined ? withAuth() : withRemoteInstanceTokenChange(token, withAuth)
-    if (auth !== undefined && engineHost.refreshAuthenticationIdentity()) {
-      abortAllStreams()
-      // Each terminal retains its old endpoint and headers for authenticated cleanup.
-      void remoteTerminalService.disposeForIdentityChange()
-    }
-    return next
+    await applyEngineConnection({ ...connectionInputForSettings(getSettings(), patch), instanceToken: token, userCredential: auth })
+    return getSettings()
   })
 
   // ── 文件系统 ──

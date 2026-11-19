@@ -1,6 +1,7 @@
 import { useMemo, type JSX } from 'react'
 import type { EngineSnapshot } from '@shared/ipc'
 import { useApp } from '@renderer/core/app-context'
+import { accountConnectionIssue, connectionLabel, runtimeSourceLabel } from '@renderer/core/engine/connection-status'
 import { Icon } from '@renderer/ui/icons'
 import { SectionHeading } from '@renderer/ui/ui-primitives'
 import type { SessionTask } from '../sessions/state'
@@ -8,7 +9,7 @@ import { EngineResourceHealth } from './EngineResourceHealth'
 
 function snapshotState(snapshot: EngineSnapshot): 'ready' | 'busy' | 'error' | 'idle' {
   if (snapshot.phase === 'ready') return 'ready'
-  if (snapshot.phase === 'error') return 'error'
+  if (snapshot.phase === 'error') return accountConnectionIssue(snapshot) ? 'idle' : 'error'
   if (
     snapshot.phase === 'starting' ||
     snapshot.phase === 'installing' ||
@@ -16,18 +17,6 @@ function snapshotState(snapshot: EngineSnapshot): 'ready' | 'busy' | 'error' | '
   )
     return 'busy'
   return 'idle'
-}
-
-function phaseLabel(snapshot: EngineSnapshot): string {
-  const labels: Record<EngineSnapshot['phase'], string> = {
-    idle: '未启动',
-    installing: '安装中',
-    starting: '启动中',
-    ready: '已就绪',
-    stopping: '停止中',
-    error: '错误'
-  }
-  return labels[snapshot.phase]
 }
 
 function formatTime(value: number | null | undefined): string {
@@ -89,18 +78,17 @@ export function EngineMonitorView({ tasks }: { tasks: readonly SessionTask[] }):
           <div className="engine-monitor__status" data-state={state}>
             <span className="engine-monitor__status-dot" aria-hidden="true" />
             <div>
-              <strong>{phaseLabel(snapshot)}</strong>
+              <strong>{connectionLabel(snapshot)}</strong>
               <span>
-                {snapshot.mode === 'embedded' ? '本地内置引擎' : '远端引擎'} · 上次状态变化{' '}
-                {formatTime(snapshot.updatedAt)}
+                {snapshot.mode === 'embedded' ? '本机引擎' : '其他引擎'}
               </span>
             </div>
           </div>
           <div className="engine-monitor__stats">
             <Stat
               label="PID"
-              value={snapshot.pid ? String(snapshot.pid) : '—'}
-              hint={snapshot.adopted ? '复用中的进程' : '当前应用启动'}
+              value={snapshot.mode === 'embedded' && snapshot.phase === 'ready' && snapshot.pid ? String(snapshot.pid) : '—'}
+              hint={snapshot.mode === 'remote' ? '服务端进程不可见' : snapshot.adopted ? '复用已有进程' : snapshot.pid && snapshot.phase === 'ready' ? '由当前应用启动' : '没有可用的本机进程'}
             />
             <Stat
               label="端口"
@@ -115,8 +103,8 @@ export function EngineMonitorView({ tasks }: { tasks: readonly SessionTask[] }):
             />
             <Stat
               label="版本"
-              value={snapshot.version || '未知'}
-              hint={snapshot.buildId || '无 build 标识'}
+              value={snapshot.phase === 'ready' ? snapshot.version || '未知' : '—'}
+              hint={snapshot.phase === 'ready' ? snapshot.buildId || '未提供构建标识' : undefined}
             />
           </div>
         </section>
@@ -133,18 +121,18 @@ export function EngineMonitorView({ tasks }: { tasks: readonly SessionTask[] }):
         <section className="engine-monitor__identity" aria-label="引擎身份">
           <div>
             <span>实例</span>
-            <strong>{snapshot.instanceId || '—'}</strong>
+            <strong>{snapshot.phase === 'ready' ? snapshot.instanceId || '—' : '—'}</strong>
           </div>
           <div>
-            <span>数据目录</span>
-            <strong title={snapshot.dataDir || undefined}>{snapshot.dataDir || '—'}</strong>
+            <span>数据库文件</span>
+            <strong title={snapshot.phase === 'ready' && snapshot.mode === 'embedded' ? snapshot.dataDir || undefined : undefined}>{snapshot.mode === 'remote' ? '服务端未提供' : snapshot.phase === 'ready' ? snapshot.dataDir || '—' : '—'}</strong>
           </div>
           <div>
-            <span>运行时</span>
-            <strong>{snapshot.runtimeSource || '—'}</strong>
+            <span>运行时来源</span>
+            <strong>{snapshot.mode === 'remote' || snapshot.phase === 'ready' ? runtimeSourceLabel(snapshot) : '—'}</strong>
           </div>
           <div>
-            <span>采样时间</span>
+            <span>连接状态更新时间</span>
             <strong>{formatTime(snapshot.updatedAt)}</strong>
           </div>
         </section>

@@ -260,14 +260,22 @@ async function sessionFileTarget(sessionId: string, target: SessionRequestTarget
   const key = JSON.stringify([target.source, target.expectedEngine, sessionId])
   let pending = sessionTargetRequests.get(key)
   if (!pending) {
-    pending = readSessionWorkspaceContext(sessionId, target, workspaceRoot).then(context => Object.freeze({
-      ...target, ...context, bindingEpoch: context.epoch,
-      key: JSON.stringify([target.source, target.expectedEngine, context.sessionId, context.root, context.epoch])
-    }))
+    pending = readSessionWorkspaceContext(sessionId, target, workspaceRoot).then(context => asSessionFileTarget(target, context))
     sessionTargetRequests.set(key, pending)
     void pending.catch(() => { if (sessionTargetRequests.get(key) === pending) sessionTargetRequests.delete(key) })
   }
   return pending
+}
+
+function asSessionFileTarget(target: SessionRequestTarget, { sessionId, root, epoch }: SessionWorkspaceContext): SessionFileTarget {
+  return Object.freeze({ ...target, sessionId, root, bindingEpoch: epoch, key: JSON.stringify([target.source, target.expectedEngine, sessionId, root, epoch]) })
+}
+
+function checkedSessionEntries(target: SessionFileTarget, result: DirectoryResponse): FsEntry[] {
+  assertSessionFileTarget(target)
+  if (result.root !== target.root || (target.bindingEpoch && result.bindingEpoch && result.bindingEpoch !== target.bindingEpoch)) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
+  if (!Array.isArray(result.entries)) throw new Error('任务目录响应无效，请升级引擎')
+  return result.entries.map(entry => ({ ...entry, path: sessionAbsolutePath(target.root, sessionRelativePath(target.root, entry.path)) }))
 }
 
 function readQuery(target: SessionFileTarget, path: string): EngineRequestInput['query'] {
@@ -417,16 +425,10 @@ export async function readDir(dir: string, target?: SessionFileTarget): Promise<
     const relative = sessionRelativePath(target.root, dir, true)
     if (!relative) {
       const context = await readSessionWorkspaceContextWithEntries(target.sessionId, target)
-      assertSessionFileTarget(target)
-      if (context.root !== target.root) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
-      return context.entries.map(entry => ({ ...entry, path: sessionAbsolutePath(target.root, sessionRelativePath(target.root, entry.path)) }))
+      return checkedSessionEntries(target, context)
     }
-    const result = await sessionRequest<DirectoryResponse>(target.sessionId, target, { method: 'GET', path: '/workspace/directory',
-      query: { sessionId: target.sessionId, path: relative }, expectedEngine: target.expectedEngine })
-    assertSessionFileTarget(target)
-    if (!Array.isArray(result?.entries)) throw new Error('任务目录响应无效，请升级引擎')
-    if (result.root !== target.root) throw new Error('任务工作区已变化，请关闭旧文档后重新打开')
-    return result.entries.map(entry => ({ ...entry, path: sessionAbsolutePath(target.root, sessionRelativePath(target.root, entry.path)) }))
+    const result = await sessionRequest<DirectoryResponse>(target.sessionId, target, { method: 'GET', path: '/workspace/directory', query: readQuery(target, relative) })
+    return checkedSessionEntries(target, result)
   }
   if (!isRemoteEngine()) return bridge().fs.readDir(dir)
   const context = await remoteWorkspaceContext()
@@ -456,23 +458,42 @@ export async function readDir(dir: string, target?: SessionFileTarget): Promise<
 const LIST_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'out', 'build', 'release', '.vite', 'coverage'])
 const MAX_LIST_FILES = 20_000
 
-export async function listAllFiles(root: string): Promise<string[]> {
+export async function listSessionReferenceFiles(sessionId: string, signal: AbortSignal): Promise<string[]> {
+  const source = { source: getEngineSource(), expectedEngine: getExpectedEngine() }
+  const receipt = await readSessionWorkspaceContextWithEntries(sessionId, source)
+  signal.throwIfAborted()
+  const target = asSessionFileTarget(source, { sessionId: receipt.sessionId, root: receipt.root, epoch: receipt.bindingEpoch })
+  return walkReferenceFiles(target.root, dir => dir === target.root ? Promise.resolve(checkedSessionEntries(target, receipt)) : readDir(dir, target), signal)
+}
+
+export async function listAllFiles(root: string, signal?: AbortSignal): Promise<string[]> {
   if (!isRemoteEngine()) return bridge().fs.listAll(root)
   const context = await remoteWorkspaceContext()
   // The context is captured once so every directory request and relative path
   // conversion belongs to the same endpoint/session snapshot.
   if (remoteWorkspaceRelativePath(context, root) !== '') throw new Error('远端工作区根目录已变化')
-  const files: string[] = []
-  const pending: string[] = [root]
-  while (pending.length > 0 && files.length < MAX_LIST_FILES) {
-    const dir = pending.pop()!
+  return walkReferenceFiles(root, async dir => {
+    assertWorkspaceTarget(context.target)
     const entries = await readDir(dir)
+    assertWorkspaceTarget(context.target)
+    return entries
+  }, signal)
+}
+
+async function walkReferenceFiles(root: string, list: (dir: string) => Promise<FsEntry[]>, signal?: AbortSignal): Promise<string[]> {
+  const files: string[] = [], pending = [root], seen = new Set([root])
+  while (pending.length && files.length < MAX_LIST_FILES) {
+    signal?.throwIfAborted()
+    const entries = await list(pending.pop()!)
+    signal?.throwIfAborted()
     for (const entry of entries) {
       if (files.length >= MAX_LIST_FILES) break
       if (entry.isDirectory) {
-        if (!LIST_SKIP_DIRS.has(entry.name)) pending.push(entry.path)
+        if (!LIST_SKIP_DIRS.has(entry.name) && !seen.has(entry.path) && seen.size < MAX_LIST_FILES) {
+          seen.add(entry.path); pending.push(entry.path)
+        }
       } else {
-        const relative = remoteWorkspaceRelativePath(context, entry.path)
+        const relative = remoteWorkspaceRelativePath({ root }, entry.path)
         if (relative) files.push(relative.replace(/\\/g, '/'))
       }
     }

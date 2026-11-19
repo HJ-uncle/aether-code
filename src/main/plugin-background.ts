@@ -8,7 +8,7 @@ async function backgroundTaskCount(): Promise<number> {
   if (snapshot.phase !== 'ready' || !snapshot.baseUrl) return 0
   const headers = await engineHost.prepareRequestHeaders(snapshot.baseUrl)
   const response = await fetch(`${snapshot.baseUrl.replace(/\/+$/, '')}/api/v1/plugins/runtime/background`, {
-    headers, signal: AbortSignal.any([signal, AbortSignal.timeout(3000)])
+    headers, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(3000)])
   })
   if (!response.ok || signal.aborted || engineHost.requestSignal !== signal) return 0
   const result = await response.json() as { code?: number; data?: { enabled?: boolean; tasks?: unknown[] } }

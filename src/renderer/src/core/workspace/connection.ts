@@ -1,4 +1,5 @@
 import type { AppSettings, EngineSnapshot } from '@shared/ipc'
+import { sameRemoteService } from '@shared/remote-service-url'
 import {
   getEngineSource,
   getEngineStorageKey,
@@ -18,6 +19,8 @@ const listeners = new Set<() => void>()
 
 /** Published only after AppProvider has selected the session for this endpoint. */
 export function publishWorkspaceSelection(settings: AppSettings, source: string): void {
+  if (isRemoteEngine() && (!isEngineReady() || source !== getEngineStorageKey() ||
+      !sameRemoteService(settings.remoteBaseUrl, getExpectedEngine().baseUrl))) return
   const next = {
     source,
     sessionId: settings.lastSessionId.trim(),

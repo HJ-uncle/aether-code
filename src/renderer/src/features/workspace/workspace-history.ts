@@ -51,11 +51,10 @@ export function rememberSessionWorkspace(source: string, path: string): void {
   catch { /* A full preferences store must not prevent using a selected directory. */ }
 }
 
-export function sessionWorkspaceChoices(source: string, tasks: readonly SessionTask[], currentPath: string | null, configuredPath?: string): SessionWorkspaceHistoryEntry[] {
+export function sessionWorkspaceChoices(source: string, tasks: readonly SessionTask[], currentPath: string | null): SessionWorkspaceHistoryEntry[] {
   return mergeSessionWorkspaceHistory([
     ...readSessionWorkspaceHistory(source),
     ...tasks.flatMap(task => task.workspacePath ? [{ path: task.workspacePath, updatedAt: task.updatedAt }] : []),
     ...(currentPath ? [{ path: currentPath, updatedAt: 0 }] : []),
-    ...(configuredPath ? [{ path: configuredPath, updatedAt: 0 }] : []),
   ])
 }

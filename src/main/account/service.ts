@@ -5,12 +5,14 @@ import type { AccountProfileInput, AccountProvider, AccountSession, AccountState
 import { readAccountCredential, saveAccountCredential, validAccountUser, validCredential, type AccountCredential } from './credential-store'
 import { getAccountTransport, saveHttpTrust } from './transport-trust'
 import { remoteAuthTarget } from '../engine/remote-auth-contract'
+import { classifyEngineProbeAuthFailure } from '../engine/protocol'
 
 export interface AccountTarget { scope: string; url: string; headers: Record<string, string> }
 interface Dependencies {
   target(): AccountTarget
   beforeIdentityChange?(): Promise<string | null>
   identityChanged(): Promise<void>
+  transportChanged?(trusted: boolean): Promise<void>
   changed(state: AccountState): void
 }
 class AccountHttpError extends Error { constructor(readonly status: number, message: string) { super(message) } }
@@ -30,7 +32,7 @@ let stateFlightScope = ''
 function dep(): Dependencies { if (!dependencies) throw new Error('账号服务尚未就绪'); return dependencies }
 function target(): AccountTarget {
   const t = dep().target()
-  if (!t.url) throw new Error('请先启动本地引擎，或在引擎设置中保存远端服务地址。')
+  if (!t.url) throw new Error('请先在「设置 → 引擎管理」启动本机引擎，或连接其他引擎。')
   return t
 }
 function assertTarget(t: AccountTarget): void {
@@ -59,15 +61,16 @@ function publish(t: AccountTarget, next: Partial<AccountState>): AccountState {
   return state
 }
 async function request<T>(t: AccountTarget, path: string, method = 'GET', body?: unknown, authenticated = false, signal?: AbortSignal): Promise<T> {
-  assertAccountTransport(t.url)
   const headers: Record<string, string> = { ...t.headers, Accept: 'application/json' }
   if (authenticated) {
-    await ensureAccountSession(t)
+    await ensureAccountSession(t, signal)
     const credential = readAccountCredential(t.scope).credential
     if (!credential) throw new AccountHttpError(401, '请先登录账号。')
     headers.Authorization = `Bearer ${credential.accessToken}`
   }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
+  // Consent can change while an authenticated request waits for a shared token rotation.
+  assertAccountTransport(t.url)
   const response = await fetch(`${t.url}/auth/account${path}`, {
     method, headers, redirect: 'error', body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.any([AbortSignal.timeout(20000), ...(signal ? [signal] : [])])
@@ -149,17 +152,29 @@ export function configureAccountService(value: Dependencies): void {
   }, 30000)
   timer.unref()
 }
-/** Used by all HTTP/SSE/PTY paths before attaching an account access token. */
-export async function ensureAccountSession(t: AccountTarget): Promise<void> {
+/** Cancel this consumer promptly; a shared, idempotent server rotation can still finish for others. */
+function waitForAccountRefresh(flight: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return flight
+  return new Promise<void>((resolve, reject) => {
+    const aborted = (): void => reject(signal.reason)
+    signal.addEventListener('abort', aborted, { once: true })
+    if (signal.aborted) aborted()
+    void flight.then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted))
+  })
+}
+
+/** A rejected access token may rotate once even if the desktop clock still considers it fresh. */
+export async function ensureAccountSession(t: AccountTarget, signal?: AbortSignal, rejectedAccessToken?: string): Promise<void> {
+  signal?.throwIfAborted()
   // A clock correction can make the cached token look fresh while the server
   // has already rotated it. Always join that rotation before trusting expiry.
   const running = refreshing.get(t.scope)
-  if (running) return running
+  if (running) return waitForAccountRefresh(running, signal)
   const entry = readAccountCredential(t.scope)
   const credential = entry.credential
   if (credential) assertAccountTransport(t.url)
   if (credential?.accessToken === 'expired_account_session') throw new AccountHttpError(401, '登录已过期，请重新登录。')
-  if (!credential || Date.parse(credential.expiresAt) > Date.now() + 60000) return
+  if (!credential || (credential.accessToken !== rejectedAccessToken && Date.parse(credential.expiresAt) > Date.now() + 60000)) return
   assertAccountTransport(t.url)
   const flight = (async () => {
     try {
@@ -177,7 +192,7 @@ export async function ensureAccountSession(t: AccountTarget): Promise<void> {
     } catch (error) {
       const current = readAccountCredential(t.scope).credential
       if (!current || current.user.id !== credential.user.id || current.user.tenantId !== credential.user.tenantId || current.refreshToken !== credential.refreshToken) return
-      const rejected = error instanceof AccountHttpError && error.status === 401
+      const rejected = error instanceof AccountHttpError && error.status === 401 && classifyEngineProbeAuthFailure(error.message) !== 'instance-token'
       // A network interruption must not destroy the only recoverable credential.
       if (rejected) {
         saveAccountCredential(t.scope, { ...current, accessToken: 'expired_account_session', expiresAt: new Date(0).toISOString() })
@@ -187,7 +202,7 @@ export async function ensureAccountSession(t: AccountTarget): Promise<void> {
     }
   })().finally(() => refreshing.delete(t.scope))
   refreshing.set(t.scope, flight)
-  return flight
+  return waitForAccountRefresh(flight, signal)
 }
 async function readState(): Promise<AccountState> {
   const version = generation
@@ -245,7 +260,10 @@ export const accountService = {
     saveHttpTrust(t.url, trusted)
     generation++
     stateFlight = null
-    if (!trusted) { externalAbort?.abort(); await dep().identityChanged() }
+    if (!trusted) externalAbort?.abort()
+    const { transportChanged, identityChanged } = dep()
+    if (transportChanged) await transportChanged(trusted)
+    else if (!trusted) await identityChanged()
     return accountService.getState()
   },
   getState(): Promise<AccountState> {

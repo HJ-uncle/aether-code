@@ -4,9 +4,14 @@ import { randomUUID } from 'node:crypto'
 import type { EngineSnapshot, TerminalCreateInput, TerminalExitInfo } from '../../shared/ipc'
 import { engineTargetError } from '../engine/protocol'
 import { engineHost } from '../engine/host'
+import { assertTrustedCredentialTransport } from '../account/transport-trust'
 import { getSettings } from '../settings-store'
 
 interface Target { snapshot: EngineSnapshot; headers: Record<string, string>; signal: AbortSignal }
+function assertTargetTrust(target: Target): void {
+  const h = target.headers
+  assertTrustedCredentialTransport(target.snapshot.baseUrl, !!(h['X-Aether-Instance-Token'] || h['X-API-Key'] || h.Authorization))
+}
 interface Callbacks { onData: (id: string, chunk: string) => void; onExit: (info: TerminalExitInfo) => void }
 interface Session extends Callbacks {
   id: string
@@ -38,6 +43,7 @@ export class RemoteTerminalService {
     const sessionId = input.sessionId?.trim() || this.getSessionId()
     if (!sessionId) throw new Error('远程终端缺少会话 ID，请先创建或打开一个会话')
     if (![input.cols, input.rows].every(value => Number.isInteger(value) && value > 0)) throw new Error('终端尺寸无效')
+    assertTargetTrust(target)
     const response = await fetch(`${target.snapshot.baseUrl.replace(/\/+$/, '')}/api/v1/terminal/create`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...target.headers },
       body: JSON.stringify({ sessionId, cols: input.cols, rows: input.rows }),
@@ -78,6 +84,7 @@ export class RemoteTerminalService {
     session.target = target
     const url = new URL(`${target.snapshot.baseUrl.replace(/\/+$/, '')}/api/v1/terminal/ws/${encodeURIComponent(session.remoteId)}`)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    assertTargetTrust(target)
     const socket = new WebSocket(url, { headers: target.headers, followRedirects: false, handshakeTimeout: 15_000 })
     session.socket = socket
     session.status = 'connecting'
@@ -189,6 +196,8 @@ export class RemoteTerminalService {
     return failures
   }
   private async removeRemote(target: Target, remoteId: string): Promise<void> {
+    // Cleanup may outlive the original connection; an old snapshot is not current consent.
+    assertTargetTrust(target)
     const response = await fetch(`${target.snapshot.baseUrl.replace(/\/+$/, '')}/api/v1/terminal/${encodeURIComponent(remoteId)}`, { method: 'DELETE', headers: target.headers, signal: AbortSignal.timeout(15_000), redirect: 'error' })
     const envelope = await response.json().catch(() => ({})) as { code?: number; message?: string; data?: { success?: boolean } }
     if (!response.ok || (envelope.code !== 200 && envelope.code !== 0) || envelope.data?.success !== true) {

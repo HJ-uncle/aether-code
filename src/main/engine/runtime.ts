@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { parseEngineManifest, type EngineManifest } from './protocol'
 import { selectRuntimeEntry } from './runtime-location'
+import { canImportLocalRuntime } from './runtime-import-support'
 import { preparePackagedRuntime } from './packaged-runtime'
 import { developmentRuntimeEnvironment } from './development-runtime'
 import { getActiveRuntimeId, getLocalRuntimeRoot } from './local-runtime-store'
@@ -44,7 +45,8 @@ export function resolveRuntime(): ResolvedRuntime | null {
   })
 
   if (!existsSync(entryPath)) {
-    if (source === 'env' || source === 'imported') throw new Error(`指定的引擎入口不存在：${entryPath}`)
+    if (source === 'env') throw new Error(`开发版找不到 AETHER_IDE_ENGINE_ENTRY 指定的引擎入口：${entryPath}`)
+    if (source === 'imported') throw new Error('选用的本机引擎包不完整。请在「本机引擎 → 高级设置」切换到完整的版本。')
     return null
   }
 
@@ -53,11 +55,15 @@ export function resolveRuntime(): ResolvedRuntime | null {
   try {
     manifest = parseEngineManifest(JSON.parse(readFileSync(manifestPath, 'utf-8')))
   } catch {
-    throw new Error(`引擎构建信息缺失或不兼容，请重新构建配套引擎：${manifestPath}`)
+    if (source === 'imported') throw new Error('选用的本机引擎包损坏或版本不兼容。请在高级设置中导入并选用配套版本。')
+    if (source === 'bundled') throw new Error('内置引擎文件损坏或版本不兼容。请重新安装完整的 Aether 客户端，或连接其他引擎。')
+    throw new Error(`开发版引擎构建信息缺失或不兼容，请重新构建配套引擎：${manifestPath}`)
   }
   const root = dirname(dirname(entryPath))
   const nodePath = source === 'bundled' || source === 'imported' ? join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node') : process.execPath
-  if (!existsSync(nodePath)) throw new Error('安装包缺少引擎 Node 运行时，请重新安装配套版本')
+  if (!existsSync(nodePath)) throw new Error(source === 'imported'
+    ? '选用的本机引擎包缺少运行所需组件。请在高级设置中切换到完整的版本。'
+    : '内置引擎缺少运行所需组件。请重新安装完整的 Aether 客户端，或连接其他引擎。')
   return {
     nodePath,
     entryPath,
@@ -66,6 +72,20 @@ export function resolveRuntime(): ResolvedRuntime | null {
     version: manifest.version,
     manifest
   }
+}
+
+/** The import path is only an option on a supported client with its own trusted Node runtime. */
+export function requireLocalRuntime(): ResolvedRuntime {
+  const runtime = resolveRuntime()
+  if (runtime) return runtime
+  const external = '也可以在「引擎管理」选择「连接其他引擎」。'
+  const canImport = canImportLocalRuntime()
+  if (!app.isPackaged) {
+    const importHint = canImport ? '可在「本机引擎 → 高级设置」导入并选用配套引擎包。' : ''
+    throw new Error('未找到本机引擎。' + importHint + external + '开发版还可重新构建配套引擎或检查 AETHER_IDE_ENGINE_ENTRY。')
+  }
+  throw new Error(canImport ? '未找到本机引擎。请在「本机引擎 → 高级设置」导入并选用配套的 .tgz 引擎包。' + external
+    : '此客户端缺少本机引擎所需组件，请安装包含本机引擎的完整 Aether 客户端。' + external)
 }
 
 export function runtimeEnvironment(runtime: ResolvedRuntime): { cwd: string; env: Record<string, string> } {

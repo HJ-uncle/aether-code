@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises'
+import { assertTrustedCredentialTransport } from '../account/transport-trust'
 import type { BrowserContext, BrowserExecutionIdentity, BrowserToolRequest, BrowserToolResult } from '../../shared/browser'
 
 export interface NativeBrowserHostTransport {
@@ -121,6 +122,7 @@ export class NativeBrowserHostManager {
     if (options.demandToken) headers.set('X-Aether-Browser-Demand-Token', options.demandToken)
     if (body === undefined) headers.delete('Content-Type')
     else headers.set('Content-Type', 'application/json')
+    if (options.cleanup) assertTrustedCredentialTransport(host.transport.baseUrl)
     const response = await this.http(`${host.transport.baseUrl.replace(/\/+$/, '')}/api/v1${route}`, {
       method, redirect: 'error', headers,
       body: body === undefined ? undefined : JSON.stringify(body),

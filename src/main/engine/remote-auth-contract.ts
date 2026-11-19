@@ -1,12 +1,6 @@
 import type { RemoteAuthCredential } from '../../shared/ipc'
 
-export function remoteAuthTarget(value: string): string {
-  const url = new URL(value)
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
-    throw new Error('远端地址必须为不含凭据、查询参数或片段的 HTTP(S) 地址')
-  }
-  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`
-}
+export { remoteServiceUrl as remoteAuthTarget } from '../../shared/remote-service-url'
 
 export function validateRemoteAuth(value: unknown): RemoteAuthCredential {
   if (!value || typeof value !== 'object') throw new Error('远端用户凭据无效')

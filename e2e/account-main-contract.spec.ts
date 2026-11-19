@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { AccountCredential } from '../src/main/account/credential-store'
 import type { AccountState, AccountUser } from '../src/shared/account'
 
-type Subject = typeof import('../src/main/account/service') & typeof import('../src/main/account/credential-store') & typeof import('../src/main/engine/remote-auth') & typeof import('../src/main/engine/host') & typeof import('../src/renderer/src/core/engine/source') & typeof import('../src/main/browser-bridge') & typeof import('../src/main/browser/native-host-manager')
+type Subject = typeof import('../src/main/account/service') & typeof import('../src/main/account/credential-store') & typeof import('../src/main/engine/remote-auth') & typeof import('../src/main/engine/host') & typeof import('../src/renderer/src/core/engine/source') & typeof import('../src/main/browser-bridge') & typeof import('../src/main/browser/native-host-manager') & typeof import('../src/main/account/transport-trust') & typeof import('../src/main/engine/remote-probe') & typeof import('../src/main/terminal/remote-terminal')
 const root = resolve(__dirname, '..'), fixtures = join(root, '.e2e-tmp', 'account-simplify', 'main-contract')
 const requireModule = createRequire(__filename)
 const endpoint = 'https://account.example.test/engine', otherEndpoint = 'https://account.example.test/other-engine'
@@ -24,7 +24,7 @@ function loadSubject() {
   const calls: Array<{ path: string; method: string; authorization: string | null; apiKey: string | null; body: Record<string, unknown> }> = []
   const changes: AccountState[] = []
   const harness = {
-    clipboard: '', identityChanges: 0, cleanup: 0, dialogs: 0, openedUrls: [] as string[],
+    clipboard: '', identityChanges: 0, cleanup: 0, dialogs: 0, sockets: 0, openedUrls: [] as string[],
     target: { scope: endpoint, url: endpoint, headers: {} },
     picked: { canceled: false, filePath: join(fixture, 'recovery.json') },
     respond: async (_path: string, _body: Record<string, unknown>, _init: RequestInit): Promise<unknown> => { throw new Error('Unexpected network request') }
@@ -44,10 +44,11 @@ function loadSubject() {
     const body = init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
     calls.push({ path, method: init.method ?? 'GET', authorization: new Headers(init.headers).get('Authorization'), apiKey: new Headers(init.headers).get('X-API-Key'), body })
     const data = await harness.respond(path, body, init)
+    if (data instanceof Response) return data
     return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
   new Function('require', 'module', 'exports', 'fetch', 'setInterval', compiled)(
-    (name: string) => name === 'electron' ? electron : requireModule(name), module, module.exports, syntheticFetch, () => ({ unref() {} }))
+    (name: string) => name === 'electron' ? electron : name === 'ws' ? class { constructor() { harness.sockets++; throw new Error('Unexpected network socket') } } : requireModule(name), module, module.exports, syntheticFetch, () => ({ unref() {} }))
   const subject = module.exports as Subject
   subject.configureAccountService({ target: () => harness.target, identityChanged: async () => { harness.identityChanges++ },
     beforeIdentityChange: async () => { harness.cleanup++; return null }, changed: state => changes.push(state) })
@@ -56,8 +57,8 @@ function loadSubject() {
 
 test.beforeAll(async () => {
   mkdirSync(fixtures, { recursive: true })
-  const result = await build({ stdin: { contents: `export * from './src/main/account/service.ts'; export * from './src/main/account/credential-store.ts'; export * from './src/main/engine/remote-auth.ts'; export * from './src/main/engine/host.ts'; export * from './src/renderer/src/core/engine/source.ts'; export * from './src/main/browser-bridge.ts'; export * from './src/main/browser/native-host-manager.ts';`, resolveDir: root },
-    bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['electron'], write: false })
+  const result = await build({ stdin: { contents: `export * from './src/main/account/service.ts'; export * from './src/main/account/credential-store.ts'; export * from './src/main/engine/remote-auth.ts'; export * from './src/main/engine/host.ts'; export * from './src/renderer/src/core/engine/source.ts'; export * from './src/main/browser-bridge.ts'; export * from './src/main/browser/native-host-manager.ts'; export * from './src/main/account/transport-trust.ts'; export * from './src/main/engine/remote-probe.ts'; export * from './src/main/terminal/remote-terminal.ts';`, resolveDir: root },
+    bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['electron', 'ws'], write: false })
   compiled = result.outputFiles[0].text
 })
 test.beforeEach(() => { fixture = mkdtempSync(join(fixtures, 'fixture-')) })
@@ -352,4 +353,102 @@ test('advanced identity epochs stop native browser hosts and register the replac
     expect(requests.filter(request => request.method === 'POST').map(request => request.apiKey)).toEqual(['synthetic-native-old', 'synthetic-native-new'])
     expect(manager.getSnapshot()).toMatchObject({ hosts: 1, roots: 0, cleanupFailure: null })
   } finally { host.off('snapshot', refresh); await manager.disconnectAndWait(); manager.dispose() }
+})
+
+const privateService = 'http://private.example.test/engine'
+
+test('revoking HTTP consent blocks cached browser and native host cleanup without borrowing new credentials', async () => {
+  const { subject, harness, calls } = loadSubject(), host = subject.engineHost
+  subject.saveHttpTrust(privateService, true)
+  subject.withRemoteAuthChange(privateService, { type: 'api-key', value: 'synthetic-original-browser-key' }, () => {})
+  Object.assign(host, { remoteTarget: { url: privateService, workspaceRoot: '' }, snapshot: {
+    ...host.getSnapshot(), mode: 'remote', phase: 'ready', baseUrl: privateService, instanceId: 'browser-trust', accountId: subject.authenticationIdentity(privateService)
+  } })
+  harness.respond = async (path, _body, init) => {
+    if (path === '/browser/clients') return { clientId: 'client', clientToken: 'synthetic-registration-token', sessionId: 'session' }
+    if (path === '/browser/hosts') return { hostId: 'host', hostToken: 'synthetic-host-token', protocolVersion: 1,
+      authority: { kind: 'account' }, capabilities: { nativeHostDemand: 1 }, leaseMs: 30_000 }
+    if (init.method === 'DELETE') return {}
+    if (path.endsWith('/commands') || path.endsWith('/demands')) return new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new Error('stopped')), { once: true }))
+    throw new Error('Unexpected request: ' + path)
+  }
+  const executor = { getSettings: () => ({ aiEnabled: true }), rememberPresentation() {}, adoptUnboundTabs() {}, execute: async () => ({ success: true }) }
+  const bridge = new subject.BrowserEngineBridge(executor, () => {}), native = new subject.NativeBrowserHostManager(executor, () => host.nativeBrowserHostTransports())
+  try {
+    await Promise.all([bridge.connect({ sessionId: 'session', expectedEngine: host.getSnapshot() }), native.refresh()])
+    await expect.poll(() => calls.filter(r => r.path.endsWith('/commands') || r.path.endsWith('/demands')).length).toBe(2)
+    subject.saveHttpTrust(privateService, false)
+    const outcomes = await Promise.all([bridge.disconnectAndWait(), native.disconnectAndWait()])
+    expect(outcomes.every(message => message?.includes('HTTP'))).toBe(true)
+    expect(calls.filter(r => r.method === 'DELETE')).toHaveLength(0)
+    subject.saveHttpTrust(privateService, true)
+    expect(await bridge.disconnectAndWait()).toBeNull()
+    expect(calls.filter(r => r.method === 'DELETE')).toMatchObject([{ path: '/browser/clients/client', apiKey: 'synthetic-original-browser-key' }])
+  } finally { bridge.dispose(); native.dispose() }
+})
+
+test('revoking HTTP trust between remote PTY creation and attachment blocks both the socket and cached DELETE', async () => {
+  const { subject, harness, calls } = loadSubject(), host = subject.engineHost
+  const snapshot = { ...host.getSnapshot(), mode: 'remote' as const, phase: 'ready' as const, baseUrl: privateService, instanceId: 'pty-trust' }
+  const target = { snapshot, headers: { 'X-Aether-Instance-Token': 'synthetic-old-pty-token' }, signal: new AbortController().signal }
+  const terminal = new subject.RemoteTerminalService(() => target)
+  subject.saveHttpTrust(privateService, true)
+  harness.respond = async (path, _body, init) => {
+    if (path === '/terminal/create') { subject.saveHttpTrust(privateService, false); return { terminalId: 'old-pty' } }
+    if (init.method === 'DELETE' && path === '/terminal/old-pty') return { success: true }
+    throw new Error('Unexpected PTY request')
+  }
+  await expect(terminal.create({ sessionId: 'session', cols: 80, rows: 24 }, { onData() {}, onExit() {} })).rejects.toThrow('HTTP')
+  expect(harness.sockets).toBe(0)
+  expect((await terminal.disposeForIdentityChange()).join()).toContain('HTTP')
+  expect(calls.find(r => r.method === 'DELETE')).toBeUndefined()
+  subject.saveHttpTrust(privateService, true)
+  expect(await terminal.disposeForIdentityChange()).toEqual([])
+  expect(calls.filter(r => r.method === 'DELETE')).toHaveLength(1)
+})
+
+test('an account request checks current HTTP consent again after shared refresh, and cancellation only releases one waiter', async () => {
+  const { subject, harness, calls } = loadSubject(), original = credential()
+  harness.target = { scope: privateService, url: privateService, headers: {} }
+  subject.saveHttpTrust(privateService, true)
+  subject.saveAccountCredential(privateService, { ...original, expiresAt: new Date(0).toISOString() })
+  let release!: (value: unknown) => void
+  harness.respond = async path => { if (path !== '/refresh') throw new Error('Unexpected account request'); return new Promise(resolve => { release = resolve }) }
+  const pending = subject.accountService.sessions(), controller = new AbortController()
+  const waiter = subject.ensureAccountSession(harness.target, controller.signal)
+  await expect.poll(() => calls.filter(call => call.path === '/refresh').length).toBe(1)
+  controller.abort(new Error('connection cancelled'))
+  await expect(waiter).rejects.toThrow('connection cancelled')
+  subject.saveHttpTrust(privateService, false)
+  release({ ...original, accessToken: 'synthetic-rotated-access-token' })
+  await expect(pending).rejects.toThrow('HTTP')
+  expect(calls.map(call => call.path)).toEqual(['/refresh'])
+  expect(subject.readAccountCredential(privateService).credential?.accessToken).toBe('synthetic-rotated-access-token')
+})
+
+test('candidate probing never refreshes an inactive account; a committed target reuses its handshake to rotate its rejected session', async () => {
+  const { subject, harness, calls, changes } = loadSubject(), saved = credential(), host = subject.engineHost
+  // A appears active while B is checked, and B's clock still considers its rejected token fresh.
+  const origin = 'http://127.0.0.1:19230/engine'
+  subject.saveAccountCredential(origin, saved)
+  harness.respond = async (path, _body, init) => {
+    if (path === '/engine/health') return { status: 'ok' }
+    if (path === '/engine/meta') return { version: '2.0.0', buildId: 'sha256:' + 'b'.repeat(64), protocolVersion: 1, toolProfiles: ['general'], subagentSchemaVersion: 1, instanceId: 'candidate' }
+    if (path === '/tools') {
+      if (new Headers(init.headers).get('Authorization') === 'Bearer synthetic-rotated-access-token') return []
+      return new Response(JSON.stringify({ code: 401, message: 'Authentication required' }), { status: 401 })
+    }
+    if (path === '/refresh') return { ...saved, accessToken: 'synthetic-rotated-access-token' }
+    throw new Error('Unexpected candidate request ' + path)
+  }
+  const signal = new AbortController().signal
+  const proof = await subject.probeRemoteConnection(origin, {}, signal)
+  expect(proof.issue).toBe('authentication-required'); expect(calls.map(c => c.path)).toEqual(['/engine/health', '/engine/meta', '/tools']); expect(changes).toEqual([])
+  harness.target = { scope: origin, url: origin, headers: {} }
+  try {
+    const snapshot = await host.startVerifiedRemote(proof, '', signal)
+    expect(snapshot).toMatchObject({ phase: 'ready', instanceId: 'candidate', accountId: saved.user.id })
+    expect(calls.map(c => c.path)).toEqual(['/engine/health', '/engine/meta', '/tools', '/refresh', '/tools'])
+    expect(JSON.stringify(snapshot)).not.toContain('synthetic-rotated-access-token')
+  } finally { await host.stop() }
 })

@@ -8,6 +8,7 @@
 | 查找所有功能入口与源码 | [功能覆盖表](feature-map.md) |
 | 新建/恢复账号、第三方登录、重新验证 | [账号与登录](accounts-and-login.md) |
 | 理解进程、IPC、数据与远端连接 | [前端架构](frontend-architecture.md) |
+| 理解引擎管理的连接、账号、取消与手动监控 | [引擎管理链路调研（2026-11-18）](engine-management-audit-2026-11-18.md) |
 | 模型、记忆、Skills、MCP、管理工具包 | [工具配置](tool-profiles.md) |
 | 文件/Office/PDF 预览与编辑边界 | [文件预览](editor-code-oss.md) |
 | 浏览器标签、AI 操作和宿主关系 | [浏览器工作流](browser-workflow-reliability.md) |

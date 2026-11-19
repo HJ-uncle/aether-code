@@ -16,8 +16,9 @@ import {
   writeFileSync
 } from 'node:fs'
 import { createReadStream } from 'node:fs'
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { extractTgz } from './tgz-extract'
+import { trustedNodeCandidates } from './runtime-import-support'
 import { parseEngineManifest } from './protocol'
 import { getLocalRuntimeRoot, listLocalRuntimes } from './local-runtime-store'
 import type { EngineImportProgress, EngineRuntimeInfo } from '../../shared/engine-import'
@@ -121,16 +122,7 @@ function cleanProbeEnvironment(probeRoot: string, nodePath: string): NodeJS.Proc
 
 async function copyTrustedNode(packageRoot: string, probeRoot: string): Promise<string> {
   const binary = process.platform === 'win32' ? 'node.exe' : 'node'
-  const candidates = [
-    join(process.resourcesPath, 'engine', `${process.platform}-${process.arch}`, 'runtime', binary),
-    ...(!app.isPackaged ? [
-      join(app.getAppPath(), 'resources', 'engine', `${process.platform}-${process.arch}`, 'runtime', binary),
-      ...(process.env.AETHER_NODE_BINARY ? [resolve(process.env.AETHER_NODE_BINARY)] : []),
-      ...(!process.versions.electron ? [process.execPath] : []),
-      ...(process.env.PATH ?? '').split(delimiter).filter(isAbsolute).map((directory) => join(directory, binary))
-    ] : [])
-  ]
-  for (const candidate of [...new Set(candidates)]) {
+  for (const candidate of trustedNodeCandidates()) {
     if (!existsSync(candidate) || !lstatSync(candidate).isFile()) continue
     try {
       const { stdout } = await execute(candidate, ['-p', 'JSON.stringify({node:process.versions.node,electron:process.versions.electron,platform:process.platform,arch:process.arch})'], {
@@ -334,7 +326,7 @@ export async function importLocalRuntime(
     await renameRuntimeWithRetry(readyRoot, finalRoot)
     cleanupStage(stage, userData)
     stage = ''
-    progress(onProgress, 'ready', files, bytes, '引擎已导入，可在运行方式中启用')
+    progress(onProgress, 'ready', files, bytes, '引擎包已导入，可在下方选用。')
     return info
   } catch (error) {
     let message = importErrorMessage(error)

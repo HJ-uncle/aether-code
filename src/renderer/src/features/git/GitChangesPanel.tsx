@@ -355,7 +355,7 @@ export function GitChangesPanel(): JSX.Element {
     return () => window.clearTimeout(timer)
   }, [git.loading, git.loaded, host.unavailableReason])
   const cloneFlow = useGitCloneFlow()
-  const codeWorkspace = useWorkspace()
+  const codeWorkspace = useWorkspace(!host.task)
   const workspace = { root: host.task ? (host.cwd ?? git.cwd) : codeWorkspace.root }
   const recentFolders = useSyncExternalStore(onRecentFoldersChanged, getRecentFolders)
 

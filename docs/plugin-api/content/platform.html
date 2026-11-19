@@ -430,7 +430,7 @@ run = await $AE.agents.run({
 <pre><code class="language-js">const stopped = await $AE.agents.cancel({ runId: run.runId });
 </code></pre>
 <h2 id="workspace">工作区</h2>
-<p>必须绑定会话。路径相对当前绑定工作区；SDK 拒绝越界路径，以及经符号链接或联接点访问文件。绝对路径也必须位于同一工作区。切换工作区后旧绑定不能继续使用。</p>
+<p>必须绑定会话。路径相对当前绑定工作区；SDK 拒绝越界路径，以及经符号链接或联接点访问文件。绝对路径也必须位于同一工作区。切换工作区后旧绑定不能继续使用。未选择项目的新会话使用自己的独立目录；重新打开的会话继续使用原先绑定的目录。插件应从当前会话的工作区读写文件。</p>
 <h3 id="workspace-list"><code>$AE.workspace.list(args?)</code></h3>
 <p>读取工作区内一个目录的直接子项。</p>
 <pre><code class="language-ts">$AE.workspace.list(args?: { path?: string }): Promise&lt;{
@@ -438,7 +438,8 @@ run = await $AE.agents.run({
 }&gt;
 </code></pre>
 <p><strong>权限：</strong><code>workspace.read</code>。<strong>参数：</strong><code>path</code> 默认 <code>&#39;.&#39;</code>，最长 4,096 字符。<strong>返回：</strong>子项名称、类型和相对工作区路径，路径使用 <code>/</code>。不递归；<code>link</code> 项可以列出，但不能经由它继续读写。</p>
-<pre><code class="language-js">const { entries } = await $AE.workspace.list({ path: &#39;docs&#39; });
+<pre><code class="language-js">// 无论会话使用项目目录还是独立目录，都从当前绑定的根目录开始。
+const { entries } = await $AE.workspace.list();
 </code></pre>
 <h3 id="workspace-read"><code>$AE.workspace.read(args)</code></h3>
 <p>以 UTF-8 文本读取一个工作区文件。</p>

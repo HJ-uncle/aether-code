@@ -60,6 +60,14 @@
 <td>Agent 完成 / 失败 / 取消</td>
 </tr>
 </tbody></table>
+<p>用户在主 Agent 开始执行前点停止时，已经创建的运行可能直接产生 <code>agent.cancelled</code>，而没有先产生 <code>agent.started</code>；尚未创建运行时，本次请求没有对应的 Agent 事件。按会话与运行标识处理取消，不要把上一轮的结果归给本轮。下面的订阅只处理当前会话的主 Agent：</p>
+<pre><code class="language-js">const { sessionId } = await $AE.context();
+const stopped = await $AE.events.subscribe('agent.cancelled', event =&gt; {
+  if (!sessionId || event.sessionId !== sessionId || event.payload?.kind !== 'main') return;
+  console.log('运行已停止', event.payload.runId);
+});
+// 离开页面时：await $AE.events.unsubscribe(stopped);
+</code></pre>
 <p>输入与选择等高频事件会合并。事件不是持久消息队列，不保证每个瞬间都送达；完整消息与运行结果使用相应平台 API 读取。</p>
 <p>宿主仅保留近期事件历史（最多 256 条或约 8 MiB，超出时淘汰旧条目，并保留最新一条），不会因为当前事件较大而拒绝正常任务。需要长期历史时由插件持久化处理结果；<code>sequence</code> 不作为跨重启的持久游标。</p>
 <p><code>file.changed</code> 是重新读取文件或目录的提示，不是整轮回退成功的回执。部分文件冲突、已撤回或响应丢失时，不应据此删除本地记录、累加修改次数或重新执行写入。文件可能已删除，也可能恢复为较早版本；在绑定当前会话并授权 <code>workspace.read</code> 后重新读取：</p>
@@ -95,4 +103,4 @@ const fileSubscription = await $AE.events.subscribe('file.changed', event =&gt; 
 </code></pre>
 <p><code>intervalMs</code> 为 1 秒至 7 天（毫秒）。后台任务独立于会话，不能声明 <code>scope: &quot;session&quot;</code> 或要求会话/工作区存在。工具实际调用的 AI、设置等能力仍需要各自权限。</p>
 <p>同一任务不重叠；不附加插件或账户的固定并发数。错过多个周期只补一次，任务应允许安全重试。发布、启用并授权后调度，开发预览不自动启动持久任务。</p>
-<p>调度由承载插件的引擎执行。检测到有效后台任务时，关闭桌面窗口会进入托盘；桌面内置引擎随应用真正退出而停止，下次引擎启动恢复。连接外部或远端引擎时，桌面退出不等于该引擎停止，任务是否继续取决于它自身的运行状态。停用、卸载插件或撤销权限会停止后续调度；后台任务不会唤醒已关机的设备。</p>
+<p>调度由承载插件的引擎执行。桌面只查询当前连接的引擎；若查询失败或服务要求重定向，桌面不会跟随，也不会因此把窗口留在托盘。查询确认有有效后台任务时，关闭窗口会进入托盘。桌面内置引擎随应用真正退出而停止，下次引擎启动恢复。连接外部或远端引擎时，桌面退出不等于该引擎停止，任务是否继续取决于它自身的运行状态。停用、卸载插件或撤销权限会停止后续调度；后台任务不会唤醒已关机的设备。</p>

@@ -69,6 +69,7 @@ unsubscribe()
 <p>快照包含 <code>id, pluginId, instanceId, revision, label, status, updatedAt</code>，以及可选 <code>detail, sessionId, notification</code>。<code>id</code> 是不透明实例标识。状态为 <code>idle / running / waiting / completed / stopped / error</code>。没有声明 <code>stopTool</code> 或 <code>statusTool</code> 时，对应操作失败。</p>
 <h2 id="dialog">ui.dialog(input)</h2>
 <p>显示原生消息或确认对话框。权限：<code>ui.dialogs</code>。</p>
+<p>原生对话框、系统通知与剪贴板均在当前连接的引擎上验证权限。如果服务要求跳转到另一个地址，桌面不会把登录凭据转发过去；请在「引擎管理」连接最终地址后重试。</p>
 <pre><code class="language-js">const { canceled } = await $AE.ui.dialog({
   kind: &#39;question&#39;, title: &#39;生成报告&#39;, message: &#39;现在生成当前会话报告？&#39;,
   buttons: [&#39;生成&#39;, &#39;取消&#39;]

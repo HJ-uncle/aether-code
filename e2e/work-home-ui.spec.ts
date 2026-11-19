@@ -20,6 +20,7 @@ const modelName = '面向文档研究与复杂推理的超长模型名称 · Pro
 const workspaceRoot = '/remote/home-ui/project', homeId = 'work-home-6c9a5914-8bdb-4613-9801-051398088ede'
 const otherWorkspace = '/remote/home-ui/团队资料与项目成果/客户研究项目'
 const foreignWorkspace = '/another-engine/private-workspace'
+const legacyWorkspace = '/remote/home-ui/旧版统一目录'
 const now = Date.now() - 60_000
 const longTitle = '请为当前项目整理一套面向技术客户的完整介绍材料，包含 Word 项目说明、Excel 功能清单与演示文稿，并逐项核对最终交付文件和资料来源'
 const tasks: SessionTask[] = Array.from({ length: 52 }, (_, index) => ({
@@ -37,13 +38,16 @@ const attachments: ChatAttachment[] = [
 ]
 const errors: string[] = [], forbidden: string[] = [], chats: Record<string, unknown>[] = []
 const chatWorkspaces: Array<{ sessionId: string; root: string }> = []
+const directoryReads: Array<{ sessionId: string; path: string }> = []
+const referenceFiles = new Map<string, string[]>()
+let genericSessionStorageKey = ''
 const bindingEvents: Array<{ sessionId: string; workspaceRoot: string }> = []
 interface WorkspaceHistoryEntry { path: string; updatedAt: number }
 interface BindingFault { sessionId: string; targetRoot: string; previousRoot: string; rollbackFails: boolean; stage: 'armed' | 'read-pending' | 'rollback-pending' | 'complete' }
 let bindingFault: BindingFault | undefined
-interface UploadedFile { sessionId: string; path: string; bytes: Buffer; type: string }
+interface UploadedFile { sessionId: string; root: string; path: string; bytes: Buffer; type: string }
 const uploads: UploadedFile[] = [], files = new Map<string, UploadedFile>(), bindings = new Map<string, string>()
-const homeSessions = new Set([homeId])
+const isHomeSession = (id: string): boolean => /^work-home-[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(id)
 const runs = new Map<string, RootRun[]>(), histories = new Map<string, EngineHistoryRow[]>()
 const liveStreams = new Map<string, Set<ServerResponse>>()
 const streamRequests: Array<{ sessionId: string; lastEventId: string | null }> = []
@@ -51,9 +55,9 @@ const admissions = new Map<string, { admission: Record<string, unknown>; run: Ro
 let app: ElectronApplication | undefined, page: Page, fixture = '', storageKey = '', workspaceHistoryKey = '', foreignHistoryKey = '', generation = 0
 const envelope = (data: unknown): string => JSON.stringify({ code: 200, message: 'ok', data })
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
-const fileKey = (owner: string, path: string): string => JSON.stringify([owner, path])
+const fileKey = (root: string, path: string): string => JSON.stringify([root, path])
 const latest = (id: string): RootRun | undefined => runs.get(id)?.at(-1)
-const workspaceFor = (id: string): string => bindings.get(id) ?? (homeSessions.has(id) ? `/remote/home-ui/scratch/${id}` : workspaceRoot)
+const workspaceFor = (id: string): string => bindings.get(id) ?? (isHomeSession(id) ? `/remote/home-ui/scratch/${id}` : workspaceRoot)
 const streamCursor = (run: RootRun): string => `${run.runId}:${run.version}`
 
 function closeLiveStreams(): void {
@@ -64,8 +68,8 @@ function closeLiveStreams(): void {
 function resetFixture(fixtureTasks: readonly SessionTask[] = tasks): void {
   closeLiveStreams(); streamRequests.length = 0
   generation++; runs.clear(); histories.clear(); admissions.clear(); bindings.clear(); uploads.length = 0; files.clear(); chats.length = 0; chatWorkspaces.length = 0; bindingEvents.length = 0
-  homeSessions.clear(); homeSessions.add(homeId)
   bindingFault = undefined
+  directoryReads.length = 0; referenceFiles.clear()
   bindings.set(homeId, workspaceRoot)
   for (const task of fixtureTasks) {
     const run: RootRun = { schemaVersion: 1, runId: `home-root-${generation}-${task.id}`, sessionId: task.id, turnId: `home-turn-${task.id}`,
@@ -84,7 +88,6 @@ resetFixture()
 
 const server = createServer((request, response) => { void (async () => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1'), path = url.pathname, id = url.searchParams.get('sessionId') ?? ''
-  if (/^work-home-[a-f\d-]{36}$/i.test(id)) homeSessions.add(id)
   response.setHeader('content-type', 'application/json')
   if (path.startsWith('/api/') && request.headers['x-aether-instance-token'] !== token) throw new Error(`Unauthenticated ${path}`)
   const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk))
@@ -92,9 +95,9 @@ const server = createServer((request, response) => { void (async () => {
   if (path === '/api/v1/workspace/upload' && request.method === 'POST') {
     const form = await new Request('http://fixture/upload', { method: 'POST', headers: { 'content-type': String(request.headers['content-type']) }, body: Uint8Array.from(bytes) }).formData()
     const blob = form.get('file'), owner = form.get('sessionId'), relative = form.get('path')
-    if (!blob || typeof blob === 'string' || typeof owner !== 'string' || !homeSessions.has(owner) || typeof relative !== 'string') throw new Error('Upload lost the home draft session')
-    const file = { sessionId: owner, path: relative, bytes: Buffer.from(await blob.arrayBuffer()), type: blob.type }
-    uploads.push(file); files.set(fileKey(owner, relative), file)
+    if (!blob || typeof blob === 'string' || typeof owner !== 'string' || !isHomeSession(owner) || typeof relative !== 'string') throw new Error('Upload lost the home draft session')
+    const file = { sessionId: owner, root: workspaceFor(owner), path: relative, bytes: Buffer.from(await blob.arrayBuffer()), type: blob.type }
+    uploads.push(file); files.set(fileKey(file.root, relative), file)
     response.end(envelope({ path: relative, size: file.bytes.length })); return
   }
   const parsed: unknown = bytes.length ? JSON.parse(bytes.toString('utf8')) : {}, input = record(parsed) ? parsed : {}
@@ -110,13 +113,24 @@ const server = createServer((request, response) => { void (async () => {
     }
     bindings.set(owner, workspace); response.end(envelope({ workspaceRoot: workspace })); return
   }
+  if (path === '/api/v1/workspace/directory') directoryReads.push({ sessionId: id, path: url.searchParams.get('path') || '.' })
   if (path === '/api/v1/workspace/directory' && bindingFault?.sessionId === id && bindingFault.stage === 'read-pending') {
     bindingFault.stage = 'rollback-pending'
     response.writeHead(503).end(JSON.stringify({ code: 503, message: 'HOME_BINDING_READ_REJECTED', data: null })); return
   }
+  if (path === '/api/v1/workspace/directory') {
+    const root = workspaceFor(id), dir = url.searchParams.get('path') || '.', prefix = dir === '.' ? '' : dir + '/'
+    const entries = new Map<string, { name: string; path: string; isDirectory: boolean; size: number; mtimeMs: number }>()
+    for (const file of referenceFiles.get(root) ?? []) {
+      if (!file.startsWith(prefix)) continue
+      const [name, ...rest] = file.slice(prefix.length).split('/')
+      entries.set(name, { name, path: prefix + name, isDirectory: rest.length > 0, size: 0, mtimeMs: 0 })
+    }
+    response.end(envelope({ root, bindingEpoch: 'home-' + id, entries: [...entries.values()] })); return
+  }
   if (path === '/api/v1/workspace/file/info' || path === '/api/v1/workspace/file/content') {
-    const relative = url.searchParams.get('path') ?? '', file = files.get(fileKey(id, relative))
-    const workspace = workspaceFor(id)
+    const workspace = workspaceFor(id), relative = url.searchParams.get('path') ?? ''
+    const file = files.get(fileKey(workspace, relative))
     if (!file) { response.writeHead(404).end(envelope(null)); return }
     response.end(envelope(path.endsWith('/info') ? { workspacePath: `${workspace}/${relative}`, size: file.bytes.length, isDirectory: false }
       : { content: file.bytes.toString('utf8'), isBinary: false, totalSize: file.bytes.length, root: workspace, bindingEpoch: `home-${id}` })); return
@@ -137,7 +151,7 @@ const server = createServer((request, response) => { void (async () => {
   }
   if (path === '/api/v1/chat' && request.method === 'POST') {
     const owner = String(input.sessionId)
-    if (!homeSessions.has(owner) || typeof input.message !== 'string') throw new Error('Home delivery changed the draft owner')
+    if (!isHomeSession(owner) || typeof input.message !== 'string') throw new Error('Home delivery changed the draft owner')
     chats.push(input)
     chatWorkspaces.push({ sessionId: owner, root: workspaceFor(owner) })
     const at = Date.now(), run: RootRun = { schemaVersion: 1, runId: `home-send-${generation}`, sessionId: owner, turnId: `home-send-turn-${generation}`,
@@ -191,7 +205,6 @@ const server = createServer((request, response) => { void (async () => {
     : path === '/api/v1/chat/runs' ? { runs: runs.get(id) ?? [] }
     : path === '/api/v1/conversation/history' ? rows
     : path === '/api/v1/conversation/sessions' ? []
-    : path === '/api/v1/workspace/directory' ? { root: workspaceFor(id), bindingEpoch: `home-${id}`, entries: [] }
     : path === '/api/v1/subagent/capabilities' ? { schemaVersion: 2, eventVersions: [1, 2], views: ['legacy', 'summary'], toolPagination: true, eventPagination: true, detailChunks: true, exactWatermarks: true }
     : path === '/api/v1/subagent/runs' ? { schemaVersion: 2, runs: [], listComplete: true, hasMore: false, revision: 'empty' }
     : path === '/api/v1/collaboration/capabilities' ? { protocolVersion: 1, userControllerMutation: false, rootUserControllerMutation: false }
@@ -258,18 +271,6 @@ async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
   await expect(page.locator('.modal-overlay')).toHaveCount(0)
   await settleLayout()
 }
-async function setDefaultWorkspace(path: string): Promise<void> {
-  await page.locator('.menu-bar').getByRole('button', { name: '设置', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: '设置', exact: true })
-  await settings.getByRole('tab', { name: '引擎管理', exact: true }).click()
-  await settings.getByRole('textbox', { name: '远端工作目录', exact: true }).fill(path)
-  await settings.getByRole('button', { name: '保存', exact: true }).click()
-  await expect(settings.getByText('已保存', { exact: true })).toBeVisible()
-  await settings.getByRole('button', { name: '关闭', exact: true }).click()
-  await expect(page.locator('.modal-overlay')).toHaveCount(0)
-  await settleLayout()
-}
-
 async function expectOutlineIcons(container: Locator, minimum = 1): Promise<void> {
   const icons = await container.locator('svg[data-icon]:visible').evaluateAll(elements => elements.map(element => ({
     name: element.getAttribute('data-icon'), style: element.getAttribute('data-icon-style'),
@@ -299,14 +300,15 @@ test.describe.serial('Work 首页', () => {
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port')
     const origin = `http://127.0.0.1:${address.port}`
     const source = engineStorageKey({ mode: 'remote', baseUrl: origin })
+    genericSessionStorageKey = sessionStorageKey('aether:lastSessionId', source)
     storageKey = sessionStorageKey('aether.work.state.v1', source)
     workspaceHistoryKey = sessionStorageKey('aether.work.workspace-history.v1', source)
     foreignHistoryKey = sessionStorageKey('aether.work.workspace-history.v1', engineStorageKey({ mode: 'remote', baseUrl: 'http://127.0.0.1:65500' }))
-    writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: workspaceRoot,
+    writeFileSync(join(fixture, 'settings.json'), JSON.stringify({ engineMode: 'remote', remoteBaseUrl: origin, remoteWorkspaceRoot: legacyWorkspace,
       autoStartEngine: true, lastFolder: '', lastModelId: modelId, appearance: 'light', thinkingMode: 'off' }))
     const env: Record<string, string> = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
     for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY', 'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL'].includes(key.toUpperCase())) delete env[key]
-    env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
+    env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = token; env.AETHER_IDE_REMOTE_INSTANCE_TOKEN_URL = origin; env.AETHER_GLOBAL_DIR = join(fixture, 'global')
     app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${fixture}`], cwd: root, env })
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
     const startupConsole: string[] = [], failedResources: string[] = []
@@ -344,7 +346,7 @@ test.describe.serial('Work 首页', () => {
       }
       const path = info.outputPath('work-home.png'); await page.screenshot({ path }); await info.attach('work-home', { path, contentType: 'image/png' })
     }
-    await info.attach('home-fixture-requests', { body: JSON.stringify({ errors, forbidden, chats, chatWorkspaces, bindingEvents, streamRequests, uploads: uploads.map(file => ({ ...file, bytes: file.bytes.toString('utf8') })) }, null, 2), contentType: 'application/json' })
+    await info.attach('home-fixture-requests', { body: JSON.stringify({ errors, forbidden, chats, chatWorkspaces, bindingEvents, directoryReads, streamRequests, uploads: uploads.map(file => ({ ...file, bytes: file.bytes.toString('utf8') })) }, null, 2), contentType: 'application/json' })
     expect(errors).toEqual([]); expect(forbidden).toEqual([])
   })
   test.afterAll(async () => {
@@ -673,6 +675,26 @@ test.describe.serial('Work 首页', () => {
     expect(state.homeDraft).toBe(''); expect(state.homeAttachments).toEqual([]); expect(chats).toHaveLength(1)
   })
 
+  test('打开或刷新工作台不读通用工作区，输入 @ 只列当前会话的文件', async () => {
+    const genericId = () => page.evaluate(key => localStorage.getItem(key), genericSessionStorageKey)
+    await expect.poll(genericId).toMatch(/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i)
+    const generic = await genericId()
+    await page.reload(); await expect(home()).toBeVisible(); await expect(page.locator('.status-bar')).toContainText('引擎：就绪')
+    await expect.poll(genericId).toBe(generic)
+    const list = page.getByRole('listbox', { name: '选择引用或工具包' })
+    referenceFiles.set(workspaceRoot, ['notes/only-work.txt', 'node_modules/package/must-skip.txt'])
+    referenceFiles.set(legacyWorkspace, ['notes/only-legacy.txt'])
+    await composer().focus(); await page.keyboard.insertText('@only-')
+    const item = list.getByRole('option', { name: /only-work\.txt/ })
+    await expect(item).toBeVisible()
+    await expect(list.getByRole('option', { name: /only-legacy\.txt/ })).toHaveCount(0)
+    await page.keyboard.insertText('work'); await expect(item).toBeVisible()
+    await item.click(); await expect(composer().locator('[data-mention-key]')).toContainText('only-work.txt')
+    expect(directoryReads.filter(event => event.sessionId === homeId && event.path === 'notes')).toHaveLength(1)
+    expect(directoryReads.some(event => event.sessionId === generic || event.path.includes('node_modules'))).toBe(false)
+    expect(bindingEvents).toEqual([])
+  })
+
   test('卡片外的工作区菜单隔离来源，切换和清除保留草稿并使用正确目录发送', async ({}, info) => {
     const initial = '请保留这份工作目标，再到选定目录整理资料。'
     const history = [otherWorkspace, workspaceRoot, ...Array.from({ length: 5 }, (_, index) => `/remote/home-ui/history-${index}`)]
@@ -689,6 +711,7 @@ test.describe.serial('Work 首页', () => {
     await expect(choose(workspaceRoot)).toHaveAttribute('aria-pressed', 'true')
     await expect(choose(otherWorkspace)).toContainText(otherWorkspace)
     await expect(picker.getByRole('button', { name: `使用工作区：${foreignWorkspace}`, exact: true })).toHaveCount(0)
+    await expect(choose(legacyWorkspace)).toHaveCount(0)
     const search = picker.getByRole('searchbox', { name: '搜索工作区', exact: true })
     await expect(search).toBeFocused()
     await search.fill('客户研究项目'); await expect(choose(otherWorkspace)).toBeVisible(); await expect(choose(workspaceRoot)).toHaveCount(0)
@@ -719,34 +742,38 @@ test.describe.serial('Work 首页', () => {
     await trigger.click(); await expect(choose(otherWorkspace)).toHaveAttribute('aria-pressed', 'true')
     await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0)
     await home().getByRole('button', { name: '清除工作区选择，使用默认工作区', exact: true }).click()
-    await expect.poll(async () => (await savedHome()).homeWorkspacePath).toBeNull()
-    await expect.poll(() => bindings.get(homeId)).toBe(workspaceRoot)
+    await expect.poll(async () => (await savedHome()).homeSessionId).not.toBe(homeId)
+    saved = await savedHome()
+    const scratchId = saved.homeSessionId!
+    expect(isHomeSession(scratchId)).toBe(true)
+    expect(saved.homeWorkspacePath).toBeNull(); expect(saved.homeDraft).toBe(draft)
+    expect(bindings.get(homeId)).toBe(otherWorkspace); expect(bindings.has(scratchId)).toBe(false)
     await trigger.click(); await expect(picker.getByRole('button', { name: '使用默认工作区', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await choose(otherWorkspace).click(); await expect(picker).toHaveCount(0)
-    await expect.poll(() => bindings.get(homeId)).toBe(otherWorkspace)
+    await expect.poll(() => bindings.get(scratchId)).toBe(otherWorkspace)
     saved = await savedHome()
-    expect(saved.homeDraft).toBe(draft); expect(saved.homeSessionId).toBe(homeId)
-    expect(bindingEvents.filter(event => event.sessionId === homeId).map(event => event.workspaceRoot)).toEqual([otherWorkspace, workspaceRoot, otherWorkspace])
+    expect(saved.homeDraft).toBe(draft); expect(saved.homeSessionId).toBe(scratchId)
+    expect(bindingEvents).toEqual([{ sessionId: homeId, workspaceRoot: otherWorkspace }, { sessionId: scratchId, workspaceRoot: otherWorkspace }])
     const storedHistory = await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '[]') as WorkspaceHistoryEntry[], workspaceHistoryKey)
     expect(storedHistory[0].path).toBe(otherWorkspace); expect(storedHistory.some(entry => entry.path === foreignWorkspace)).toBe(false)
 
     const contents = '切换工作区后上传的真实资料。\r\n', path = join(fixture, '选定目录资料.txt')
     writeFileSync(path, contents); await home().locator('input[type="file"]').setInputFiles(path)
     await expect.poll(() => uploads.length).toBe(1)
-    expect(uploads[0].sessionId).toBe(homeId); expect(uploads[0].bytes.equals(Buffer.from(contents))).toBe(true)
-    expect(bindings.get(homeId)).toBe(otherWorkspace)
+    expect(uploads[0]).toMatchObject({ sessionId: scratchId, root: otherWorkspace }); expect(uploads[0].bytes.equals(Buffer.from(contents))).toBe(true)
+    expect(bindings.get(scratchId)).toBe(otherWorkspace)
     await expect(home().getByRole('button', { name: '开始任务', exact: true })).toBeEnabled()
     await composer().press('Enter'); await expect.poll(() => chats.length).toBe(1)
-    expect(chats[0].sessionId).toBe(homeId)
+    expect(chats[0].sessionId).toBe(scratchId)
     // New remote Work runs send no client roots; their prior explicit bind is authoritative.
     expect(chats[0].workspacePaths).toEqual([])
-    expect(chatWorkspaces).toEqual([{ sessionId: homeId, root: otherWorkspace }])
-    expect(latest(homeId)?.workspacePaths).toEqual([otherWorkspace])
+    expect(chatWorkspaces).toEqual([{ sessionId: scratchId, root: otherWorkspace }])
+    expect(latest(scratchId)?.workspacePaths).toEqual([otherWorkspace])
     expect(String(chats[0].message)).toContain(draft)
     await expect(page.locator('.work-conversation')).toContainText('HOME_SEND_OK')
     saved = await savedHome()
-    expect(saved.tasks.find(task => task.id === homeId)?.workspacePath).toBe(otherWorkspace)
-    expect(saved.tasks.filter(task => task.id !== homeId).every(task => task.workspacePath === workspaceRoot)).toBe(true)
+    expect(saved.tasks.find(task => task.id === scratchId)?.workspacePath).toBe(otherWorkspace)
+    expect(saved.tasks.filter(task => task.id !== scratchId).every(task => task.workspacePath === workspaceRoot)).toBe(true)
     const startedTrigger = page.locator('.work-conversation .work-composer-workspace__trigger')
     await expect(startedTrigger).toHaveAttribute('aria-label', `当前工作区：${otherWorkspace}`)
     const bindingCount = bindingEvents.length
@@ -757,6 +784,7 @@ test.describe.serial('Work 首页', () => {
     await expect(page.getByRole('button', { name: '清除工作区选择，使用默认工作区', exact: true })).toHaveCount(0)
     await page.keyboard.press('Escape'); await expect(readonly).toHaveCount(0)
     expect(bindingEvents).toHaveLength(bindingCount)
+    expect(bindings.get(homeId)).toBe(otherWorkspace); expect(latest(homeId)).toBeUndefined()
   })
 
   test('有资料和引用的草稿锁定工作区，菜单查看不改变附件、引用或会话', async ({}, info) => {
@@ -784,45 +812,75 @@ test.describe.serial('Work 首页', () => {
     expect(bindingEvents.filter(event => event.sessionId === homeId)).toEqual([]); expect(chats).toEqual([])
   })
 
-  test('未配置默认目录时清除工作区创建独立沙箱会话，不沿用旧绑定', async () => {
-    await setDefaultWorkspace('')
-    try {
-      const draft = '清除目录后请在独立工作区执行这个新任务。'
-      await seed({ homeDraft: draft }, [{ path: otherWorkspace, updatedAt: now + 10_000 }])
-      const trigger = home().locator('.work-composer-workspace__trigger')
-      await trigger.click()
-      const picker = page.getByRole('dialog', { name: '选择工作区', exact: true })
-      await picker.getByRole('button', { name: `使用工作区：${otherWorkspace}`, exact: true }).click()
-      await expect.poll(() => bindings.get(homeId)).toBe(otherWorkspace)
-      const bindingCount = bindingEvents.length
-      await home().getByRole('button', { name: '清除工作区选择，使用默认工作区', exact: true }).click()
-      await expect.poll(async () => (await savedHome()).homeSessionId).not.toBe(homeId)
-      const saved = await savedHome(), scratchId = saved.homeSessionId!
-      expect(scratchId).toMatch(/^work-home-[a-f\d-]{36}$/i)
-      expect(saved.homeWorkspacePath).toBeNull(); expect(saved.homeDraft).toBe(draft)
-      expect(saved.homeAttachments).toEqual([]); expect(saved.homeMentions).toEqual([])
-      expect(bindings.get(homeId)).toBe(otherWorkspace); expect(bindings.has(scratchId)).toBe(false)
-      expect(bindingEvents).toHaveLength(bindingCount)
-      await expect(trigger).toHaveAttribute('aria-label', '当前工作区：默认工作区')
-      await trigger.click(); await expect(picker.getByRole('button', { name: '使用默认工作区', exact: true })).toHaveAttribute('aria-pressed', 'true')
-      await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0)
-      await expect(home().getByRole('button', { name: '开始任务', exact: true })).toBeEnabled()
-      await composer().press('Enter'); await expect.poll(() => chats.length).toBe(1)
-      expect(chats[0].sessionId).toBe(scratchId); expect(chats[0].workspacePaths).toEqual([])
-      expect(chatWorkspaces).toEqual([{ sessionId: scratchId, root: `/remote/home-ui/scratch/${scratchId}` }])
-      await expect(page.locator('.work-conversation')).toContainText('HOME_SEND_OK')
-      const started = (await savedHome()).tasks.find(task => task.id === scratchId)
-      expect(started?.workspacePath).toBeNull(); expect(bindings.has(scratchId)).toBe(false)
-      expect(latest(scratchId)?.workspacePaths).toEqual([`/remote/home-ui/scratch/${scratchId}`])
-      await expect(page.locator('.work-conversation .work-composer-workspace__trigger'))
-        .toHaveAttribute('aria-label', `当前工作区：/remote/home-ui/scratch/${scratchId}`)
-      expect(bindings.get(homeId)).toBe(otherWorkspace)
-    } finally {
-      await setDefaultWorkspace(workspaceRoot)
-    }
+  test('保留旧版全局目录时清除工作区创建独立沙箱，上传和发送不沿用旧绑定', async () => {
+    const draft = '清除目录后请在独立工作区执行这个新任务。'
+    await seed({ homeDraft: draft }, [{ path: otherWorkspace, updatedAt: now + 10_000 }])
+    const trigger = home().locator('.work-composer-workspace__trigger')
+    await trigger.click()
+    const picker = page.getByRole('dialog', { name: '选择工作区', exact: true })
+    await picker.getByRole('button', { name: `使用工作区：${otherWorkspace}`, exact: true }).click()
+    await expect.poll(() => bindings.get(homeId)).toBe(otherWorkspace)
+    const bindingCount = bindingEvents.length
+    await home().getByRole('button', { name: '清除工作区选择，使用默认工作区', exact: true }).click()
+    await expect.poll(async () => (await savedHome()).homeSessionId).not.toBe(homeId)
+    const saved = await savedHome(), scratchId = saved.homeSessionId!
+    expect(scratchId).toMatch(/^work-home-[a-f\d-]{36}$/i)
+    expect(saved.homeWorkspacePath).toBeNull(); expect(saved.homeDraft).toBe(draft)
+    expect(saved.homeAttachments).toEqual([]); expect(saved.homeMentions).toEqual([])
+    expect(bindings.get(homeId)).toBe(otherWorkspace); expect(bindings.has(scratchId)).toBe(false)
+    expect(bindingEvents).toHaveLength(bindingCount)
+    await expect(trigger).toHaveAttribute('aria-label', '当前工作区：默认工作区')
+    await trigger.click(); await expect(picker.getByRole('button', { name: '使用默认工作区', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0)
+    const bytes = Buffer.from('独立工作区的附件内容\r\n')
+    await home().locator('input[type="file"]').setInputFiles({ name: '独立工作区附件.txt', mimeType: 'text/plain', buffer: bytes })
+    await expect.poll(() => uploads.length).toBe(1)
+    expect(uploads[0]).toMatchObject({ sessionId: scratchId, root: `/remote/home-ui/scratch/${scratchId}` })
+    expect(uploads[0].bytes.equals(bytes)).toBe(true); expect(bindingEvents).toHaveLength(bindingCount)
+    await expect(composer().locator('.mention-chip--attachment .mention-chip__label')).toHaveText('独立工作区附件.txt')
+    await expect(home().getByRole('button', { name: '开始任务', exact: true })).toBeEnabled()
+    await composer().press('Enter'); await expect.poll(() => chats.length).toBe(1)
+    expect(chats[0].sessionId).toBe(scratchId); expect(chats[0].workspacePaths).toEqual([])
+    expect(chats[0].attachments).toEqual(expect.arrayContaining([expect.objectContaining({ name: uploads[0].path })]))
+    expect(chatWorkspaces).toEqual([{ sessionId: scratchId, root: `/remote/home-ui/scratch/${scratchId}` }])
+    await expect(page.locator('.work-conversation')).toContainText('HOME_SEND_OK')
+    const started = (await savedHome()).tasks.find(task => task.id === scratchId)
+    expect(started?.workspacePath).toBeNull(); expect(bindings.has(scratchId)).toBe(false)
+    expect(latest(scratchId)?.workspacePaths).toEqual([`/remote/home-ui/scratch/${scratchId}`])
+    await expect(page.locator('.work-conversation .work-composer-workspace__trigger'))
+      .toHaveAttribute('aria-label', `当前工作区：/remote/home-ui/scratch/${scratchId}`)
+    expect(bindings.get(homeId)).toBe(otherWorkspace)
   })
 
-  test('绑定读取失败时回滚目录，空默认且回滚失败时隔离旧会话', async () => {
+  test('恢复旧版已上传资料的草稿仍在原绑定内发送并能读取原文件', async () => {
+    await seed({ homeDraft: '请继续检查上次上传的资料。', homeWorkspacePath: otherWorkspace })
+    const bytes = Buffer.from('保留旧会话的资料与绑定。\r\n')
+    await home().locator('input[type="file"]').setInputFiles({ name: '旧草稿资料.txt', mimeType: 'text/plain', buffer: bytes })
+    await expect(composer().locator('.mention-chip--attachment .mention-chip__label')).toHaveText('旧草稿资料.txt')
+    expect(uploads).toHaveLength(1); expect(uploads[0]).toMatchObject({ sessionId: homeId, root: otherWorkspace })
+    // Old clients could upload into an already-bound project while persisting no home selection.
+    // Restore that persisted shape without touching the server's original file or binding.
+    await page.evaluate(key => {
+      window.dispatchEvent(new Event('blur'))
+      const stored = JSON.parse(localStorage.getItem(key)!) as SessionState
+      localStorage.setItem(key, JSON.stringify({ ...stored, homeWorkspacePath: null }))
+    }, storageKey)
+    await page.reload(); await expect(composer().locator('.mention-chip--attachment .mention-chip__label')).toHaveText('旧草稿资料.txt')
+    expect((await savedHome()).homeWorkspacePath).toBeNull()
+    const before = bindingEvents.length
+    await expect(home().getByRole('button', { name: '开始任务', exact: true })).toBeEnabled(); await composer().press('Enter')
+    await expect(page.locator('.work-conversation')).toContainText('HOME_SEND_OK')
+    expect(chats).toHaveLength(1); expect(chats[0]).toMatchObject({ sessionId: homeId, workspacePaths: [] })
+    expect(chats[0].attachments).toEqual(expect.arrayContaining([expect.objectContaining({ name: uploads[0].path })]))
+    expect(chatWorkspaces).toEqual([{ sessionId: homeId, root: otherWorkspace }]); expect(bindingEvents).toHaveLength(before)
+    await expect(page.locator('.work-conversation .work-composer-workspace__trigger')).toHaveAttribute('aria-label', `当前工作区：${otherWorkspace}`)
+    const receipt = await page.evaluate(({ sessionId, path }) => window.aether.engine.request<{ content: string; root: string }>({
+      method: 'GET', path: '/workspace/file/content', query: { sessionId, path }
+    }), { sessionId: homeId, path: uploads[0].path })
+    expect(receipt).toMatchObject({ ok: true, data: { root: otherWorkspace, content: bytes.toString('utf8') } })
+  })
+
+  test('绑定读取失败时回滚显式目录，独立草稿回滚失败时隔离旧会话', async () => {
     const draft = '工作区请求失败后仍需保留的任务正文。'
     await seed({ homeDraft: draft }, [{ path: otherWorkspace, updatedAt: now + 10_000 }])
     bindingFault = { sessionId: homeId, targetRoot: otherWorkspace, previousRoot: workspaceRoot, rollbackFails: false, stage: 'armed' }
@@ -837,30 +895,25 @@ test.describe.serial('Work 首页', () => {
     expect(bindingEvents.filter(event => event.sessionId === homeId).map(event => event.workspaceRoot)).toEqual([otherWorkspace, workspaceRoot])
     await page.keyboard.press('Escape'); await expect(picker).toHaveCount(0)
 
-    await setDefaultWorkspace('')
-    try {
-      await seed({ homeDraft: draft, homeWorkspacePath: null }, [{ path: otherWorkspace, updatedAt: now + 10_000 }])
-      const previousRoot = workspaceFor(homeId)
-      bindingFault = { sessionId: homeId, targetRoot: otherWorkspace, previousRoot, rollbackFails: true, stage: 'armed' }
-      await trigger.click(); await picker.getByRole('button', { name: `使用工作区：${otherWorkspace}`, exact: true }).click()
-      await expect.poll(() => bindingFault?.stage).toBe('complete')
-      await expect.poll(async () => (await savedHome()).homeSessionId).not.toBe(homeId)
-      saved = await savedHome()
-      const safeSessionId = saved.homeSessionId!
-      expect(safeSessionId).toMatch(/^work-home-[a-f\d-]{36}$/i)
-      expect(saved.homeWorkspacePath).toBeNull(); expect(saved.homeDraft).toBe(draft); expect(saved.homeModelId).toBe(modelId)
-      expect(saved.homeAttachments).toEqual([]); expect(saved.homeSources).toEqual([]); expect(saved.homeMentions).toEqual([])
-      expect(bindings.get(homeId)).toBe(otherWorkspace); expect(bindings.has(safeSessionId)).toBe(false)
-      await expect(home().getByRole('button', { name: '开始任务', exact: true })).toBeEnabled()
-      await composer().press('Enter'); await expect.poll(() => chats.length).toBe(1)
-      expect(chats[0].sessionId).toBe(safeSessionId); expect(chats[0].workspacePaths).toEqual([]); expect(chats[0].message).toBe(draft)
-      expect(chatWorkspaces).toEqual([{ sessionId: safeSessionId, root: `/remote/home-ui/scratch/${safeSessionId}` }])
-      await expect(page.locator('.work-conversation')).toContainText('HOME_SEND_OK')
-      expect(latest(safeSessionId)?.workspacePaths).toEqual([`/remote/home-ui/scratch/${safeSessionId}`])
-      expect(bindings.get(homeId)).toBe(otherWorkspace)
-    } finally {
-      await setDefaultWorkspace(workspaceRoot)
-    }
+    await seed({ homeDraft: draft, homeWorkspacePath: null }, [{ path: otherWorkspace, updatedAt: now + 10_000 }])
+    const previousRoot = workspaceFor(homeId)
+    bindingFault = { sessionId: homeId, targetRoot: otherWorkspace, previousRoot, rollbackFails: true, stage: 'armed' }
+    await trigger.click(); await picker.getByRole('button', { name: `使用工作区：${otherWorkspace}`, exact: true }).click()
+    await expect.poll(() => bindingFault?.stage).toBe('complete')
+    await expect.poll(async () => (await savedHome()).homeSessionId).not.toBe(homeId)
+    saved = await savedHome()
+    const safeSessionId = saved.homeSessionId!
+    expect(safeSessionId).toMatch(/^work-home-[a-f\d-]{36}$/i)
+    expect(saved.homeWorkspacePath).toBeNull(); expect(saved.homeDraft).toBe(draft); expect(saved.homeModelId).toBe(modelId)
+    expect(saved.homeAttachments).toEqual([]); expect(saved.homeSources).toEqual([]); expect(saved.homeMentions).toEqual([])
+    expect(bindings.get(homeId)).toBe(otherWorkspace); expect(bindings.has(safeSessionId)).toBe(false)
+    await expect(home().getByRole('button', { name: '开始任务', exact: true })).toBeEnabled()
+    await composer().press('Enter'); await expect.poll(() => chats.length).toBe(1)
+    expect(chats[0].sessionId).toBe(safeSessionId); expect(chats[0].workspacePaths).toEqual([]); expect(chats[0].message).toBe(draft)
+    expect(chatWorkspaces).toEqual([{ sessionId: safeSessionId, root: `/remote/home-ui/scratch/${safeSessionId}` }])
+    await expect(page.locator('.work-conversation')).toContainText('HOME_SEND_OK')
+    expect(latest(safeSessionId)?.workspacePaths).toEqual([`/remote/home-ui/scratch/${safeSessionId}`])
+    expect(bindings.get(homeId)).toBe(otherWorkspace)
   })
 
   test('长内容和多附件在浅深主题及窄窗中保持布局，近期工具栏固定', async ({}, info) => {

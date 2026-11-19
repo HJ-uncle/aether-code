@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { FileGlyph } from '@renderer/features/explorer/FileGlyph'
-import { listAllFiles } from '@renderer/core/workspace/fs-client'
+import { listAllFiles, listSessionReferenceFiles } from '@renderer/core/workspace/fs-client'
 import { formatPathDisplay, type Mention } from './mention-context'
 import { getEngineSource, subscribeEngineSource } from '@renderer/core/engine/source'
 import { isMotionInteractive } from '@renderer/ui/motion'
@@ -33,7 +33,7 @@ export interface FileReferenceEntry {
   isDir: boolean
 }
 
-export function useFileReferences(root: string | null, query: string) {
+export function useFileReferences(root: string | null, query: string, sessionId?: string, enabled = true) {
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   const [entries, setEntries] = useState<FileReferenceEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -44,8 +44,9 @@ export function useFileReferences(root: string | null, query: string) {
     let cancelled = false
     setEntries(null)
     setError(null)
-    if (!root) { setEntries([]); return }
-    void listAllFiles(root)
+    if (!enabled || (!root && !sessionId)) { setEntries([]); return }
+    const scan = new AbortController()
+    void (sessionId ? listSessionReferenceFiles(sessionId, scan.signal) : listAllFiles(root!, scan.signal))
       .then((files) => {
         if (cancelled || source !== getEngineSource()) return
         const dirs = new Set<string>()
@@ -68,8 +69,9 @@ export function useFileReferences(root: string | null, query: string) {
       })
     return () => {
       cancelled = true
+      scan.abort()
     }
-  }, [root, reload, source])
+  }, [root, sessionId, enabled, reload, source])
 
   const filtered = useMemo(() => {
     if (!entries) return []

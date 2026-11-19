@@ -117,7 +117,7 @@ export function remoteInstanceToken(url: string, configuredToken?: string): stri
   const token = validateRemoteInstanceToken(configuredToken ?? '')
   const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]'
   if (!token && !loopback) {
-    throw new Error('远端引擎需要连接凭据：请在设置→引擎→远端令牌中填写与引擎 AETHER_INSTANCE_TOKEN 一致的值，或启动 Aether Code 前设置 AETHER_IDE_REMOTE_INSTANCE_TOKEN；本机开发也可选择「本地内置」。')
+    throw new Error('此服务需要实例令牌。请在「高级设置 → 实例令牌」中填写服务管理员提供的值，再连接。')
   }
   return token
 }

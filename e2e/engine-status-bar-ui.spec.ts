@@ -15,7 +15,7 @@ type MainFixture = typeof globalThis & { __engineStatusFixture: { snapshot: Engi
 const bar = () => page.locator('.status-bar')
 const engine = () => bar().locator('.status-bar__engine')
 const settingsDialog = () => page.getByRole('dialog', { name: '设置', exact: true })
-const controls = () => settingsDialog().locator('.engine-status__actions')
+const controls = () => settingsDialog().getByTestId('engine-connection-draft')
 
 async function snapshot(patch: Partial<EngineSnapshot> = {}): Promise<void> {
   const value = { ...original, ...patch, updatedAt: Date.now() }
@@ -36,7 +36,7 @@ test.beforeAll(async () => {
     lastModelId: resourceModel, appearance: 'light', thinkingMode: 'off' }))
   const env = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]))
   for (const key of Object.keys(env)) if (['ELECTRON_RUN_AS_NODE', 'ELECTRON_RENDERER_URL', 'AETHER_IDE_REMOTE_API_KEY',
-    'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN'].includes(key.toUpperCase())) delete env[key]
+    'AETHER_IDE_REMOTE_BEARER_TOKEN', 'AETHER_IDE_REMOTE_AUTH_URL', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN', 'AETHER_IDE_REMOTE_INSTANCE_TOKEN_URL'].includes(key.toUpperCase())) delete env[key]
   env.AETHER_IDE_REMOTE_INSTANCE_TOKEN = resourceToken; env.AETHER_GLOBAL_DIR = join(profile, 'global')
   app = await electron.launch({ args: [process.env.AETHER_E2E_APP_ENTRY || join(root, 'out/main/index.js'), `--user-data-dir=${profile}`], cwd: root, env })
   page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); page.on('crash', () => errors.push('Renderer crashed'))
@@ -47,11 +47,11 @@ test.beforeAll(async () => {
     const state = (globalThis as MainFixture).__engineStatusFixture = { snapshot, calls: [] }
     for (const channel of channels) {
       ipcMain.removeHandler(channel)
-      ipcMain.handle(channel, () => { state.calls.push(channel); return state.snapshot })
+      ipcMain.handle(channel, () => { state.calls.push(channel); return channel === 'engine:apply-connection' ? { ok: true, snapshot: state.snapshot } : state.snapshot })
     }
     ipcMain.removeHandler('engine:get-snapshot')
     ipcMain.handle('engine:get-snapshot', () => state.snapshot)
-  }, { channels: [IPC.invoke.engineStart, IPC.invoke.engineStop, IPC.invoke.engineRestart], snapshot: original })
+  }, { channels: [IPC.invoke.engineApplyConnection, IPC.invoke.engineStop, IPC.invoke.engineRestart], snapshot: original })
 })
 
 test.beforeEach(async () => {
@@ -124,25 +124,22 @@ test('状态与悬停不暴露地址、端口、进程号及原始错误', async
   await page.keyboard.press('Escape')
 })
 
-test('引擎管理中的连接断开重连经 preload 调用对应 IPC', async () => {
-  await snapshot({ phase: 'idle' }); await expect(engine()).toContainText('引擎：未启动')
-  await engine().getByRole('button', { name: '引擎：未启动', exact: true }).click()
-  await expect(settingsDialog().getByRole('heading', { name: '引擎管理', exact: true })).toBeVisible()
-  await expect(controls().getByRole('button', { name: '断开连接', exact: true })).toHaveCount(0)
-  await controls().getByRole('button', { name: '连接', exact: true }).click()
-  await snapshot({ phase: 'ready' }); await expect(engine()).toContainText('引擎：就绪')
-  await controls().getByRole('button', { name: '断开连接', exact: true }).click()
-  await controls().getByRole('button', { name: '重启', exact: true }).click()
-  await expect.poll(() => app!.evaluate(() => (globalThis as MainFixture).__engineStatusFixture.calls)).toEqual([
-    IPC.invoke.engineStart, IPC.invoke.engineStop, IPC.invoke.engineRestart
-  ])
-  await snapshot({ phase: 'starting', error: null }); await expect(engine()).toContainText('引擎：连接中')
-  await expect(controls().getByRole('button', { name: '断开连接', exact: true })).toBeDisabled()
-  await snapshot({ phase: 'starting', error: '连接失败，正在重新连接' }); await expect(engine()).toContainText('引擎：重新连接中')
-  await controls().getByRole('button', { name: '断开连接', exact: true }).click()
-  await expect.poll(() => app!.evaluate(() => (globalThis as MainFixture).__engineStatusFixture.calls)).toEqual([
-    IPC.invoke.engineStart, IPC.invoke.engineStop, IPC.invoke.engineRestart, IPC.invoke.engineStop
-  ])
+test('引擎管理只提供适用的操作；首次连接与自动重连均可取消', async () => {
+  await snapshot({ phase: 'idle', baseUrl: '' }); await expect(engine()).toContainText('引擎：未连接')
+  await engine().getByRole('button').click()
+  const primary = controls().getByTestId('engine-connection-primary')
+  await expect(primary).toHaveText('连接引擎'); await primary.click()
+  const recorded = () => app!.evaluate(() => (globalThis as MainFixture).__engineStatusFixture.calls)
+  await expect.poll(recorded).toEqual([IPC.invoke.engineApplyConnection])
+  await snapshot(); await expect(primary).toHaveText('断开连接'); await primary.click()
+  await expect.poll(recorded).toEqual([IPC.invoke.engineApplyConnection, IPC.invoke.engineStop])
+  for (const attempt of [0, 2]) {
+    await snapshot({ phase: 'starting', baseUrl: '', reconnectAttempt: attempt, error: attempt ? 'network temporarily unavailable' : null })
+    await expect(engine()).toContainText(attempt ? '引擎：重新连接中' : '引擎：连接中')
+    await expect(primary).toHaveText('取消连接'); await expect(primary).toBeEnabled(); await primary.click()
+    await expect.poll(recorded).toHaveLength(attempt ? 4 : 3)
+  }
+  await expect.poll(recorded).toEqual([IPC.invoke.engineApplyConnection, IPC.invoke.engineStop, IPC.invoke.engineStop, IPC.invoke.engineStop])
   await page.keyboard.press('Escape')
 })
 

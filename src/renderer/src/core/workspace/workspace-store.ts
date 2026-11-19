@@ -9,13 +9,13 @@
  * 同时负责把「已打开的文件夹」写进设置，下次启动自动恢复
  * （主进程会用该路径重新授权白名单，见 main/fs/file-service.ts）。
  */
-import { useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import type { FsEntry } from '@shared/ipc'
 import { ipcErrorMessage } from '../ipc-error'
 import { allowRoot, pickFolder, readDir, remoteWorkspaceContext } from './fs-client'
 import { rememberRecentFolder } from './recent-folders'
 import { getSettings, updateSettings } from '../engine/client'
-import { getEngineSource, getEngineStorageKey, isRemoteEngine, subscribeEngineSource } from '../engine/source'
+import { getEngineSource, getEngineStorageKey, isRemoteEngine } from '../engine/source'
 import { onWorkspaceConnectionChanged, workspaceConnectionKey, captureWorkspaceTarget } from './connection'
 import { createFileTreeScope, fileTreePathKey as expandedPathKey, readFileTreeMemory, restoreFileTreeExpansion, writeFileTreeMemory } from './file-tree-memory'
 
@@ -151,7 +151,6 @@ onWorkspaceConnectionChanged(() => {
   workspaceEpoch += 1
   restorePromise = null
   setState({ root: null, showRoot: false, children: new Map(), expanded: new Set(), loading: new Set(), restoring: false, activeFilePath: null, selection: new Set(), selectionAnchor: null, error: null })
-  if (remote && nextKey !== 'remote:unavailable') void restoreLastFolder()
 })
 
 /** 筛选只补充子项缓存，不持久化临时展开状态。 */
@@ -347,79 +346,37 @@ export async function pickAndOpenFolder(): Promise<void> {
   }
 }
 
-/** 启动恢复只跑一次；重复调用复用同一 promise（见 workspaceRestoreSettled） */
+// Work uses its own session directory. Publishing a new connection invalidates
+// the generic tree, but only a consumer of that tree may bind a remote root.
 let restorePromise: Promise<void> | null = null
 
-/**
- * bootstrapRenderer runs before React publishes the engine source. A remote
- * settings file must therefore wait for the remote snapshot before opening a
- * workspace; otherwise the first read could accidentally hit local IPC.
- */
-function waitForRemoteEngine(): Promise<void> {
-  if (isRemoteEngine()) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-      dispose()
-      reject(new Error('远端引擎尚未就绪，无法打开远程工作区'))
-    }, 30_000)
-    const dispose = subscribeEngineSource(() => {
-      if (!isRemoteEngine()) return
-      if (timer) clearTimeout(timer)
-      timer = null
-      dispose()
-      resolve()
-    })
-  })
-}
-
-async function waitForRemoteWorkspaceContext(): Promise<Awaited<ReturnType<typeof remoteWorkspaceContext>>> {
-  let lastError: unknown = null
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    try {
-      return await remoteWorkspaceContext()
-    } catch (error) {
-      lastError = error
-      await new Promise<void>((resolve) => setTimeout(resolve, 100))
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error('远端工作区会话尚未就绪')
-}
-
-/** 应用启动时恢复上次打开的文件夹 */
 export function restoreLastFolder(): Promise<void> {
-  restorePromise ??= (async (): Promise<void> => {
-    try {
-      const settings = await getSettings()
-      if (isRemoteEngine()) {
-        // The selected remote session lives in endpoint-local storage and may
-        // not be reflected in the main settings response yet.
-        const context = await waitForRemoteWorkspaceContext()
-        await openFolderAt(context.root)
-      } else if (settings.engineMode === 'remote') {
-        await waitForRemoteEngine()
-        const context = await waitForRemoteWorkspaceContext()
-        await openFolderAt(context.root)
-      } else {
-        if (!settings.lastFolder) return
-        await openFolderAt(settings.lastFolder)
-      }
-    } catch (err) {
-      // 目录已被删除或无权限：不打断启动，也不清空设置，让用户自己重新选择
-      setState({ error: ipcErrorMessage(err), root: null, restoring: false })
-    }
-  })()
+  if (restorePromise) return restorePromise
+  const key = workspaceConnectionKey()
+  if (state.root || key === 'remote:unavailable') return Promise.resolve()
+  const source = getEngineSource(), initialRequest = openFolderRequestId
+  const current = (): boolean => key === workspaceConnectionKey() && (key === 'embedded' || source === getEngineSource())
+  let ownedRequest = initialRequest
+  restorePromise = Promise.resolve().then(async () => {
+    if (!current() || initialRequest !== openFolderRequestId) return
+    const root = isRemoteEngine() ? captureWorkspaceTarget().workspaceRoot : await getSettings().then(settings =>
+      settings.engineMode === 'embedded' ? settings.lastFolder || null : null)
+    if (root === null || !current() || initialRequest !== openFolderRequestId) return
+    ownedRequest = initialRequest + 1
+    await openFolderAt(root)
+  }).catch(error => {
+    if (!current() || ownedRequest !== openFolderRequestId) return
+    restorePromise = null
+    setState({ error: ipcErrorMessage(error), root: null, restoring: false })
+  })
   return restorePromise
 }
 
-/**
- * 「启动时的工作区恢复已结束」——无论成功、失败还是压根没恢复过。
- *
- * 需要工作区才能确定自身初值的东西（如终端的启动目录）必须等它：
- * restoreLastFolder 是异步的，而渲染首帧就跑完了，此时 root 还是 null，
- * 照拍脑袋创建出来的东西会落在主目录而不是当前项目里。
- */
-export function workspaceRestoreSettled(): Promise<void> {
-  return restorePromise ?? Promise.resolve()
+/** Exclusion preferences need a key, not a network bind or a directory listing. */
+export function workspacePreferencesRoot(): string | null {
+  if (state.root) return state.root
+  if (!isRemoteEngine() || workspaceConnectionKey() === 'remote:unavailable') return null
+  return captureWorkspaceTarget().workspaceRoot || null
 }
 
 export async function toggleExpand(dir: string): Promise<void> {
@@ -614,8 +571,13 @@ export function clearClipboard(): void {
 }
 
 /** 订阅工作区状态（store 内部整体替换 state，引用稳定可作快照） */
-export function useWorkspace(): WorkspaceState {
-  return useSyncExternalStore(onWorkspaceChanged, getWorkspaceState)
+export function useWorkspace(needsTree = false): WorkspaceState {
+  const workspace = useSyncExternalStore(onWorkspaceChanged, getWorkspaceState)
+  const key = workspaceConnectionKey(), generation = key === 'embedded' ? 0 : getEngineSource()
+  useEffect(() => {
+    if (needsTree && key !== 'remote:unavailable') void restoreLastFolder()
+  }, [needsTree, key, generation])
+  return workspace
 }
 
 /**

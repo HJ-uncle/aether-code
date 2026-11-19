@@ -121,7 +121,7 @@ function ImportProgress({ record }: { record: ImportRecord }): JSX.Element {
 /** Skill registry and importer. AppSettingsView can mount this as its own tab. */
 export function SkillsSettingsView(): JSX.Element {
   const { engine, settings } = useApp()
-  const workspace = useWorkspace()
+  const workspace = useWorkspace(engine.snapshot.mode !== 'remote')
   const source = useSyncExternalStore(subscribeEngineSource, getEngineSource)
   const projectRoot = engine.snapshot.mode === 'remote' ? settings.remoteWorkspaceRoot.trim() : workspace.root
   return <SkillsAccessView key={JSON.stringify([source, projectRoot])} source={source} projectRoot={projectRoot} />

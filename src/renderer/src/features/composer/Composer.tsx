@@ -504,7 +504,6 @@ export function Composer({
                 </button>
               ) : null}
               <ComposerPreferences
-                home={home}
                 sessionId={controller.securitySessionId}
                 workspacePath={controller.workspacePath ?? undefined}
                 modelId={controller.modelId}
@@ -629,7 +628,6 @@ export function Composer({
             ready={controller.ready} active={true} remote={controller.remote}
             selection={home || controller.activeTask?.status === 'draft' ? {
               history: controller.workspaceHistory,
-              defaultPath: controller.defaultWorkspacePath,
               busy: controller.workspaceSelectionBusy,
               reason: controller.workspaceSelectionReason,
               onSelect: controller.selectWorkspace,

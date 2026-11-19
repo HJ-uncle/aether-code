@@ -3,7 +3,7 @@ import '@xterm/xterm/css/xterm.css'
 import {
   getWorkspaceState,
   useWorkspace,
-  workspaceRestoreSettled
+  restoreLastFolder
 } from '@renderer/core/workspace/workspace-store'
 import { assertSessionFileTarget, captureSessionFileTarget, copyIntoWorkspace, writeFile } from '@renderer/core/workspace/fs-client'
 import { watchTheme } from '@renderer/core/theme/palette'
@@ -52,12 +52,13 @@ import './terminal-view.css'
  * 后台会话的 shell 与滚动缓冲始终存活。
  */
 export function TerminalView({ active: activeProp, sessionId: sessionIdProp, cwd }: { active?: boolean; sessionId?: string; cwd?: string | null } = {}): JSX.Element {
-  const { engine, settings, settingsLoaded } = useApp()
+  const { engine, settings, settingsLoaded, ready } = useApp()
   const windowVisible = useWorkbenchVisible()
   const visible = windowVisible && activeProp === true
   const sessionScoped = sessionIdProp !== undefined
   const sessionId = sessionScoped ? sessionIdProp.trim() : settings.lastSessionId
-  const workspace = useWorkspace()
+  const needsTree = !sessionScoped && cwd === undefined
+  const workspace = useWorkspace(visible && settingsLoaded && needsTree)
   const root = sessionScoped ? cwd ?? null : cwd === undefined ? workspace.root : cwd
   const state = useTerminalStore()
   const source = getEngineStorageKey()
@@ -67,7 +68,7 @@ export function TerminalView({ active: activeProp, sessionId: sessionIdProp, cwd
   const viewScope = JSON.stringify([source, sessionScoped ? sessionId : null])
   if (state.activeId && sessions.some(session => session.id === state.activeId)) selectedByScope.current.set(viewScope, state.activeId)
   const activeId = sessions.find(session => session.id === selectedByScope.current.get(viewScope))?.id ?? sessions.at(-1)?.id
-  const waitingForRemote = engine.snapshot.phase !== 'ready' && (engine.snapshot.mode === 'remote' || settings.engineMode === 'remote')
+  const waitingForRemote = !ready && (engine.snapshot.mode === 'remote' || settings.engineMode === 'remote')
   const canCreate = visible && settingsLoaded && !waitingForRemote && (!sessionScoped || Boolean(sessionId))
   const [menu, setMenu] = useState<{ id: string; x: number; y: number; selection: string; anchor: Element } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -139,18 +140,18 @@ export function TerminalView({ active: activeProp, sessionId: sessionIdProp, cwd
   useEffect(() => {
     if (!canCreate) return
     let cancelled = false
-    void (sessionScoped ? Promise.resolve() : workspaceRestoreSettled()).then(() => {
+    void (needsTree ? restoreLastFolder() : Promise.resolve()).then(() => {
       if (cancelled) return
       const current = getTerminalState()
       const scoped = getTerminalScopeState(sessionScoped ? sessionId : undefined)
       const hasSessions = current.sessions.some(session => sessionScoped ? session.source === source && session.sessionId === sessionId : !session.scopedToSession)
       if (hasSessions || current.creating || scoped.createFailed || scoped.closedAll) return
-      void createLocalSession((sessionScoped ? root : getWorkspaceState().root) ?? undefined, sessionScoped ? sessionId : undefined)
+      void createLocalSession((needsTree ? getWorkspaceState().root : root) ?? undefined, sessionScoped ? sessionId : undefined)
     })
     return () => {
       cancelled = true
     }
-  }, [canCreate, source, sessionScoped, sessionId, root, state.sessions, state.creating, scopeState.createFailed, scopeState.closedAll])
+  }, [canCreate, source, needsTree, sessionScoped, sessionId, root, state.sessions, state.creating, scopeState.createFailed, scopeState.closedAll])
 
   // 外观/强调色变化（含 'system' 模式的系统切换）→ 热更新全部存活会话的主题
   useEffect(

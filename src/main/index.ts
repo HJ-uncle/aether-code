@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { engineHost } from './engine/host'
+import { initializeRemoteInstanceTokens } from './engine/remote-token'
+import { cancelPendingEngineConnection } from './engine/connection'
 import { closeSessionNextTurnQueue } from './session-next-turn-ipc'
 import * as fileService from './fs/file-service'
 import { abortAllStreams, disposeLsp, registerIpcHandlers } from './ipc'
@@ -207,6 +209,10 @@ if (!gotTheLock) {
       )
     })
 
+    const bootSettings = getSettings()
+    // No window or settings IPC may change the authority used to bind legacy credentials.
+    try { initializeRemoteInstanceTokens(bootSettings.remoteBaseUrl) }
+    catch { console.warn('[engine] 旧实例令牌未能迁移，原文件已保留。') }
     registerIpcHandlers()
     registerConversationLinkIpc()
     registerOpenWithIpc()
@@ -224,7 +230,6 @@ if (!gotTheLock) {
 
     // 恢复上次打开的工作区并重新授权：
     // 授权集合保存在内存中，重启后必须显式恢复，否则文件树会因越界校验而报错
-    const bootSettings = getSettings()
     if (bootSettings.lastFolder && existsSync(bootSettings.lastFolder)) {
       fileService.allowRoot(bootSettings.lastFolder)
     }
@@ -254,6 +259,7 @@ if (!gotTheLock) {
     // cleanup must finish while its endpoint credentials are still available.
     event.preventDefault()
     if (shutdown) return
+    cancelPendingEngineConnection()
     abortAllStreams()
     shutdown = Promise.allSettled([disposeAllTerminals(), remoteTerminalService.disposeAll(), closeSessionNextTurnQueue()]).then(async results => {
       for (const result of results) if (result.status === 'rejected') console.error('[shutdown] owned cleanup failed:', result.reason)

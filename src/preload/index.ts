@@ -23,6 +23,7 @@ import type {
   EngineLogEntry,
   EngineLogBatch,
   EngineRequestInput,
+  EngineConnectionInput,
   EngineUploadInput,
   EngineFileSaveInput,
   EngineFileSaveResult,
@@ -197,7 +198,14 @@ const api = {
   } satisfies AccountApi,
   engine: {
     getSnapshot: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineGetSnapshot),
+    openAdmin: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke(IPC.invoke.engineOpenAdmin),
     diagnostics: (input?: EngineDiagnosticsInput): Promise<EngineDiagnostics> => ipcRenderer.invoke(IPC.invoke.engineDiagnostics, input),
+    applyConnection: async (input: EngineConnectionInput): Promise<EngineSnapshot> => {
+      const result = await ipcRenderer.invoke(IPC.invoke.engineApplyConnection, input) as
+        | { ok: true; snapshot: EngineSnapshot } | { ok: false; message: string }
+      if (!result.ok) throw new Error(result.message)
+      return result.snapshot
+    },
     start: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineStart),
     stop: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineStop),
     restart: (): Promise<EngineSnapshot> => ipcRenderer.invoke(IPC.invoke.engineRestart),
@@ -278,8 +286,8 @@ const api = {
       ipcRenderer.invoke(IPC.invoke.settingsSaveEngine, patch, token, auth),
     remoteAuthStatus: (url: string): Promise<RemoteAuthStatus> =>
       ipcRenderer.invoke(IPC.invoke.settingsRemoteAuthStatus, url),
-    remoteTokenStatus: (): Promise<RemoteTokenStatus> =>
-      ipcRenderer.invoke(IPC.invoke.settingsRemoteTokenStatus),
+    remoteTokenStatus: (url?: string): Promise<RemoteTokenStatus> =>
+      ipcRenderer.invoke(IPC.invoke.settingsRemoteTokenStatus, url),
     setRemoteToken: (token: string): Promise<RemoteTokenStatus> =>
       ipcRenderer.invoke(IPC.invoke.settingsSetRemoteToken, token),
     clearRemoteToken: (): Promise<RemoteTokenStatus> =>

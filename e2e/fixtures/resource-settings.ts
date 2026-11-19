@@ -1,4 +1,4 @@
-import { createServer, type Server, type ServerResponse } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
 import type { RootRun } from '../../src/shared/root-run'
 import type { KnowledgeBase, KnowledgeDocument } from '../../src/renderer/src/core/engine/knowledge'
@@ -42,6 +42,7 @@ const envelope = (data: unknown): string => JSON.stringify({ code: 200, message:
 /** Only the authenticated engine boundary is substituted. The renderer still
  * uses production IPC, uploads, scope selection and confirmation dialogs. */
 export class ResourceSettingsFixture {
+  observeRequestHeaders?: (headers: IncomingHttpHeaders) => void
   readonly errors: string[] = []
   readonly receipts: ResourceReceipt[] = []
   readonly uploads: ResourceUpload[] = []
@@ -60,9 +61,10 @@ export class ResourceSettingsFixture {
   private sequence = 0
   private readonly server: Server
 
-  constructor() {
+  constructor({ canManageSkills = false }: { canManageSkills?: boolean } = {}) {
     this.server = createServer((request, response) => { void (async () => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1'), path = url.pathname, method = request.method ?? 'GET'
+      this.observeRequestHeaders?.(request.headers)
       response.setHeader('content-type', 'application/json')
       if (path.startsWith('/api/') && request.headers['x-aether-instance-token'] !== resourceToken) throw new Error(`Unauthenticated ${method} ${path}`)
       const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk))
@@ -73,6 +75,10 @@ export class ResourceSettingsFixture {
       const body = parsed, query = Object.fromEntries(url.searchParams), sessionId = query.sessionId ?? ''
       const tracked = /^\/api\/v1\/(skills(?:\/|$)|knowledge\/|memory\/)/.test(path)
       if (tracked) this.receipts.push({ method, path, query, body })
+      const skillCatalogue = path === '/api/v1/skills' && method === 'GET' && query.available === '1'
+      if (!canManageSkills && /^\/api\/v1\/skills(?:\/|$)/.test(path) && !skillCatalogue) {
+        response.writeHead(403).end(JSON.stringify({ code: 40300, message: '无权管理技能', data: null })); return
+      }
       const reject = (kind: typeof this.failNext): boolean => {
         if (this.failNext !== kind) return false
         this.failNext = null; response.end(JSON.stringify({ code: 40001, message: '夹具校验失败，已保留原内容', data: null })); return true
@@ -128,7 +134,11 @@ export class ResourceSettingsFixture {
         const item = this.imports.find(item => item.importId === path.split('/').at(-1)); if (!item) throw new Error('Unknown import')
         response.end(envelope(item)); return
       }
-      if (path === '/api/v1/skills' && method === 'GET') { response.end(envelope({ list: this.skills })); return }
+      if (path === '/api/v1/skills' && method === 'GET') {
+        const list = (skillCatalogue ? this.skills.filter(skill => skill.enabled) : this.skills)
+          .map(({ id, name, description, enabled, order, scope }) => ({ id, name, description, enabled, order, scope }))
+        response.end(envelope({ list, permissions: { canManage: canManageSkills } })); return
+      }
       if (path === '/api/v1/skills' && method === 'POST') {
         if (reject('skill-create')) return
         if (typeof body.name !== 'string' || typeof body.content !== 'string' || !['project', 'global'].includes(String(body.scope))) throw new Error('Invalid skill creation')
@@ -224,7 +234,8 @@ export class ResourceSettingsFixture {
       }
       if (tracked) throw new Error(`Unexpected resource operation: ${method} ${path}`)
       if (path === '/api/v1/workspace/bind' && method === 'POST') { response.end(envelope({ workspaceRoot: resourceWorkspace, bindingEpoch: 'resource-settings', contractVersion: 2 })); return }
-      if (['/api/v1/workbench/clients', '/api/v1/browser/clients', '/api/v1/terminal/create', '/api/v1/lsp/request', '/api/v1/cron/capabilities'].includes(path)) { response.writeHead(404).end(envelope(null)); return }
+      if (['/api/v1/workbench/clients', '/api/v1/browser/clients', '/api/v1/browser/hosts', '/api/v1/terminal/create', '/api/v1/lsp/request', '/api/v1/cron/capabilities'].includes(path)) { response.writeHead(404).end(envelope(null)); return }
+      if (method === 'HEAD' && path === '/admin/') { response.statusCode = 401; response.end(); return } // The pre-panel engine gates this URL.
       if (method !== 'GET') throw new Error(`Unexpected application mutation: ${method} ${path}`)
       if (path === '/api/v1/chat/stream') { response.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n'); return }
       const task = resourceTasks.find(item => item.id === sessionId), now = Date.now() - 5000

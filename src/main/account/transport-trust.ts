@@ -15,7 +15,21 @@ function readTrustedServices(): string[] {
   } catch { return [] }
 }
 export function getAccountTransport(url: string): ReturnType<typeof accountTransport> {
-  return accountTransport(url, readTrustedServices())
+  const transport = accountTransport(url, [])
+  // HTTPS and loopback requests do not depend on the trust file. Avoid a
+  // synchronous disk read on their hot HTTP, streaming and terminal paths.
+  return transport === 'http-untrusted' ? accountTransport(url, readTrustedServices()) : transport
+}
+export class CredentialTransportError extends Error {
+  readonly code = 'http-trust-required'
+  constructor() {
+    super('此服务使用 HTTP。请先确认它属于可信内网，或改用 HTTPS 地址。')
+    this.name = 'CredentialTransportError'
+  }
+}
+/** Apply before sending instance tokens, advanced credentials or account sessions. */
+export function assertTrustedCredentialTransport(url: string, hasCredential = true): void {
+  if (hasCredential && getAccountTransport(url) === 'http-untrusted') throw new CredentialTransportError()
 }
 export function saveHttpTrust(url: string, trusted: boolean): void {
   const target = remoteAuthTarget(url)

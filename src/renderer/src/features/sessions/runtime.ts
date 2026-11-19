@@ -571,9 +571,6 @@ export function useSessionController() {
   const preparing = Boolean(activeId && pendingStart.current?.source === source && pendingStart.current.id === activeId)
   const agentLocked = Boolean(activeTask && (activeTask.agentLocked || activeTask.status !== 'draft' || messages.length > 0 || preparing))
   const workspaceLocked = agentLocked || Boolean(activeTask?.activity)
-  const defaultWorkspacePath = isRemoteEngine() ? settings.remoteWorkspaceRoot.trim() || null : null
-  const defaultWorkspacePathRef = useRef(defaultWorkspacePath)
-  defaultWorkspacePathRef.current = defaultWorkspacePath
   const workspaceSelectionBusy = Boolean(workspaceSelection && workspaceSelection.source === source && workspaceSelection.epoch === epoch)
   const draftHasWorkspaceReferences = Boolean(
     (activeTask?.attachments ?? state.homeAttachments).length ||
@@ -730,14 +727,8 @@ export function useSessionController() {
         status: 'draft',
         createdAt: now,
         updatedAt: now,
-        // A remote workspace root is an explicit user selection.  Keep it on
-        // the Work task just like a local folder selection so the first turn
-        // binds the session before Git/files are read.  Previously remote
-        // tasks always copied null from the Work home state and silently fell
-        // back to an engine scratch directory, making the Work Git pane look
-        // like a non-repository even when the configured remote project was a
-        // valid Git checkout.
-        workspacePath: projectPath ?? (current.homeWorkspacePath || (isRemoteEngine() ? settings.remoteWorkspaceRoot.trim() || null : null)),
+        // A null selection belongs to this session’s scratch directory, including on remote engines.
+        workspacePath: projectPath ?? current.homeWorkspacePath,
         modelId: current.homeModelId || settings.lastModelId,
         attachments: fromHome ? current.homeAttachments : [],
         sources: fromHome ? current.homeSources : [],
@@ -756,7 +747,7 @@ export function useSessionController() {
       }))
       return id
     },
-    [source, epoch, settings.lastModelId, settings.remoteWorkspaceRoot]
+    [source, epoch, settings.lastModelId]
   )
 
   const createProjectTask = useCallback(async (path: string): Promise<string | undefined> => {
@@ -1383,20 +1374,18 @@ export function useSessionController() {
     chat.assertPendingResponse(requestId, activeTask.id, runId)
   }, [activeTask, restored, source, chat.assertPendingResponse])
 
-  const selectWorkspace = useCallback(async (path: string | null): Promise<boolean> => {
+  const selectWorkspace = useCallback(async (root: string | null): Promise<boolean> => {
     if (workspaceSelectionRef.current?.epoch === epoch) return false
     const operation = { source, epoch, activeId }
     const initial = getSessionState(source)
     const originalTask = activeId ? initial.tasks.find(task => task.id === activeId) : null
-    const originalPath = originalTask ? originalTask.workspacePath : initial.homeWorkspacePath
+    const originalRoot = originalTask ? originalTask.workspacePath : initial.homeWorkspacePath
     const originalSession = activeId ?? initial.homeSessionId
     const originalDraft = getSessionDraft(source, activeId)
     const originalAttachments = originalTask?.attachments ?? initial.homeAttachments
     const originalSources = originalTask?.sources ?? initial.homeSources
     const originalResources = JSON.stringify([originalAttachments, originalSources])
     const remote = isRemoteEngine()
-    const root = path ?? (remote ? settings.remoteWorkspaceRoot.trim() || null : null)
-    const originalRoot = originalPath ?? (remote ? settings.remoteWorkspaceRoot.trim() || null : null)
     let previousBinding: string | undefined
     let rebound = false
     let rollbackFailed = false
@@ -1404,11 +1393,9 @@ export function useSessionController() {
     const assertCurrent = (): void => {
       assertEngineSource(epoch)
       if (source !== getEngineStorageKey() || selectedViewRef.current !== selectedView) throw new Error('当前任务已变化，请重新选择工作区。')
-      if (remote && (path === null || !originalPath) && defaultWorkspacePathRef.current !== (settings.remoteWorkspaceRoot.trim() || null))
-        throw new Error('默认工作区设置已变化，请重新选择。')
       const latest = getSessionState(source)
       const task = activeId ? latest.tasks.find(item => item.id === activeId) : null
-      if (latest.activeTaskId !== activeId || activeId && !task || (task ? task.workspacePath : latest.homeWorkspacePath) !== originalPath
+      if (latest.activeTaskId !== activeId || activeId && !task || (task ? task.workspacePath : latest.homeWorkspacePath) !== originalRoot
         || (!activeId && latest.homeSessionId !== originalSession)) throw new Error('当前工作区已变化，请重新选择。')
       if (uploadCountRef.current) throw new Error('资料正在上传，工作目录保持不变。')
       if (draftHasWorkspaceReferences) throw new Error('移除草稿中的资料或文件引用后可切换工作区。')
@@ -1421,12 +1408,12 @@ export function useSessionController() {
     }
     try {
       assertCurrent()
-      if (path !== null && !validSessionWorkspacePath(path) || root !== null && !validSessionWorkspacePath(root)) throw new Error('请输入有效的绝对目录路径。')
+      if (root !== null && !validSessionWorkspacePath(root)) throw new Error('请输入有效的绝对目录路径。')
       setError(null)
       if ((!root && !originalRoot) || root && originalRoot && sessionWorkspacePathKey(root) === sessionWorkspacePathKey(originalRoot)) {
         updateSessionState(source, previous => activeId
-          ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId ? { ...task, workspacePath: path } : task) }
-          : { ...previous, homeWorkspacePath: path })
+          ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId ? { ...task, workspacePath: root } : task) }
+          : { ...previous, homeWorkspacePath: root })
         return true
       }
       workspaceSelectionRef.current = operation
@@ -1508,11 +1495,11 @@ export function useSessionController() {
       }
       if (!activeId) saveSessionThinkingMode(destinationSession, thinkingMode, source)
       updateSessionState(source, previous => activeId
-        ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId ? { ...task, workspacePath: path === null ? null : canonicalRoot,
+        ? { ...previous, tasks: previous.tasks.map(task => task.id === activeId ? { ...task, workspacePath: canonicalRoot,
           attachments, sources, draft: draft.text, mentions: draft.mentions } : task) }
-        : { ...previous, homeWorkspacePath: path === null ? null : canonicalRoot, homeSessionId: destinationSession,
+        : { ...previous, homeWorkspacePath: canonicalRoot, homeSessionId: destinationSession,
           homeAttachments: attachments, homeSources: sources, homeDraft: draft.text, homeMentions: draft.mentions })
-      if (path !== null && canonicalRoot) rememberSessionWorkspace(source, canonicalRoot)
+      if (canonicalRoot) rememberSessionWorkspace(source, canonicalRoot)
       return true
     } catch (cause) {
       let failure = messageOf(cause)
@@ -1522,7 +1509,7 @@ export function useSessionController() {
         catch { rollbackFailed = true; failure += ' 原工作区连接暂时无法恢复，请恢复连接后重试；草稿与原文件仍保留。' }
       }
       if (!activeId && originalRoot === null && destinationSession === originalSession && rollbackFailed && epoch === getEngineSource() && source === getEngineStorageKey()) {
-        // A home draft with no configured default directory must remain
+        // A home draft without a selected project must remain
         // usable even when the old session's binding cannot be restored.
         // Move only the session identity; preserve the user's draft text.
         const safeSession = `work-home-${crypto.randomUUID()}`
@@ -1536,7 +1523,7 @@ export function useSessionController() {
       if (workspaceSelectionRef.current === operation) workspaceSelectionRef.current = null
       setWorkspaceSelection(previous => previous === operation ? null : previous)
     }
-  }, [source, epoch, activeId, selectedView, settings.remoteWorkspaceRoot, thinkingMode, hasSessionWork, isHistoryReady, messages.length, draftHasWorkspaceReferences])
+  }, [source, epoch, activeId, selectedView, thinkingMode, hasSessionWork, isHistoryReady, messages.length, draftHasWorkspaceReferences])
 
   const clearWorkspace = useCallback((): Promise<boolean> => selectWorkspace(null), [selectWorkspace])
 
@@ -1571,8 +1558,7 @@ export function useSessionController() {
       const task = taskId ? initial.tasks.find(item => item.id === taskId) : null
       if (taskId && !task) throw new Error('资料所属任务已不可用，请返回任务后重试')
       const remote = isRemoteEngine()
-      const selectedRoot = task ? task.workspacePath : initial.homeWorkspacePath
-      const root = selectedRoot || (!task && remote ? settings.remoteWorkspaceRoot.trim() || null : null)
+      const root = task ? task.workspacePath : initial.homeWorkspacePath
       if (imageEdit?.replacePath && !(task?.attachments ?? initial.homeAttachments).some(file => file.path === imageEdit.replacePath))
         throw new Error('原图片已不在当前草稿中，请重新打开图片。')
       let sessionId = taskId ?? initial.homeSessionId
@@ -1587,7 +1573,7 @@ export function useSessionController() {
       try {
         if (!remote && root) await allowRoot(root)
         // Remote upload resolves a session binding, not the renderer's hint.
-        // Establish the explicit/default project before any bytes are written.
+        // Establish an explicitly chosen project before any bytes are written.
         if (remote && root) await bindSessionWorkspace(sessionId, root)
         for (const file of files) {
           if (!isSupportedFile(file)) throw new Error(`「${file.name}」的格式暂不支持`)
@@ -1669,7 +1655,7 @@ export function useSessionController() {
                   : { ...item, attachments: applyImage(item.attachments), ...(draft ? { draft: draft.text, mentions: draft.mentions } : {}) }
                 : item) }
             }
-            if (taskId || previous.homeSessionId !== sessionId || previous.homeWorkspacePath !== selectedRoot)
+            if (taskId || previous.homeSessionId !== sessionId || previous.homeWorkspacePath !== root)
               throw new Error('资料所属任务已变化，请返回原任务后重试')
             const draft = imageEdit?.replacePath ? replaceImageAttachmentReferences({ text: previous.homeDraft, mentions: previous.homeMentions },
               { path: imageEdit.replacePath }, attachment) : null
@@ -1688,7 +1674,7 @@ export function useSessionController() {
         setUploadCount((count) => count - 1)
       }
     },
-    [activeId, epoch, source, settings.remoteWorkspaceRoot]
+    [activeId, epoch, source]
   )
 
   const addFiles = useCallback(async (files: File[]): Promise<void> => {
@@ -1816,8 +1802,7 @@ export function useSessionController() {
     agentIdentity,
     agentLocked,
     workspaceLocked,
-    defaultWorkspacePath,
-    workspaceHistory: sessionWorkspaceChoices(source, state.tasks, activeTask ? activeTask.workspacePath : state.homeWorkspacePath, defaultWorkspacePath ?? undefined),
+    workspaceHistory: sessionWorkspaceChoices(source, state.tasks, activeTask ? activeTask.workspacePath : state.homeWorkspacePath),
     workspaceSelectionBusy,
     workspaceSelectionReason,
     get mentions() { return getSessionDraft(source, activeId).mentions },
