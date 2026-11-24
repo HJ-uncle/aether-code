@@ -3,7 +3,7 @@ import { DOCUMENT_LIMITS, previewErrorMessage } from './document-kind'
 import { prepareOfficeArchiveOffThread } from './office-archive-client'
 import { cacheOfficePreview, getOfficePreview, type CachedOfficePreview } from './office-preview-cache'
 import { documentFrame, passiveDocumentHtml } from './document-html'
-import { PreviewMessage, PreviewToolbar, PreviewZoom, usePreviewWidth, useStablePreviewWidth } from './preview-controls'
+import { PreviewMessage, PreviewToolbar, PreviewZoom, usePreviewWidth } from './preview-controls'
 import { readPptxNotesForPreview, type PptxNotesPreview } from './pptx-notes'
 import { bridgeFrameSelection } from './document-selection'
 import { officeVisiblePage } from './office-visible-page'
@@ -20,13 +20,18 @@ function ContinuousPage({ html, name, kind, index, scale, height, retained, acti
   const latest = useRef({ scale, onSize })
   latest.current = { scale, onSize }
   const resize = useRef<(() => void) | null>(null)
-  // Changing srcdoc navigates the child document and decodes every image again.
-  // Only this trusted parent changes zoom; the sandbox never enables scripts.
-  const srcDoc = useMemo(() => documentFrame(html, name, 1, kind), [html, name, kind])
+  // Seed each new child document with the already measured scale. Starting at
+  // 100% flashes an oversized page before load (especially with images). Later
+  // zoom changes must not navigate srcdoc and decode every image again.
+  const [source, setSource] = useState(() => ({ html, name, kind, retained, srcDoc: documentFrame(html, name, scale, kind) }))
+  if (source.html !== html || source.name !== name || source.kind !== kind || source.retained !== retained) {
+    setSource({ html, name, kind, retained, srcDoc: documentFrame(html, name, scale, kind) })
+  }
+  const srcDoc = source.srcDoc
   useEffect(() => {
     return frame.current && retained && active ? bridgeFrameSelection(frame.current) : undefined
   }, [retained, active, srcDoc])
-  useEffect(() => {
+  useLayoutEffect(() => {
     const child = frame.current
     if (!child || !retained || !active) return
     let lastHeight = 0
@@ -74,8 +79,7 @@ export default function OfficeDocumentPreview({ data, kind, name, sessionKey, ac
     setPageRetention({ near: [0, 1], recent: [] })
     setSource({ data, cacheKey }); setState(cachedPreview ?? {}); setVisiblePage(1); setNotesOpen(false)
   }
-  const body = useRef<HTMLDivElement>(null), width = usePreviewWidth(body, active && Boolean(state.pages))
-  const stableWidth = useStablePreviewWidth(width)
+  const body = useRef<HTMLDivElement>(null), stableWidth = usePreviewWidth(body, active && Boolean(state.pages), 160)
   // Hidden retained previews keep their last nonzero layout and their frames.
   const layoutReady = stableWidth > 0
   useEffect(() => {

@@ -488,6 +488,8 @@ export interface AppSettings {
   graphicsMode: GraphicsMode
   /** Material preference applies immediately, subject to software/OS capability. */
   visualEffects: VisualEffects
+  /** Whether token and model usage surfaces are shown in conversation views. */
+  showConversationUsage: boolean
   /**
    * 资源管理器与搜索的文件排除规则（glob → 是否隐藏）。
    *
@@ -543,6 +545,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customAccentColor: '#4b95f1',
   graphicsMode: 'auto',
   visualEffects: 'auto',
+  showConversationUsage: true,
   filesExclude: { ...DEFAULT_FILES_EXCLUDE },
   searchExclude: { ...DEFAULT_SEARCH_EXCLUDE }
 }

@@ -1,8 +1,10 @@
-import type { AppSettings, EngineConnectionInput, EngineSnapshot } from '../../shared/ipc'
+import type { ServiceCredentialContext } from '../../shared/account'
+import { readAccountCredential, serviceCredentialRevision } from '../account/credential-store'
+import type { AppSettings, EngineConnectionInput, EngineSnapshot, RemoteAuthCredential } from '../../shared/ipc'
 import { getSettings, updateSettings, workspaceRootForConnection } from '../settings-store'
 import { engineHost } from './host'
 import { validateRemoteInstanceToken } from './protocol'
-import { withRemoteAuthChange } from './remote-auth'
+import { remoteAuthStatus, withRemoteAuthChange } from './remote-auth'
 import { remoteAuthTarget, validateRemoteAuth } from './remote-auth-contract'
 import { probeRemoteConnection } from './remote-probe'
 import { assertRemoteTokenTargetChange, withRemoteInstanceTokenChange } from './remote-token'
@@ -144,19 +146,62 @@ export async function applyEngineConnection(raw: EngineConnectionInput): Promise
     save(input)
     return snapshot
   }
+  return duringConnectionChange(async (signal, commit) => {
+    const proof = remote ? await probeRemoteConnection(input.remoteBaseUrl, input, signal) : null
+    if (!remote) requireLocalRuntime()
+    commit(() => save(input))
+    if (proof) {
+      await engineHost.startVerifiedRemote(proof, input.remoteWorkspaceRoot, signal)
+    } else await startLocal(saved, snapshot, signal)
+  })
+}
+
+/** A credential editor never has the authority to select another connection or write preferences. */
+function selectedRemoteService(expected: string): string {
+  if (typeof expected !== 'string') throw new Error('当前服务地址无效。')
+  const url = remoteAuthTarget(expected), saved = getSettings(), live = engineHost.getSnapshot()
+  if (saved.engineMode !== 'remote' || !sameRemoteService(saved.remoteBaseUrl, url) ||
+      (live.phase === 'ready' && (live.mode !== 'remote' || !sameRemoteService(live.baseUrl, url)))) {
+    throw new Error('连接已切换，请在当前服务重新输入凭据。')
+  }
+  return url
+}
+export function getServiceCredentialContext(expected: string): ServiceCredentialContext {
+  const service = selectedRemoteService(expected), revision = serviceCredentialRevision(service)
+  // A locked/unreadable personal identity must never be mistaken for a signed-out account.
+  readAccountCredential(service)
+  try { return { revision, status: remoteAuthStatus(service) } }
+  catch { return { revision, status: null } } // An unreadable advanced override may be replaced or removed explicitly.
+}
+export async function applyServiceCredential(expected: string, revision: number, value: RemoteAuthCredential | null): Promise<EngineSnapshot> {
+  assertEngineConnectionAvailable()
+  const service = selectedRemoteService(expected)
+  const assertEditCurrent = (): void => {
+    if (readAccountCredential(service).credential) throw new Error('当前正在使用个人账号。请先退出账号，再使用服务访问凭据。')
+    if (!Number.isSafeInteger(revision) || serviceCredentialRevision(service) !== revision) throw new Error('账号或凭据已变化，请收起并重新展开「服务访问凭据」后再试。')
+  }
+  assertEditCurrent()
+  const credential = value === null ? null : validateRemoteAuth(value)
+  return duringConnectionChange(async (signal, commit) => {
+    const proof = await probeRemoteConnection(service, { userCredential: credential }, signal)
+    // A personal login, logout, or target change may have committed while the probe awaited I/O.
+    selectedRemoteService(service)
+    assertEditCurrent()
+    if (credential && proof.issue) throw new Error(proof.message || '服务未验证此凭据。')
+    const root = workspaceRootForConnection('remote', service)
+    commit(() => withRemoteAuthChange(service, credential, () => undefined))
+    await engineHost.startVerifiedRemote(proof, root, signal)
+  })
+}
+
+/** Preflight never retires the active host. Stop/cancel only owns it after a successful synchronous commit. */
+async function duringConnectionChange(run: (signal: AbortSignal, commit: (write: () => void) => void) => Promise<void>): Promise<EngineSnapshot> {
   const change: PendingChange = { controller: new AbortController(), committed: false }
   const { signal } = change.controller
   pending = change
   engineHost.setCheckingConnection(true)
   try {
-    const proof = remote ? await probeRemoteConnection(input.remoteBaseUrl, input, signal) : null
-    if (!remote) requireLocalRuntime()
-    signal.throwIfAborted()
-    save(input)
-    change.committed = true
-    if (proof) {
-      await engineHost.startVerifiedRemote(proof, input.remoteWorkspaceRoot, signal)
-    } else await startLocal(saved, snapshot, signal)
+    await run(signal, write => { signal.throwIfAborted(); write(); change.committed = true })
   } finally {
     if (pending === change) {
       pending = null

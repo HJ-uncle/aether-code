@@ -274,7 +274,8 @@ function SessionAttachment({ file, root, group, fileContext }: {
   const images = (group ?? [file]).filter((a) => a.type.startsWith('image/'))
   return (
     <>
-      <AttachmentChip root={root} file={file} referenceLabel={file.referenceLabel} sessionId={fileContext?.sessionId} onPreview={(target, src) => references && !target.type.startsWith('image/')
+      {/* 图片编号只在草稿条带里承担排序与正文引用，发送后气泡上方重复一次只是噪音。 */}
+      <AttachmentChip root={root} file={file} referenceLabel={file.type.startsWith('image/') ? undefined : file.referenceLabel} sessionId={fileContext?.sessionId} onPreview={(target, src) => references && !target.type.startsWith('image/')
         ? references.openMention({ source: 'file', origin: 'attachment', path: target.path, displayText: target.name }, fileContext, target)
         : setPreview({ file: target, src })} />
       {preview ? <AttachmentPreviewDialog root={root} sessionId={fileContext?.sessionId} preview={preview} images={images}

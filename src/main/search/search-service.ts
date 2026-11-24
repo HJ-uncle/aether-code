@@ -29,6 +29,7 @@ import type {
 } from '@shared/ipc'
 import { compileSearchExclude, isSearchExcluded, toGitPathspec } from './exclude'
 import { assertAllowed } from '../fs/file-service'
+import { gitProcessEnvironment, resolveGitExecutable } from '../git/git-resolver'
 
 /**
  * 遍历兜底时无条件跳过的目录名。
@@ -254,9 +255,12 @@ function gitGrep(
     // search outside the user-selected workspace. Only use the git path when
     // the selected root itself is the repository root; nested repositories
     // still qualify because rev-parse returns that exact directory.
+    const git = resolveGitExecutable()
+    const env = gitProcessEnvironment()
     try {
-      const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      const top = execFileSync(git, ['rev-parse', '--show-toplevel'], {
         cwd: root,
+        env,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'ignore']
       })
@@ -284,7 +288,7 @@ function gitGrep(
       return
     }
     // -F 字面量 / -E 扩展正则；-i 大小写；-w 全字匹配（对整个 pattern 生效）
-    const args = ['grep', '-n', '-I', '--untracked', options.useRegex ? '-E' : '-F']
+    const args = ['-c', 'core.quotePath=false', 'grep', '-n', '-I', '--untracked', options.useRegex ? '-E' : '-F']
     if (!options.caseSensitive) args.push('-i')
     if (options.wholeWord) args.push('-w')
     // An explicit include is an opt-in request for that path.  Git's
@@ -317,9 +321,9 @@ function gitGrep(
     }
 
     execFile(
-      'git',
+      git,
       args,
-      { cwd: root, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
+      { cwd: root, env, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
       (error, stdout) => {
         // exit 1 = 无匹配（正常返回空结果）；其他非零才是真的失败
         if (error && error.code !== 1) {

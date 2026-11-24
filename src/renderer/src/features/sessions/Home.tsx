@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Icon, type IconName } from '@renderer/ui/icons'
 import { useHoverDetail } from '@renderer/ui/useHoverDetail'
 import type { useSessionController } from './runtime'
-import { getSessionDraft, type SessionTask } from './state'
+import type { SessionTask } from './state'
 import { Composer } from '../composer/Composer'
 import { TaskStatus } from './TaskStatus'
 import './home.css'
@@ -10,8 +10,9 @@ import './home.css'
 export type HomeFilter = 'all' | 'running' | 'waiting' | 'done'
 const FILTERS = [['all', '全部'], ['running', '进行中'], ['waiting', '需要处理'], ['done', '已完成']] as const
 const TEMPLATES: Array<{ title: string; icon: IconName; text: string }> = [
+  { title: '开始一个任务', icon: 'sparkles', text: '请帮我完成以下任务，先确认目标和约束，再给出清晰、可执行的结果。\n\n任务目标：\n补充背景：\n期望结果：\n' },
   { title: '调研一个主题', icon: 'search', text: '请帮我调研以下主题，整理关键发现并列出可核对的来源：\n' },
-  { title: '起草一份文档', icon: 'pencil', text: '请帮我起草一份文档。目标读者：\n文档主题：\n需要包含：' },
+  { title: '起草一份文档', icon: 'pencil', text: '请帮我起草一份文档。\n目标读者：\n文档主题：\n需要包含：' },
   { title: '分析资料', icon: 'graph', text: '请分析我提供的资料，提取关键数据、变化趋势和需要关注的问题。\n重点关注：' },
   { title: '整理行动计划', icon: 'check-all', text: '请将以下目标整理为清晰的行动计划，列出步骤、依赖和交付物：\n' }
 ]
@@ -37,9 +38,9 @@ export function Home({ controller, tasks, filter, onFilter, search, onSearch, on
   ).sort((a, b) => b.updatedAt - a.updatedAt), [tasks, filter, query])
   const waiting = tasks.filter(task => task.status === 'waiting').length
   const insertTemplate = (text: string): void => {
-    // Read the live draft so a template cannot overwrite unflushed typing or its references.
-    const draft = getSessionDraft(controller.draftSource, null)
-    controller.setDraft(draft.text.trim() ? `${draft.text}\n\n${text}` : text, draft.mentions)
+    // A template is a new starting point. Replace the current draft so repeated
+    // clicks never create a growing stack of previous templates or stale mentions.
+    controller.setDraft(text, [])
     composerRef.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus()
   }
   const clearSearch = (): void => { onSearch(''); searchRef.current?.focus() }
@@ -53,7 +54,7 @@ export function Home({ controller, tasks, filter, onFilter, search, onSearch, on
         <div ref={composerRef}><Composer controller={controller} home /></div>
         <div className="work-templates" role="group" aria-label="任务模板">
           {TEMPLATES.map(template => <button type="button" key={template.title}
-            title={`将“${template.title}”模板添加到草稿`} onClick={() => insertTemplate(template.text)}>
+            title={`使用“${template.title}”模板替换当前草稿`} onClick={() => insertTemplate(template.text)}>
             <Icon name={template.icon} size={15} /><span>{template.title}</span>
           </button>)}
         </div>

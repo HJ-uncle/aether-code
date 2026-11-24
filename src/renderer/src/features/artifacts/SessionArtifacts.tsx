@@ -17,6 +17,7 @@ import { FileChangeCard } from '../conversation/shared/FileChangeCard'
 import { DIFF_APPROXIMATION_HINT } from '../conversation/shared/diff'
 import { ChangeReviewActions } from './ChangeReviewActions'
 import { ArtifactPanel, type ArtifactPanelProps } from './ArtifactPanel'
+import { PreviewHeaderTargets } from '../documents/preview-controls'
 import { sessionProgressRetryDelay } from '../conversation/progress-state'
 import { sessionFileChangeCode, sessionFilePrefersPreview } from './file-change-presentation'
 import { sessionChangePathKey } from './file-changes'
@@ -160,6 +161,9 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
   const [turnScope, setTurnScope] = useState<SessionArtifactTurnScope>({ kind: 'session' })
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  const [previewToolbar, setPreviewToolbar] = useState<HTMLDivElement | null>(null)
+  const [previewActions, setPreviewActions] = useState<HTMLDivElement | null>(null)
+  const [previewTitle, setPreviewTitle] = useState<HTMLSpanElement | null>(null)
   const lastSelection = useRef('')
   const report = useSyncExternalStore(subscribeReverts, () => getRevertReport(sessionId))
   const revision = useMemo(() => artifactToolRevision(sessionId, tools), [sessionId, tools])
@@ -254,7 +258,7 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
     return () => { alive = false; if (timer) clearTimeout(timer) }
   }, [enabled, source, sessionId, streaming, revision, report, refreshRevision, requestKey, workspacePath])
 
-  const turnOptions = useMemo(() => buildArtifactTurnOptions(sessionId, messages, records), [sessionId, messages, records])
+  const turnOptions = useMemo(() => buildArtifactTurnOptions(sessionId, messages, records, net, workspacePath), [sessionId, messages, records, net, workspacePath])
   const scopedChanges = useMemo(() => scopeArtifactChanges(sessionId, records, net, turnScope), [sessionId, records, net, turnScope])
   const scopedFiles = useMemo(() => {
     if (!workspacePath) return []
@@ -289,9 +293,9 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
   const selectedFile = selected?.file
   const currentDeleted = useMemo(() => Boolean(selectedFile && artifactFileIsDeleted(sessionId, selectedFile.path, records, workspacePath)), [sessionId, selectedFile, records, workspacePath])
   const prefersPreview = Boolean(selectedFile && sessionFilePrefersPreview(selectedFile.path))
-  // A turn's files may have later edits. Its default must use that turn's
-  // operation snapshot, even when a cross-turn net segment was excluded.
-  const displayedView = detailView ?? (turnScope.kind === 'turn' ? 'turn' : prefersPreview ? 'current'
+  // Documents open in the readable current-file view, explicitly labeled as
+  // such. Text still defaults to the turn's snapshot; explicit history wins.
+  const displayedView = detailView ?? (prefersPreview ? 'current' : turnScope.kind === 'turn' ? 'turn'
     : !selectedFile?.net.length ? 'current' : 'net')
   const selectedView = displayedView === 'current' || requested?.changeId && !selected?.view ? null : selected?.view?.scope === displayedView ? selected.view
     : selectedFile && artifactViews(selectedFile, displayedView)[0]
@@ -416,11 +420,13 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
         <ArtifactTree rows={rows} collapsed={collapsed} selectedFile={selectedFile} selectedView={selectedView ?? selected?.view ?? null} active={active}
           selectionRevision={selection?.revision} onSelect={selectFile} onToggle={toggleDirectory} />
       </aside>
+      <PreviewHeaderTargets.Provider value={{ toolbar: active ? previewToolbar : null, title: active ? previewTitle : null, actions: active ? previewActions : null }}>
       <div className="work-session-artifacts__detail">
         {selectedFile ? <div className="work-session-artifacts__file-chrome"><header className="work-session-artifacts__file-header">
           <div className="work-session-artifacts__identity">
             <FileGlyph name={selectedFile.name} size={16} />
             <strong title={selectedFile.path}>{selectedFile.name}</strong>
+            <span ref={setPreviewTitle} className="file-preview-page-count" />
             <ChangeCount view={selectedView ?? defaultArtifactView(selectedFile)} />
           </div>
           {!missingRequested ? <Select className="work-session-artifacts__view-select" ariaLabel="差异范围" title={viewDescription} triggerIcon={displayedView === 'current' ? 'file' : displayedView === 'operation' ? 'clock-outline' : 'git'} value={displayedView} width={240} panelClassName="work-session-artifacts__popover"
@@ -430,6 +436,7 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
               { value: 'net', label: '待确认改动', description: '当前范围内仍待确认的连续修改' },
               { value: 'operation', label: '修改记录', description: '查看每次写入前后的历史内容' }
             ]} onChange={value => { if (value === 'current' || value === 'turn' || value === 'net' || value === 'operation') setScope(value) }} /> : null}
+          <div ref={setPreviewToolbar} className="file-preview-tools" />
           <Popover key={reviewContext} label="文件改动信息" className="work-session-artifacts__info" panelClassName="work-session-artifacts__popover work-session-artifacts__info-panel" align="end" width={320}
             trigger={({ open }) => <button type="button" className="work-session-artifacts__info-trigger" aria-label="文件改动信息" aria-expanded={open} title="文件路径、修改时间与范围说明"><Icon name="info" size={14} /></button>}>
             <dl>
@@ -442,7 +449,8 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
             {turnScope.kind === 'unassociated' ? <p>这些记录未携带可靠的轮次标识，已单独列出。</p> : null}
             {!currentDeleted ? <button type="button" className="work-quiet-button work-session-artifacts__open-in-info" disabled={!enabled} onClick={() => onOpenCurrentFile(selectedFile.path)}><Icon name="file" size={15} />在工作区打开当前文件</button> : null}
           </Popover>
-          {!currentDeleted ? <button type="button" className="work-session-artifacts__open-file" aria-label="打开当前文件" title="打开当前文件" disabled={!enabled} onClick={() => onOpenCurrentFile(selectedFile.path)}><Icon name="file" size={15} /></button> : null}
+          {!currentDeleted && displayedView !== 'current' ? <button type="button" className="work-session-artifacts__open-file" aria-label="打开当前文件" title="打开当前文件" disabled={!enabled} onClick={() => onOpenCurrentFile(selectedFile.path)}><Icon name="file" size={15} /></button> : null}
+          <div ref={setPreviewActions} className="file-preview-actions" />
         </header>
           {!missingRequested && selectedView ? <div className="work-session-artifacts__scope">
             {selectedView && selectedVersions.length > 1 ? <Select className="work-session-artifacts__versions"
@@ -467,11 +475,14 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
           {displayedView === 'current' ? currentDeleted ? <DeletedArtifact path={selectedFile.path} /> : <>
             <div className="work-session-artifacts__preview" data-artifact-view="current">
               <ArtifactPanel artifact={currentArtifact} sessionId={sessionId} workspaceRoot={workspacePath} active={active}
-                inResourceTab onAddToConversation={onAddToConversation} />
+                inResourceTab onAddToConversation={onAddToConversation} openFileLabel="在工作区打开" onOpenFile={item => onOpenCurrentFile(item.path)} />
             </div>
           </> : <>
           {selectedView?.change.projectionIssue ? <p className="work-session-artifacts__notice" role="note">{ARTIFACT_PROJECTION_NOTICES[selectedView.change.projectionIssue]}</p> : null}
-          {prefersPreview ? <p className="work-session-artifacts__notice" role="note">此类文件的历史内容无法在修改记录中预览。可查看该轮发布的交付物；选择“当前内容”会读取工作区最新文件。</p>
+          {prefersPreview ? <div className="work-session-artifacts__notice work-session-artifacts__history-preview" role="note">
+            <span>此修改记录不含可预览的文件内容。</span>
+            {!currentDeleted ? <button type="button" className="work-quiet-button" disabled={!enabled} onClick={() => setScope('current')}>预览当前文件</button> : null}
+          </div>
           : selectedView ? <div className="work-session-artifacts__diff" data-change-id={selectedView.change.id} data-diff-scope={selectedView.scope}>
             <FileChangeCard key={`${selectedView.scope}:${selectedView.change.id}`} change={selectedView.change} state="done" defaultOpen embedded
               memoryKey={`work-artifacts:${source}:${sessionId}:${selectedView.scope}:${selectedView.change.id}`}
@@ -480,6 +491,7 @@ function ScopedSessionArtifacts({ sessionId, workspacePath: workspaceHint, ready
           </>}
         </> : <p className="work-session-artifacts__empty" role="status">当前范围没有匹配的文件。</p>}
       </div>
+      </PreviewHeaderTargets.Provider>
     </div> : <p className="work-session-artifacts__empty" role="status">{!ready ? '连接引擎后查看本会话的文件改动。' : workspacePending || syncing && !loaded ? '正在读取本会话的文件记录…' : error ? '文件记录暂未同步，请重试。'
       : missingRequested ? requestNotice
         : query.trim() ? '当前范围没有匹配的文件。' : turnScope.kind === 'session' ? records.length ? '本会话没有净文件变化。' : '本会话还没有文件改动。' : '当前轮次没有文件改动。'}</p>}

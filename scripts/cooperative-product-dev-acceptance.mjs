@@ -496,7 +496,7 @@ export async function launchController(options) {
     page.on('pageerror', error => { state.errors.push({ at: Date.now(), message: scrub(error.message) }); save() })
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1050))
     await expect.poll(() => page.evaluate(() => window.aether.engine.getSnapshot()).then(value => value.phase), { timeout: 90_000 }).toBe('ready')
-    const account = resumed ? await page.evaluate(() => window.aether.account.getState()) : await page.evaluate(() => window.aether.account.register())
+    const account = resumed ? await page.evaluate(() => window.aether.account.getState()) : await (await import('./diagnostics/fixture-account.mjs')).registerFixtureAccount(page)
     assert.equal(account.status, 'authenticated', 'Saved account must already be authenticated; resume never registers or logs in')
     if (resumed) assert.equal(account.user.id, resumed.original.engine.accountId, 'Saved account changed')
     await expect.poll(() => page.evaluate(() => window.aether.engine.getSnapshot()).then(value => value.accountId), { timeout: 30_000 }).toBe(account.user.id)

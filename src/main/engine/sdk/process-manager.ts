@@ -30,6 +30,8 @@ export interface StartProcessOptions {
   dataDir?: string
   /** 额外环境变量（优先级高于 process.env） */
   env?: Record<string, string>
+  /** Private control pipe for a desktop-owned engine. */
+  adminWindowIpc?: boolean
   /** 子进程意外退出回调 */
   onExit?: (code: number | null, signal: string | null) => void
 }
@@ -122,7 +124,7 @@ export function startProcess(opts: StartProcessOptions): ProcessHandle {
     // Keep a direct child handle for owned cleanup; detached:false is not a
     // guarantee that OS descendants will terminate when the desktop exits.
     detached: false,
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: opts.adminWindowIpc ? ['pipe', 'pipe', 'pipe', 'ipc'] : ['pipe', 'pipe', 'pipe']
   })
   const lifecycle = observeProcessLifecycle(child)
 

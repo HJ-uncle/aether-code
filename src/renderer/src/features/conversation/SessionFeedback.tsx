@@ -29,6 +29,8 @@ function useSessionRunFeedback(controller: SessionController) {
   const running = current && !dependency
     ? [...current.tools].reverse().find((tool) => tool.state === 'running' && isVisibleToolActivity(tool))
     : null
+  const subagentName = running && (running.name === 'subagent' || running.subagent || running.subagentRef)
+    ? sessionSubagentName(running) : undefined
   const thinking = current?.items?.at(-1)?.kind === 'thinking' || Boolean(current && !current.items?.length && current.thinking && !current.content && !running)
   const phase = controller.stopping
     ? 'stopping'
@@ -59,7 +61,7 @@ function useSessionRunFeedback(controller: SessionController) {
         : dependency
           ? dependency.label
         : running
-          ? `${running.name === 'subagent' || running.subagent ? sessionSubagentName(running) : toolDisplayName(running.name)}…`
+          ? `${subagentName ?? toolDisplayName(running.name)}…`
           : thinking
             ? '正在思考…'
             : current?.content
@@ -75,7 +77,14 @@ function useSessionRunFeedback(controller: SessionController) {
 
   const seconds = Math.max(0, Math.floor((now - (startedAt ?? now)) / 1000))
   const elapsed = formatSessionElapsed(seconds * 1000)
-  return { active, waiting, phase, label, elapsed, seconds, running, dependency }
+  const sweep = active && !waiting && !controller.stopping
+    ? (running || dependency ? 'activity' : 'status')
+    : undefined
+  // The default assistant has no agentId; a running child's name is already in the status.
+  const namePrefix = phase === 'tool' && subagentName
+    ? undefined
+    : subagentName || (controller.agentId && controller.agentIdentity.name)
+  return { active, waiting, phase, label, namePrefix, elapsed, seconds, running, dependency, sweep }
 }
 
 /** The first response must be visible in the conversation, including the
@@ -121,9 +130,6 @@ export function SessionTurnFeedback({ controller, announce, openActivity, onVisi
   const { triggerProps, tooltip } = useHoverDetail({ enabled: feedback.active && Boolean(fullTarget), label: activityLabel,
     content: <><div className="logline-hover__heading"><strong>{activityLabel}</strong></div><div className="logline-hover__target">{fullTarget}</div></> })
   if (!feedback.active) return null
-  const agentName = feedback.running && (feedback.running.name === 'subagent' || feedback.running.subagent)
-    ? sessionSubagentName(feedback.running)
-    : controller.agentIdentity.name || 'Agent'
   const detail = feedback.phase === 'stopping'
     ? '正在停止当前任务，已生成的内容会保留。'
     : feedback.phase === 'preparing'
@@ -148,9 +154,9 @@ export function SessionTurnFeedback({ controller, announce, openActivity, onVisi
       <span className="work-turn-feedback__indicator" aria-hidden="true">
         {feedback.waiting ? <Icon name="chat" size={16} /> : <Spinner size={16} />}
       </span>
-      <div className="work-turn-feedback__body">
+      <div className="work-turn-feedback__body" data-feedback-sweep={feedback.sweep}>
         <div ref={headingRef} className="work-turn-feedback__heading">
-          <strong title={agentName}>{agentName}</strong>
+          {feedback.namePrefix && <strong title={feedback.namePrefix}>{feedback.namePrefix}</strong>}
           <span role="status" aria-live={announce ? 'polite' : 'off'} aria-atomic="true" aria-label={feedback.dependency?.accessibleLabel ?? '任务运行状态'}>{feedback.label}</span>
           <div className="work-turn-feedback__controls">
             <SessionRootStop controller={controller} compact />
@@ -206,7 +212,7 @@ export function SessionRunStatus({ controller }: { controller: SessionController
         title={feedback.dependency?.detail}
       >
         {waiting ? <Icon name="chat" size={14} /> : <Spinner size={13} />}
-        <span>{feedback.dependency ? feedback.dependency.accessibleLabel : feedback.label}</span>
+        <span data-feedback-sweep={feedback.sweep}>{feedback.dependency ? feedback.dependency.accessibleLabel : feedback.label}</span>
       </div>
       <SessionRootStop controller={controller} compact />
       <span className="work-run-status__elapsed" title="本轮累计用时（含等待）">

@@ -44,13 +44,14 @@
 .work-session-artifacts__navigation { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--border); background: var(--bg-sidebar); }
 .work-session-artifacts__navigation-head { flex: 0 0 auto; display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-2) var(--space-1); }
 .work-session-artifacts__tree { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 0 var(--space-1) var(--space-2); }
-.work-session-artifacts__tree .tree-row { gap: var(--space-1); padding-right: var(--space-2); border-radius: var(--radius); }
+/* 改动清单按 macOS 源列表规格排版：6px 选中圆角、左右等距内缩、图文 6px 间距。 */
+.work-session-artifacts__tree .tree-row { gap: 6px; margin: 0 6px; padding-right: 6px; border-radius: 6px; }
 .work-session-artifacts__tree .tree-row.is-selected { background: var(--bg-selected-inactive); color: var(--fg-strong); }
 .work-session-artifacts__tree:focus-within .tree-row.is-selected { background: var(--accent-soft); color: var(--fg-strong); }
 .work-session-artifacts__tree .tree-row:focus-visible { outline: 1px solid var(--list-focus-outline); outline-offset: -1px; box-shadow: none; }
-.work-session-artifacts__tree .tree-row__labels { min-width: 0; }
-.work-session-artifacts__tree .tree-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.work-session-artifacts__count { display: inline-flex; align-items: center; gap: var(--space-1); margin-left: auto; flex: 0 0 auto; font: 11px/1.5 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.work-session-artifacts__tree .tree-row__labels { min-width: 0; gap: 6px; }
+.work-session-artifacts__tree .tree-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; letter-spacing: -0.01em; }
+.work-session-artifacts__count { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; flex: 0 0 auto; font: 500 11px/1.5 var(--font-ui); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; white-space: nowrap; }
 .work-session-artifacts__count b { color: var(--git-added); font-weight: 500; }
 .work-session-artifacts__count i { color: var(--git-deleted); font-style: normal; }
 .work-session-artifacts__file-status { margin-left: auto; flex: 0 0 auto; min-width: 12px; text-align: center; color: var(--git-modified); font: 500 11px/1.5 var(--font-mono); }
@@ -87,6 +88,7 @@
 .work-session-artifacts__scope .work-change-review__icon--revert > svg { color: var(--danger-fg); }
 .work-session-artifacts__open-in-info { margin-top: var(--space-3); }
 .work-session-artifacts__notice { flex: 0 0 auto; color: var(--fg-muted); font-size: 11px; line-height: 1.5; margin: 0; padding: 0 var(--space-3) var(--space-2); overflow-wrap: anywhere; }
+.work-session-artifacts__history-preview { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .work-session-artifacts__diff { flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; border-top: 1px solid var(--border); }
 .work-session-artifacts__diff .diff-card { margin: 0; border: 0; border-radius: 0; background: transparent; }
 .work-session-artifacts__diff .diff-card__body { border: 0; }

@@ -53,6 +53,7 @@
 <li>除 <code>context()</code> 外，能力必须在 <code>manifest.permissions.requested</code> 中声明，并获得用户对当前插件版本的授权。声明不等于授权。</li>
 <li>业务参数和返回值通过 JSON 传递；<code>Args</code> 表示 <code>Record&lt;string, unknown&gt;</code>，实际值应可序列化为 JSON。流式调用的第二参数 <code>onEvent</code> 和 <code>signal</code> 由 SDK 在本地处理。按签名传参，不添加未声明字段。</li>
 <li>会话、工作区与用户身份由宿主绑定，不能通过参数切换。版本变化、停用或撤销权限后，后续调用可能失败，需要刷新或重新授权。</li>
+<li>在子账号的会话中，插件使用该子账号获准的工作区和文件范围。即使主账号在同一设备上用过插件，调用 <code>$AE.context()</code> 也只返回当前操作的上下文；插件不能创建子账号、切换到主账号或接管主账号会话。</li>
 <li>插件不额外设置调用时长、结果大小或并发配额。执行沿用平台、所选模型及系统资源策略；请求传输遵循平台通用配置。使用 AbortSignal 主动取消不再需要的任务。</li>
 <li>长输出使用 stream 接口；SDK 等待消费者处理后再接收后续事件，避免在页面排积大量待处理回调。</li>
 <li>权限开关控制 <code>$AE</code> 宿主能力。Node 工具是本机代码，这些开关不是操作系统沙箱。</li>
@@ -278,6 +279,7 @@ type AgentPending = {
 <h3 id="agents-configuration">身份、提示词与挂载</h3>
 <p><code>identity.name</code> 与 <code>identity.description</code> 设置身份；<code>systemPrompt</code> 设置专用指令；<code>task</code> 是本轮需求。提示词不授予权限。没有插件专属提示词长度限制。</p>
 <p><code>skillIds</code> 使用 <code>skills.list()</code> 返回的 ID，需要 <code>skills.read</code>；技能全文加载进系统上下文。<code>mcpServerIds</code> 使用 <code>mcp.list()</code> 返回的 ID，需要 <code>mcp.read</code>、<code>mcp.invoke</code>；使用服务器真实工具定义。不另限挂载数量或技能总字节数。脚本执行还需平台工具及对应安全策略。</p>
+<p>在 Windows x64 完整安装版的本地引擎中，已获准的技能可以直接运行 <code>python "$SKILLS_ROOT/my-skill/scripts/report.py"</code> 或 <code>node "$SKILLS_ROOT/my-skill/scripts/report.mjs"</code>。这两种调用不需要 Bash；绑定技能里的脚本仍必须位于该技能目录内。本地 stdio MCP 也可以使用安装包附带的 <code>npx</code>，离线运行需要先备好目标包。本机工作区工具需要 <code>git</code> 时，优先使用已选的 Git，没有时使用安装包自带的版本。远端引擎使用服务端提供的工具。</p>
 <p>显式数组选择挂载范围，<code>[]</code> 清空该类挂载。首次运行省略数组时不自动挂载外部 Skill 或 MCP；插件代码可先调用 <code>$AE.skills.list()</code>、<code>$AE.mcp.list()</code> 选择资源。续跑省略配置继承原任务；显式传入新配置会更新，不需要新建会话。撤权、停用和用户禁用始终优先。</p>
 <pre><code class="language-js">const run = await $AE.agents.run({
   modelId,
@@ -430,7 +432,7 @@ run = await $AE.agents.run({
 <pre><code class="language-js">const stopped = await $AE.agents.cancel({ runId: run.runId });
 </code></pre>
 <h2 id="workspace">工作区</h2>
-<p>必须绑定会话。路径相对当前绑定工作区；SDK 拒绝越界路径，以及经符号链接或联接点访问文件。绝对路径也必须位于同一工作区。切换工作区后旧绑定不能继续使用。未选择项目的新会话使用自己的独立目录；重新打开的会话继续使用原先绑定的目录。插件应从当前会话的工作区读写文件。</p>
+<p>必须绑定会话。路径相对当前绑定工作区；SDK 拒绝越界路径，以及经符号链接或联接点访问文件。绝对路径也必须位于同一工作区。切换工作区后旧绑定不能继续使用。未选择项目的新会话使用自己的独立目录；重新打开的会话继续使用原先绑定的目录。插件应从当前会话的工作区读写文件。账号会话只能访问当前账号获准的工作区；桌面自管模式下，主账号可以使用用户通过目录选择器选定的本地项目，托管子账号仍只能访问自己的独立工作区。</p>
 <h3 id="workspace-list"><code>$AE.workspace.list(args?)</code></h3>
 <p>读取工作区内一个目录的直接子项。</p>
 <pre><code class="language-ts">$AE.workspace.list(args?: { path?: string }): Promise&lt;{

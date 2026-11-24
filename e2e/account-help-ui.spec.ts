@@ -92,7 +92,7 @@ test.describe.serial('个人账号登录说明', () => {
     await trigger().hover()
     await expect(tooltip()).toBeVisible()
     await expect(tooltip()).toContainText('账号属于当前服务')
-    for (const name of ['登录已有账号', '创建新账号', '恢复文件只保存登录凭证']) await expect(tooltip()).toContainText(name)
+    for (const name of ['登录已有账号', '创建主账号', '恢复文件只保存登录凭证']) await expect(tooltip()).toContainText(name)
     await expect(trigger()).toHaveAttribute('aria-describedby', await tooltip().getAttribute('id') ?? '')
     await tooltip().hover()
     await expect.poll(() => tooltip().evaluate(element => element.matches(':hover'))).toBe(true)

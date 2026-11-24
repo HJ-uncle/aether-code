@@ -13,7 +13,7 @@ type AccountIssue = 'authentication-required' | 'http-trust-required'
 export class ConnectionProbeError extends Error {
   constructor(readonly issue: AccountIssue | 'instance-token' | null, message: string, readonly retryable = false) { super(message) }
 }
-const accountRequired = '此引擎需要个人账号。请先前往「个人账号」登录，再继续使用。'
+const accountRequired = '请前往「个人账号」登录，或更新此服务的高级认证。'
 const instanceRequired = '引擎拒绝了实例令牌。请在高级设置中填写与服务端匹配的令牌，再试一次。'
 interface DraftCredentials { instanceToken?: string; userCredential?: RemoteAuthCredential | null }
 /** Main-process only. The negotiation token must never enter a renderer snapshot. */
@@ -100,7 +100,7 @@ export async function probeRemoteConnection(value: string, draft: DraftCredentia
       assertTrustedCredentialTransport(url, !!(token || account.credential || advanced))
       const credential = account.credential
       const headers = { ...engineHeaders(token), ...(credential ? { Authorization: `Bearer ${credential.accessToken}` } : remoteAuthHeaders(advanced)) }
-      await probeEngineTools(url, requestSignal, headers, !!advanced)
+      await probeEngineTools(url, requestSignal, headers, !!draft.userCredential)
     }
     try {
       try { await tools() }

@@ -1,5 +1,5 @@
 /** Actual Work feedback components in isolated headless Chromium, including
- * long-running elapsed clocks at hour boundaries; no Electron, model or engine. */
+ * synchronized status text, accessible static states and long-running elapsed clocks. */
 import { chromium, expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { build } from 'esbuild'
 import { existsSync, readFileSync } from 'node:fs'
@@ -8,6 +8,7 @@ import { normalizeRootRunActivity, type RootRun, type RootRunActivity } from '..
 import { normalizeRootRun, mergeRootRun, applyRootRun } from '../src/renderer/src/core/engine/root-run-state'
 import { sessionTaskActivityFromRun, sessionTaskRunPatch, normalizeSessionTaskActivity } from '../src/renderer/src/features/sessions/status-poller'
 import { sessionDependencyProgress } from '../src/renderer/src/features/sessions/dependency-progress'
+import type { ToolActivity } from '../src/renderer/src/core/engine/useChat'
 import { sessionSidebarStatus } from '../src/renderer/src/features/sessions/sidebar-task'
 import type { SessionTask } from '../src/renderer/src/features/sessions/state'
 
@@ -87,10 +88,11 @@ test.describe('Work dependency feedback DOM', () => {
       const view = createRoot(document.getElementById('fixture'))
       const context = { engine:{snapshot:{mode:'local'}},settings:DEFAULT_SETTINGS,userSettings:DEFAULT_SETTINGS,ready:true,settingsLoaded:true,updateSettings:async()=>{} }
       window.stopCount = 0
+      window.openedActivities = []
       window.renderDependency = ({ run, footer = false, ...overrides }) => {
         const controller = { ready:true, pending:[], streaming:true, launching:false, stopping:false, messages:[{id:'assistant',role:'assistant',status:'streaming',createdAt:Date.now(),tools:[],content:'之前的进展',thinking:'之前的分析',run}],
-          activeTask:{status:'running'}, agentIdentity:{name:'Agent'}, stop:async()=>{window.stopCount++}, ...overrides }
-        view.render(<AppContext.Provider value={context}>{footer ? <SessionRunStatus controller={controller}/> : <SessionTurnFeedback controller={controller} announce openActivity={()=>{throw Error('No synthetic activity')}}/>}</AppContext.Provider>)
+          activeTask:{status:'running'}, agentId:'', agentIdentity:{name:'默认助手',model:'',loading:false,error:null}, stop:async()=>{window.stopCount++}, ...overrides }
+        view.render(<AppContext.Provider value={context}>{footer ? <SessionRunStatus controller={controller}/> : <SessionTurnFeedback controller={controller} announce openActivity={id=>window.openedActivities.push(id)}/>}</AppContext.Provider>)
       }
     ` }, bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
       tsconfig: resolve(project, 'tsconfig.web.json'), loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"test"' },
@@ -118,7 +120,7 @@ test.describe('Work dependency feedback DOM', () => {
   async function render(overrides: Record<string, unknown> = {}) {
     await page.evaluate(value => (window as unknown as { renderDependency: (value: unknown) => void }).renderDependency(value), { run: root(), ...overrides })
   }
-  test('renders compact, named progress with stop control and no tool cards in both themes', async () => {
+  test('renders compact, named progress with stop control and no tool cards in both themes', async ({}, info) => {
     for (const theme of ['light', 'dark']) {
       await page.locator('html').evaluate((element, value) => element.setAttribute('data-appearance', value), theme)
       await render()
@@ -128,19 +130,122 @@ test.describe('Work dependency feedback DOM', () => {
       await expect(page.locator('.work-turn-feedback__body > p')).toContainText('集成模块：已收取 1/2 项依赖')
       await expect(page.locator('.work-tool-activity, .compact-tool-row, .work-turn-feedback__activity')).toHaveCount(0)
       expect(await page.locator('#fixture').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
-      await page.screenshot({ path: resolve(project, `.e2e-tmp/root-dependency-${theme}.png`) })
+      await page.screenshot({ path: info.outputPath(`root-dependency-${theme}.png`) })
     }
     await page.getByRole('button', { name: '停止任务', exact: true }).click()
     expect(await page.evaluate(() => (window as unknown as { stopCount: number }).stopCount)).toBe(1)
     await render({ footer: true })
     await expect(page.getByRole('status')).toContainText('集成模块，等待依赖 · 1/2')
   })
+  test('default feedback aligns without a name; assigned assistants and a running child remain identifiable', async () => {
+    const heading = page.locator('.work-turn-feedback__heading')
+    const status = heading.getByRole('status')
+    await render()
+    await expect(status).toHaveText('等待依赖 · 1/2')
+    await expect(heading).not.toContainText('默认助手')
+    const left = () => status.evaluate(el => el.getBoundingClientRect().left)
+    const detailLeft = await page.locator('.work-turn-feedback__body > p').evaluate(el => el.getBoundingClientRect().left)
+    expect(Math.abs(await left() - detailLeft), 'no empty name or leading gap').toBeLessThanOrEqual(1)
+
+    // A custom assistant may deliberately use the same display name as the default.
+    for (const name of ['界面审阅员', '默认助手']) {
+      await render({ agentId: 'custom-reviewer', agentIdentity: { name, model: 'fixture', loading: false, error: null } })
+      await expect(heading.getByText(name, { exact: true })).toBeVisible()
+      await expect(status).toHaveText('等待依赖 · 1/2')
+    }
+    const now = Date.now(), childName = '交互测试员'
+    const tool: ToolActivity = { id: 'delegate', name: 'subagent', args: '{}', result: '', state: 'running', subagent: {
+      schemaVersion: 1, runId: 'child-run', tenantId: 'tenant', rootSessionId: 'session', parentSessionId: 'session',
+      parentConversationId: 'turn', parentMessageId: 'assistant', parentToolCallId: 'delegate', childSessionId: 'child',
+      agentId: 'custom-child', agentName: childName, task: '检查键盘导航', description: '检查导航', modelId: 'fixture',
+      status: 'running', lastSeq: 1, createdAt: now, updatedAt: now, usage: {}, toolCalls: []
+    } }
+    await render({ messages: [{ id: 'assistant', role: 'assistant', status: 'streaming', createdAt: now, tools: [tool], content: '', thinking: '' }] })
+    await expect(status).toHaveText(`${childName}…`)
+    expect((await heading.innerText()).split(childName)).toHaveLength(2)
+    await page.getByRole('button', { name: '查看正在执行的活动' }).click()
+    expect(await page.evaluate(() => (window as unknown as { openedActivities: string[] }).openedActivities)).toEqual([tool.id])
+  })
+  test('one sweep crosses the status and detail together while controls remain still', async ({}, info) => {
+    const now = Date.now()
+    await page.clock.setFixedTime(now)
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const body = page.locator('.work-turn-feedback__body')
+    const assistant = { id: 'assistant', role: 'assistant', status: 'streaming', createdAt: now, content: '', thinking: '分析任务', tools: [] }
+    const command = { id: 'cmd', name: 'execute_cmd', state: 'running', args: JSON.stringify({ command: 'rg', args: ['--files', 'conversation/feedback'] }) }
+    for (const [theme, width, tool] of [['dark', 375, false], ['light', 740, true]] as const) {
+      await page.setViewportSize({ width, height: 320 })
+      await page.locator('html').evaluate((element, value) => element.setAttribute('data-appearance', value), theme)
+      await render({ messages: [{ ...assistant, tools: tool ? [command] : [] }] })
+      const label = body.getByRole('status'), detail = body.locator(tool ? '.work-turn-feedback__activity > span' : 'p')
+      await expect(label).toContainText(tool ? '执行命令' : '正在思考')
+      await expect(detail).toContainText(tool ? 'rg --files' : '分析任务')
+      await expect(body.getByRole('button', { name: '停止任务' })).toBeEnabled()
+      // Switching themes transitions the stop button's color. Start comparisons at
+      // the settled palette so theme changes cannot be mistaken for the moving light.
+      await body.evaluate(el => Promise.all(el.getAnimations({ subtree: true })
+        .filter(animation => animation instanceof CSSTransition).map(transition => transition.finished)).then(() => undefined))
+      const [titleBox, detailBox, controlsBox] = await Promise.all([label, detail, body.locator('.work-turn-feedback__controls')].map(async item => {
+        const box = await item.boundingBox(); if (!box) throw Error('Missing feedback text or controls'); return box
+      }))
+      // Once the light moves past the short status, only the longer description can light up.
+      // Compare the same columns of both lines, and sample densely enough to see the short status crossed.
+      const left = Math.max(titleBox.x, detailBox.x), right = Math.min(titleBox.x + titleBox.width, detailBox.x + detailBox.width)
+      const sharedWidth = right - left
+      expect(sharedWidth).toBeGreaterThan(24)
+      const regions = [titleBox, detailBox].map(box => ({ ...box, x: left, width: sharedWidth })).concat(controlsBox)
+      const sampleCount = 40, frames: string[] = []
+      for (let i = 0; i < sampleCount; i++) {
+        const clocks = await body.evaluate((el, progress) => {
+          const animations = el.getAnimations({ subtree: true }).filter(a => a.effect?.getTiming().iterations === Infinity)
+          for (const a of animations) { a.pause(); a.currentTime = Number(a.effect!.getComputedTiming().duration) * progress }
+          return animations.length
+        }, i / sampleCount)
+        expect(clocks).toBe(1)
+        frames.push((await page.screenshot({ scale: 'css', ...(i === 5 || i === 7 ? { path: info.outputPath(`${theme}-sweep-${i}.png`) } : {}) })).toString('base64'))
+      }
+      // Glyphs differ between lines. Measure the center of the pixels that actually
+      // change on each line in the same screen coordinates, relative to the resting frame.
+      const moments = await page.evaluate(async ({ frames, regions }) => {
+        const pixels = await Promise.all(frames.map(async png => {
+          const image = new Image(); image.src = 'data:image/png;base64,' + png; await image.decode()
+          const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height
+          const ctx = canvas.getContext('2d')!; ctx.drawImage(image, 0, 0); return ctx.getImageData(0, 0, image.width, image.height)
+        }))
+        return pixels.slice(1).map(frame => regions.map(rect => {
+          let weight = 0, moment = 0
+          for (let y = Math.ceil(rect.y); y < Math.floor(rect.y + rect.height); y++) for (let x = Math.ceil(rect.x); x < Math.floor(rect.x + rect.width); x++) {
+            const offset = (y * frame.width + x) * 4, diff = Math.abs(frame.data[offset] - pixels[0].data[offset])
+            if (diff > 10) { weight += diff; moment += x * diff }
+          }
+          return { weight, x: weight ? moment / weight : 0 }
+        }))
+      }, { frames, regions })
+      const together = moments.filter(([status, detail]) => status.weight > 220 && detail.weight > 220 && Math.abs(status.x - detail.x) < sharedWidth / 3)
+      expect(together.length, 'both lines illuminate in the same horizontal band').toBeGreaterThanOrEqual(2)
+      for (const line of [0, 1]) {
+        expect(together.at(-1)![line].x - together[0][line].x, 'the band moves right across each line').toBeGreaterThan(sharedWidth / 8)
+      }
+      expect(moments.every(([, , controls]) => controls.weight === 0), 'stop and elapsed time are outside the light').toBe(true)
+    }
+    for (const media of [{ reducedMotion: 'reduce', forcedColors: 'none' }, { reducedMotion: 'no-preference', forcedColors: 'active' }] as const) {
+      await page.emulateMedia(media)
+      expect(await body.evaluate(el => el.getAnimations({ subtree: true }).filter(a => a.effect?.getTiming().iterations === Infinity).length)).toBe(0)
+      for (const text of [body.getByRole('status'), body.locator('.work-turn-feedback__activity > span')]) {
+        expect(await text.evaluate(el => getComputedStyle(el).webkitTextFillColor)).not.toMatch(/transparent|rgba\([^)]*, 0\)$/)
+      }
+    }
+  })
   test('clears waiting on phase change, terminal, ask, stop and disconnection', async () => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const feedbackText = page.locator('.work-turn-feedback__body')
     await render(); await expect(page.locator('[data-phase="waiting_children"]')).toHaveCount(1)
     await render({ run: root({ version: 3, activity: { phase: 'executing', groups: [] } }) })
     await expect(page.locator('[data-phase="waiting_children"]')).toHaveCount(0)
     await render({ pending: [{ kind: 'ask' }] }); await expect(page.getByRole('status')).toHaveText('等你补充')
+    await expect(feedbackText).toHaveCSS('animation-name', 'none')
     await render({ stopping: true }); await expect(page.getByRole('status')).toHaveText('正在停止任务…')
+    await expect(feedbackText).toHaveCSS('animation-name', 'none')
     await render({ ready: false }); await expect(page.locator('.work-turn-feedback')).toHaveCount(0)
     await render({ run: root({ status: 'succeeded' }) }); await expect(page.locator('.work-turn-feedback')).toHaveCount(0)
     await render({ run: root({ status: 'succeeded' }), launching: true })

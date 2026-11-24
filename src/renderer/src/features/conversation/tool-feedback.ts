@@ -4,6 +4,9 @@ export interface SessionToolFeedback {
   label: string
   detail: string
   kind: 'check' | 'command' | 'operation'
+  /** 命令已跑完、仅退出码非零：属于正常迭代，过程行不必另外提示。
+   * 未启动/超时/被终止等真实异常不带这个标记，仍要显示。 */
+  routine?: boolean
 }
 
 const COMMAND_TOOLS = new Set(['execute_cmd', 'exec_command', 'run_command', 'run_skill_script'])
@@ -87,7 +90,7 @@ export function sessionToolFeedback(tool: ToolActivity, state = tool.state): Ses
     if (EXIT_CODES.has(code ?? '') || exitCode !== undefined && exitCode !== 0) {
       const input = inputOf(tool.args)
       const check = testInvocation(job?.command ?? input?.command, job?.args ?? input?.args)
-      return { label: check ? '测试未通过' : '命令未通过', kind: check ? 'check' : 'command',
+      return { label: check ? '测试未通过' : '命令未通过', kind: check ? 'check' : 'command', routine: true,
         detail: `${check ? '测试' : '命令'}已结束，${exitCode === undefined ? '返回非零退出码' : `退出码 ${exitCode}`}` }
     }
   }

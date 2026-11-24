@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { leaseAdminWindow } from './admin-lease'
 import { parseSseBlock } from './sse'
 import type { EngineSnapshot, StreamEvent } from '../../shared/ipc'
 import { isExplicitRequestRejection } from '../../shared/stream-event'
@@ -135,13 +136,15 @@ export class EngineHost extends EventEmitter {
   get baseUrl(): string {
     return this.snapshot.phase === 'ready' ? this.snapshot.baseUrl : ''
   }
-  /** Narrow, main-only capability. It expires with the owned child and grants no administrator role. */
-  ownedAdminGate(): (() => string | undefined) | undefined {
+  /** Bound to this child and epoch; account-based sessions must never acquire the local owner role. */
+  ownedAdminAccess() {
     const state = this.snapshot, handle = this.handle, epoch = this.transportController
     if (!handle?.pid || !this.instanceToken || state.phase !== 'ready' || state.mode !== 'embedded' || state.adopted) return undefined
-    return () => this.handle === handle && this.transportController === epoch && !epoch.signal.aborted &&
+    const token = () => this.handle === handle && this.transportController === epoch && !epoch.signal.aborted &&
       this.snapshot.phase === 'ready' && this.snapshot.instanceId === state.instanceId && !handle.lifecycle.observation().exitObserved && !handle.lifecycle.observation().closeObserved
       ? this.instanceToken : undefined
+    return { token, grant: () => token() && !readAccountCredential('embedded').managed
+      ? leaseAdminWindow(handle.process, epoch.signal) : Promise.resolve(undefined) }
   }
   /** Saved connection preferences apply only when a new connection is started. */
   get remoteWorkspaceRoot(): string {
@@ -407,12 +410,12 @@ export class EngineHost extends EventEmitter {
       const handle = startProcess({
         binPath: runtime.entryPath,
         nodePath: runtime.nodePath,
+        adminWindowIpc: true,
         cwd: runtimeConfig.cwd,
         port,
         dataDir,
         env: {
           ...runtimeConfig.env,
-          ELECTRON_RUN_AS_NODE: '1',
           AETHER_ENGINE_HOST: '127.0.0.1',
           // Only a process started here receives the desktop-owner capability;
           // adopted and remote transports keep their existing account boundary.

@@ -142,7 +142,9 @@ export const CompactToolRow = memo(function CompactToolRow({
             >{summary}</span>
           ) : <span className="logline__summary" title={quiet ? undefined : summary}>{summary}</span>
         ) : null}
-        {quiet && state !== 'done' ? <span className="logline__status">{statusLabel}</span> : null}
+        {/* Work 把“命令跑完但退出码非零”当正常迭代：行内不再重复失败文案，
+            退出码与诊断仍保留在展开后的处理结果里。未启动/超时/被终止仍要提示。 */}
+        {quiet && state !== 'done' && !feedback?.routine ? <span className="logline__status">{statusLabel}</span> : null}
         {visibleReadRange ? <span className="logline__read-range">{visibleReadRange.label}</span> : null}
         {hasDetail ? <Icon name={quiet ? 'chevron-right' : 'chevron'} size={quiet ? 12 : 16} className="logline__chevron" /> : null}
       </button>

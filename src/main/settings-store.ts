@@ -79,6 +79,9 @@ export function getSettings(): AppSettings {
     cache.visualEffects = isVisualEffects(raw.visualEffects)
       ? raw.visualEffects
       : DEFAULT_SETTINGS.visualEffects
+    cache.showConversationUsage = typeof raw.showConversationUsage === 'boolean'
+      ? raw.showConversationUsage
+      : DEFAULT_SETTINGS.showConversationUsage
   } catch (err) {
     console.warn('[settings] 解析失败，回退默认设置:', err)
     cache = { ...defaults }

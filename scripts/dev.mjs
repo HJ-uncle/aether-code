@@ -64,7 +64,7 @@ export async function prepareDevEngine({ root = appRoot, env = process.env, run 
   // A copied package boundary keeps NodeNext output ESM; dependency lookup ascends to engineRoot/node_modules.
   copyFileSync(join(engineRoot, 'package.json'), join(output, 'package.json'))
   await run(process.execPath, [join(engineRoot, 'node_modules/typescript/bin/tsc'), '--project', join(engineRoot, 'tsconfig.json'), '--noEmitOnError', '--outDir', dist], { cwd: engineRoot, env })
-  for (const name of ['terminal/workspace-shell.mjs', 'workspace/assets/repository-supervisor.exe', 'workspace/assets/repository-supervisor.sha256', 'workspace/assets/repository-supervisor.cs']) {
+  for (const name of ['terminal/workspace-shell.mjs', 'api/http/admin/icon.png', 'workspace/assets/repository-supervisor.exe', 'workspace/assets/repository-supervisor.sha256', 'workspace/assets/repository-supervisor.cs']) {
     const source = join(engineRoot, 'src', name), destination = join(dist, name)
     ordinary(source); mkdirSync(dirname(destination), { recursive: true }); copyFileSync(source, destination)
   }

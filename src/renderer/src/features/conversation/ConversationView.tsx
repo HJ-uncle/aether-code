@@ -47,6 +47,7 @@ import { sessionTaskRestart, continuationTarget, type SessionTaskRestartPresenta
 import { SessionRegenerateReplyButton, UserMessageActions } from '../sessions/UserMessageActions'
 import { getSessionState } from '../sessions/state'
 import { findSessionArtifact } from '../artifacts/artifact-utils'
+import { sessionFilePrefersPreview } from '../artifacts/file-change-presentation'
 import { type SessionController, type ActivitySelection, type ArtifactNavigation, EmptyState } from '../sessions/session-presentation'
 import { SessionTurnFeedback, SessionRunStatus } from './SessionFeedback'
 import { RootFollowupReceipt, useRootFollowupReceipts } from './RootFollowupReceipts'
@@ -668,7 +669,8 @@ export function Conversation({
                   scopedToTurn={sessionProgressTurnScope(task.id, group).kind === 'turn'} onOpenFile={openActivityFile}
                   onOpenChange={change => {
                     const turnScope = sessionProgressTurnScope(task.id, group)
-                    if (turnScope.kind === 'turn') onOpenArtifacts({ sessionId: task.id, path: change.path, view: 'turn', turnScope })
+                    if (sessionFilePrefersPreview(change.path)) onOpenArtifacts({ sessionId: task.id, path: change.path, view: 'current', turnScope })
+                    else if (turnScope.kind === 'turn') onOpenArtifacts({ sessionId: task.id, path: change.path, view: 'turn', turnScope })
                     else openChange(change)
                   }}
                   onShowChanges={() => onOpenArtifacts({ sessionId: task.id, turnScope: sessionProgressTurnScope(task.id, group) })} /> : null}

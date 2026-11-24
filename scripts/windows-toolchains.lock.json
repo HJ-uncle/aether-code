@@ -1,0 +1,23 @@
+{
+  "node": {
+    "version": "24.22.3",
+    "npm": "11.19.1",
+    "url": "https://nodejs.org/dist/v24.22.3/node-v24.22.3-win-x64.zip",
+    "sha256": "e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f",
+    "bytes": 37762649
+  },
+  "python": {
+    "version": "3.13.18",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-x86_64-pc-windows-msvc-pgo-full.tar.zst",
+    "sha256": "1ec789d7dd44b9551673b6abea4194ae0b0a77a66a18a96faf2aca3f0ce61757",
+    "bytes": 46135406
+  },
+  "git": {
+    "version": "2.56.1.windows.1",
+    "url": "https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/MinGit-2.56.1-64-bit.zip",
+    "sha256": "4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd",
+    "bytes": 39849768,
+    "sourceUrl": "https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/mingw-w64-git-2.56.1.1-1.src.tar.gz",
+    "sourceSha256": "2a0769d21e3e3cec9216ddca920fe7d7efe274e7d1c14882003a2ce7d674c7b4"
+  }
+}

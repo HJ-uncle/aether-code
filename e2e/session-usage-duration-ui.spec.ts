@@ -14,8 +14,8 @@ import { engineStorageKey } from '../src/renderer/src/core/engine/source'
 
 const root = resolve(__dirname, '..'), fixtureRoot = join(root, '.e2e-tmp')
 const token = 'usage-duration-token', model = 'usage-duration-model', now = Date.now()
-const settled = 'work-usage-three-turns', live = 'work-usage-live-turn', unknown = 'work-usage-unknown', partial = 'work-usage-partial'
-const titles = new Map([[settled, '三个简短回合'], [live, '继续执行的会话'], [unknown, '缺少计时的历史'], [partial, '部分计时的历史']])
+const settled = 'work-usage-three-turns', live = 'work-usage-live-turn', long = 'work-usage-long-turn', unknown = 'work-usage-unknown', partial = 'work-usage-partial'
+const titles = new Map([[settled, '三个简短回合'], [live, '继续执行的会话'], [long, '超过三十分钟的会话'], [unknown, '缺少计时的历史'], [partial, '部分计时的历史']])
 const prompts = ['你是谁', '项目需要生成 Excel 和文档、PPT', '你好']
 const histories = new Map<string, EngineHistoryRow[]>(), roots = new Map<string, RootRun[]>()
 const errors: string[] = [], requests: string[] = []
@@ -58,6 +58,7 @@ function resetHistory(): void {
       appendRun(id, index + 1, now + offset, now + offset + 10_000, 'succeeded')
   }
   appendRun(live, 4, now - 5000, undefined, 'running')
+  appendRun(long, 1, now - (31 * 60_000), now, 'succeeded')
   appendRun(unknown, 1, undefined, undefined, 'succeeded')
   appendRun(partial, 4, undefined, undefined, 'succeeded')
 }
@@ -197,6 +198,17 @@ async function setAppearance(appearance: 'light' | 'dark'): Promise<void> {
   await expect(page.getByRole('dialog', { name: '设置', exact: true, includeHidden: true })).toHaveCount(0)
 }
 
+async function setUsageVisibility(visible: boolean): Promise<void> {
+  await page.getByRole('complementary', { name: '应用导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  await expect(settings.getByRole('region', { name: '会话显示', exact: true })).toBeVisible()
+  const toggle = settings.getByRole('switch', { name: '显示会话用量', exact: true })
+  if ((await toggle.getAttribute('aria-checked')) !== String(visible)) await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', String(visible))
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '设置', exact: true, includeHidden: true })).toHaveCount(0)
+}
+
 async function expectPercentages(): Promise<void> {
   await expect(popover().locator('.usage-popover__total-value')).toHaveText('22k')
   await expect(popover().locator('.usage-popover__total-value')).toHaveAttribute('title', '22,000 tokens')
@@ -284,37 +296,62 @@ test.describe.serial('会话累计执行用时', () => {
     }
   })
 
-  test('跨近七小时的三轮短对话仅累计三十秒，重载保持计时和 Token 总量', async ({}, info) => {
-    await expect(time()).toHaveText('30s')
-    await expect(time()).toHaveAttribute('title', /含轮内等待，不含轮间空闲/)
+  test('显示用量时保留运行时间，重载保持 Token 总量', async ({}, info) => {
+    await expect(time()).toHaveText('30秒')
     await meter().locator('button').click()
-    await expect(popover()).toContainText('已加载 3 轮 · 累计 30s')
+    await expect(popover()).toContainText('已加载 3 轮')
+    await expect(popover().locator('.usage-popover__head .usage-popover__meta')).toHaveText('已加载 3 轮 · 累计 30秒')
     await expect(popover().locator('.usage-popover__total-value')).toHaveAttribute('title', '22,000 tokens')
     await popover().screenshot({ path: info.outputPath('session-usage-duration-corrected.png'), animations: 'disabled' })
     await page.keyboard.press('Escape')
     await page.reload()
-    await expect(time()).toHaveText('30s')
+    await expect(time()).toHaveText('30秒')
     await expect(meter().locator('.usage-meter__tokens')).toHaveText('22k')
+  })
+
+  test('设置隐藏用量明细后短会话不显示运行时间，并在重新加载后保持', async () => {
+    await setUsageVisibility(false)
+    await expect(meter()).toHaveCount(0)
+    await expect(work().locator('.turn-usage--duration-only')).toHaveCount(0)
+    await page.reload()
+    await expect(work().getByRole('heading', { name: titles.get(settled)!, exact: true })).toBeVisible()
+    await expect(meter()).toHaveCount(0)
+    await expect(work().locator('.turn-usage--duration-only')).toHaveCount(0)
+    await setUsageVisibility(true)
+    await expect(meter()).toBeVisible()
+  })
+
+  test('隐藏用量时仅保留超过三十分钟的中文运行时间', async () => {
+    await setUsageVisibility(false)
+    await selectTask(long)
+    await expect(meter()).toHaveCount(0)
+    const durationOnly = work().locator('.turn-usage--duration-only')
+    await expect(durationOnly).toHaveText('31分00秒')
+    await expect(durationOnly).toHaveAttribute('aria-label', '本轮使用时间 31分00秒')
+    await setUsageVisibility(true)
+    await expect(meter()).toBeVisible()
+    await expect(work().locator('.turn-usage__time')).toHaveText('31分00秒')
   })
 
   test('新一轮仅增加本轮执行时间，终态后时钟前进不再增加', async () => {
     await selectTask(live)
     await expect.poll(() => Boolean(activeStream)).toBe(true)
-    await expect(time()).toHaveText('35s')
+    await expect(time()).toHaveText('35秒')
     await page.clock.setFixedTime(now + 10_000)
-    await expect(time()).toHaveText('45s')
+    await expect(time()).toHaveText('45秒')
     finishLive()
     await expect(work().locator('.work-task-heading__actions')).toContainText('已完成')
-    await expect(time()).toHaveText('45s')
+    await expect(time()).toHaveText('45秒')
     await page.clock.setFixedTime(now + 4 * 3600_000)
     await meter().locator('button').click()
-    await expect(popover()).toContainText('已加载 4 轮 · 累计 45s')
-    await expect(time()).toHaveText('45s')
+    await expect(popover()).toContainText('已加载 4 轮')
+    await expect(popover().locator('.usage-popover__head .usage-popover__meta')).toHaveText('已加载 4 轮 · 累计 45秒')
+    await expect(time()).toHaveText('45秒')
     await page.keyboard.press('Escape')
     await selectTask(settled)
-    await expect(time()).toHaveText('30s')
+    await expect(time()).toHaveText('30秒')
     await selectTask(live)
-    await expect(time()).toHaveText('45s')
+    await expect(time()).toHaveText('45秒')
   })
 
   test('缺少可靠起止时间不沿用另一会话用时，部分计时明确为已知部分', async () => {
@@ -326,12 +363,13 @@ test.describe.serial('会话累计执行用时', () => {
     await expect(popover().locator('.usage-popover__head .usage-popover__meta')).toHaveAttribute('title', /部分历史记录缺少起止时间/)
     await page.keyboard.press('Escape')
     await selectTask(partial)
-    await expect(time()).toHaveText('≥30s')
+    await expect(time()).toHaveText('≥30秒')
     await meter().locator('button').click()
-    await expect(popover()).toContainText('已加载 4 轮 · 累计 ≥30s')
+    await expect(popover()).toContainText('已加载 4 轮')
+    await expect(popover().locator('.usage-popover__head .usage-popover__meta')).toHaveText('已加载 4 轮 · 累计 ≥30秒')
     await page.keyboard.press('Escape')
     await selectTask(settled)
-    await expect(time()).toHaveText('30s')
+    await expect(time()).toHaveText('30秒')
   })
 
   test('明暗主题的用量行默认显示占比，悬停与键盘详情说明精确量和分母', async ({}, info) => {
@@ -363,7 +401,7 @@ test.describe.serial('会话累计执行用时', () => {
       await page.keyboard.press('Escape')
       await expect(popover()).toHaveCount(0)
       await expect(meter().locator('.usage-meter__tokens')).toHaveText('22k')
-      await expect(time()).toHaveText('30s')
+      await expect(time()).toHaveText('30秒')
     }
   })
 

@@ -10,7 +10,8 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 type Subject = typeof import('../src/main/engine/remote-token') & typeof import('../src/main/engine/remote-auth') &
   typeof import('../src/main/account/transport-trust') & typeof import('../src/main/settings-store') &
-  Pick<typeof import('../src/main/engine/connection'), 'connectionInputForSettings'>
+  Pick<typeof import('../src/main/engine/connection'), 'connectionInputForSettings' | 'applyServiceCredential' | 'getServiceCredentialContext'> &
+  Pick<typeof import('../src/main/account/credential-store'), 'saveAccountCredential'> & Pick<typeof import('../src/main/engine/host'), 'engineHost'>
 const root = resolve(__dirname, '..'), fixtures = join(root, '.e2e-tmp', 'engine-credentials', 'fixtures')
 const requireModule = createRequire(__filename)
 const first = 'https://first.example.test/engine', second = 'https://second.example.test/engine'
@@ -20,7 +21,16 @@ const legacyPath = () => join(fixture, 'engine', 'secrets', 'remote-instance-tok
 const tokenPath = (url: string) => join(fixture, 'engine', 'secrets', `remote-instance-token-${createHash('sha256').update(url).digest('hex')}.json`)
 
 function loadSubject(env: Record<string, string | undefined> = {}) {
-  const harness = { encryption: true, backend: 'test-encrypted', reads: [] as string[], failSettingsRename: false }
+  const harness = { encryption: true, backend: 'test-encrypted', reads: [] as string[], failSettingsRename: false,
+    probes: [] as string[], duringTools: null as (() => void) | null }
+  const probe = async (input: string): Promise<Response> => {
+    const path = new URL(input).pathname; harness.probes.push(path)
+    if (path.endsWith('/health')) return Response.json({ code: 200, data: { status: 'ok' } })
+    if (path.endsWith('/meta')) return Response.json({ code: 200, data: { version: '2.0.0', buildId: 'sha256:' + 'b'.repeat(64), protocolVersion: 1,
+      toolProfiles: ['general'], subagentSchemaVersion: 1, instanceId: 'contract-engine' } })
+    if (path.endsWith('/api/v1/tools')) { harness.duringTools?.(); return Response.json({ code: 200, data: [] }) }
+    throw new Error('Unexpected fixture request: ' + path)
+  }
   const electron = {
     app: { getPath: () => fixture },
     safeStorage: {
@@ -32,7 +42,7 @@ function loadSubject(env: Record<string, string | undefined> = {}) {
   const module = { exports: {} }
   const syntheticProcess = Object.create(process) as NodeJS.Process
   syntheticProcess.env = { ...env }
-  new Function('require', 'module', 'exports', 'process', compiled)(
+  new Function('require', 'module', 'exports', 'process', 'fetch', compiled)(
     (name: string) => name === 'electron' ? electron : name === 'node:fs'
       ? { ...requireModule(name), readFileSync: (path: string, ...args: unknown[]) => {
         harness.reads.push(String(path)); return requireModule(name).readFileSync(path, ...args)
@@ -40,7 +50,7 @@ function loadSubject(env: Record<string, string | undefined> = {}) {
         if (harness.failSettingsRename && to === join(fixture, 'settings.json')) throw new Error('simulated settings rename failure')
         return requireModule(name).renameSync(from, to)
       } }
-      : requireModule(name), module, module.exports, syntheticProcess)
+      : requireModule(name), module, module.exports, syntheticProcess, probe)
   return { subject: module.exports as Subject, harness, env: syntheticProcess.env }
 }
 function writeLegacy(value = 'legacy-instance-token', target?: string | null): void {
@@ -51,7 +61,7 @@ function writeLegacy(value = 'legacy-instance-token', target?: string | null): v
 
 test.beforeAll(async () => {
   mkdirSync(fixtures, { recursive: true })
-  const result = await build({ stdin: { contents: `export * from './src/main/engine/remote-token.ts'; export * from './src/main/engine/remote-auth.ts'; export * from './src/main/account/transport-trust.ts'; export * from './src/main/settings-store.ts'; export { connectionInputForSettings } from './src/main/engine/connection.ts';`, resolveDir: root },
+  const result = await build({ stdin: { contents: `export * from './src/main/engine/remote-token.ts'; export * from './src/main/engine/remote-auth.ts'; export * from './src/main/account/transport-trust.ts'; export * from './src/main/settings-store.ts'; export { connectionInputForSettings, applyServiceCredential, getServiceCredentialContext } from './src/main/engine/connection.ts'; export { saveAccountCredential } from './src/main/account/credential-store.ts'; export { engineHost } from './src/main/engine/host.ts';`, resolveDir: root },
     bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['electron'], write: false })
   compiled = result.outputFiles[0].text
 })
@@ -288,4 +298,64 @@ test('failed directory writes preserve the selected service and both workspace r
   const restarted = loadSubject().subject
   expect(restarted.getSettings()).toMatchObject({ remoteBaseUrl: first, remoteWorkspaceRoot: '/a' })
   expect(restarted.updateSettings({ remoteBaseUrl: second }).remoteWorkspaceRoot).toBe('/b')
+})
+
+test('account credentials cannot switch services even when preferences change during a successful probe', async () => {
+  const { subject, harness } = loadSubject(), other = first + '/another-tenant'
+  subject.setRemoteInstanceToken(first, 'fixture-instance-token')
+  subject.updateSettings({ engineMode: 'remote', remoteBaseUrl: first })
+  const { revision } = subject.getServiceCredentialContext(first + '///')
+  const replacement = { type: 'api-key' as const, value: 'only-for-the-first-service' }
+  subject.updateSettings({ remoteBaseUrl: other })
+  await expect(subject.applyServiceCredential(first, revision, replacement)).rejects.toThrow('连接已切换')
+  expect(harness.probes).toEqual([])
+  subject.updateSettings({ remoteBaseUrl: first })
+  harness.duringTools = () => { subject.updateSettings({ remoteBaseUrl: other }) }
+  await expect(subject.applyServiceCredential(first, revision, replacement)).rejects.toThrow('连接已切换')
+  expect(harness.probes).toContain('/engine/api/v1/tools')
+  expect(subject.getSettings().remoteBaseUrl).toBe(other)
+  expect([first, other].map(url => subject.getRemoteAuth(url).source)).toEqual(['none', 'none'])
+  expect(subject.engineHost.getSnapshot()).toMatchObject({ phase: 'idle', checkingConnection: false })
+})
+
+test('a newer credential or a personal sign-in before commit invalidates even a pending removal', async () => {
+  const { subject, harness } = loadSubject()
+  subject.setRemoteInstanceToken(first, 'fixture-instance-token')
+  subject.updateSettings({ engineMode: 'remote', remoteBaseUrl: first })
+  const previous = subject.getServiceCredentialContext(first)
+  const key = { type: 'api-key' as const, value: 'already-applied-by-another-window' }
+  subject.withRemoteAuthChange(first, key, () => undefined)
+  await expect(subject.applyServiceCredential(first, previous.revision, null)).rejects.toThrow('凭据已变化')
+  expect(harness.probes).toEqual([])
+  const { revision } = subject.getServiceCredentialContext(first)
+  harness.duringTools = () => { subject.saveAccountCredential(first, { user: { id: 'member', tenantId: 'tenant', name: 'Member', email: null,
+    avatarUrl: null, bio: null, userData: {}, createdAt: '2026-01-01T00:00:00.000Z', identities: [] }, accessToken: 'fixture-personal-access',
+    refreshToken: 'fixture-personal-refresh', expiresAt: '2099-01-01T00:00:00.000Z' }) }
+  await expect(subject.applyServiceCredential(first, revision, null)).rejects.toThrow('个人账号')
+  expect(subject.remoteAuthStatus(first)).toMatchObject({ source: 'stored', effective: 'account' })
+  expect(subject.getRemoteAuth(first).credential).toEqual(key)
+  subject.saveAccountCredential(first, null)
+  await expect(subject.applyServiceCredential(first, revision, null)).rejects.toThrow('凭据已变化')
+  expect(subject.remoteAuthStatus(first).effective).toBe('signed-out')
+  expect(subject.engineHost.getSnapshot()).toMatchObject({ phase: 'idle', checkingConnection: false })
+})
+
+test('an encryption failure after a valid credential probe preserves the old key, revision and selection', async () => {
+  const { subject, harness } = loadSubject(), old = { type: 'api-key' as const, value: 'previous-account-key' }
+  subject.setRemoteInstanceToken(first, 'fixture-instance-token')
+  subject.updateSettings({ engineMode: 'remote', remoteBaseUrl: first, remoteWorkspaceRoot: '/selected-root' })
+  subject.withRemoteAuthChange(first, old, () => undefined)
+  const previous = subject.getServiceCredentialContext(first), file = join(fixture, 'engine', 'secrets',
+    `remote-auth-${createHash('sha256').update(first).digest('hex')}.json`)
+  const bytes = readFileSync(file), preferences = readFileSync(join(fixture, 'settings.json'))
+  harness.duringTools = () => { harness.encryption = false }
+  await expect(subject.applyServiceCredential(first, previous.revision, { type: 'bearer', value: 'replacement-access-token' })).rejects.toThrow('系统密钥存储')
+  expect(harness.probes).toContain('/engine/api/v1/tools')
+  expect(readFileSync(file)).toEqual(bytes)
+  expect(readFileSync(join(fixture, 'settings.json'))).toEqual(preferences)
+  expect(subject.engineHost.getSnapshot()).toMatchObject({ phase: 'idle', checkingConnection: false })
+  expect(subject.getServiceCredentialContext(first)).toEqual({ revision: previous.revision, status: null })
+  harness.encryption = true
+  expect(subject.getServiceCredentialContext(first)).toEqual(previous)
+  expect(subject.getRemoteAuth(first).credential).toEqual(old)
 })

@@ -79,13 +79,26 @@ npx electron . --aether-instance=work-2
 
 ## 首次配置与远端服务
 
-启动后打开「设置 → 引擎管理」，确认服务就绪，再到「模型」配置接口和模型。个人账号、实例令牌／高级认证、模型 API Key 各司其职；具体登录路径见账号文档，产品不提供第三方模型密钥或额度。
+启动后打开「设置 → 引擎管理」选择引擎；需要登录时进入「设置 → 个人账号」，模型供应商的密钥填在「设置 → 模型」。桌面不提供第三方模型密钥或额度。
 
 本地内置支持启动、停止、重启、导入并选择 Windows 引擎包及恢复默认运行时。导入不停止当前引擎；选择新版本并重启会影响正在运行的任务。导入版本保存在当前用户数据目录的 `engine/runtimes/`，业务数据继续使用当前实例目录。
 
-远端模式填写地址、实例凭据和可选远端绝对工作目录，使用「保存并重新连接」。目录留空使用服务端默认工作区；修改后只影响新会话，已有会话保留服务端绑定。服务认证按当前地址处理，个人账号优先于高级 API Key/JWT；退出或过期后不静默恢复旧高级认证。
+连接已有服务时，在「引擎管理 → 连接其他引擎」填写地址，在高级设置中按需填写该服务的实例令牌，再点「应用并连接」。如果管理员提供了服务 API Key 或 JWT，请在「个人账号 → 高级认证 → 服务访问凭据」核对当前服务后填写，点「应用凭据」。选择工作区在新建任务时进行；已有会话沿用其工作区。
 
 远端会话已接入附件上传、历史操作、会话工作区文件、搜索、成果与变更审阅，以及对应的 Git／终端链路。能力仍受引擎版本与权限约束；本机系统打开方式、本地 HTML 预览和本机语言服务不会因此自动作用于远端磁盘。请以具体能力状态为准，不沿用早期“远端仅支持聊天”的限制清单。
+
+## 本地使用 Python、Node.js 和 Git
+
+Windows x64 完整安装包自带 Python、Node.js、npm、npx 和 Git。在 Aether 的本地终端可直接运行 `python hello.py` 或 `node hello.js`；标准库脚本不需要联网，也不用把解释器加进系统 PATH。需要 Python 依赖时，建议装到项目自己的环境里：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+本地终端和本机引擎启动的项目命令优先使用已激活的虚拟环境，以及 PATH 上已有的安装或版本管理器。仅打开含 `.venv` 或版本声明的项目不会自动执行其中的程序或下载新版本。引擎本身仍由配套的 Node 启动。远端引擎、容器和要求 Bash 的脚本需在各自的执行环境准备相应工具；离线安装第三方包也需要先备好依赖。
+
+Git 面板、本地终端和本机引擎也可以使用安装包里的 Git。已在 PATH 选定 Git 时，优先使用该版本；没有可用的本机 Git 时，回退到随包的 MinGit。可离线建仓、查看差异、暂存和提交；访问远端时仍使用自己的账号或 SSH 密钥。Aether 不会修改系统 PATH。
 
 ## 插件文档
 
@@ -127,15 +140,18 @@ npm run build:win
 npm run build:unpack
 ```
 
-Windows 命令执行完整前端构建、引擎 staging 和 electron-builder。可指定引擎发布包及 Node：
+Windows 打包会构建桌面端，把配对引擎和本机工具一起放进安装包。默认读取已构建的同级引擎，也可用 `AETHER_ENGINE_TGZ` 指向 Windows x64 引擎发布包。Node（含匹配的 npm/npx）取自 Node.js 官方 Windows 发行包，CPython 取自 Astral 的 python-build-standalone，MinGit 取自 Git for Windows 官方 Windows x64 发行包；精确版本、上游地址和 SHA-256 均在 [运行时锁文件](scripts/windows-toolchains.lock.json)。
+
+首次 `npm run prepare:engine` 会在构建机下载并校验这些归档，后续构建可复用 `.e2e-tmp/toolchains/downloads/`。离线构建可将 `AETHER_NODE_ARCHIVE`、`AETHER_PYTHON_ARCHIVE` 和 `AETHER_GIT_ARCHIVE` 分别指向与锁文件一致的本地归档。安装后使用这些工具不需要再次下载。
+
+`npm run verify:toolchains` 验证已准备的 Python、venv、pip、Node、npm、npx 和 Git；也可运行 `node scripts/verify-windows-toolchains.mjs <解包应用的resources目录>` 检查实际发行产物。`npm run verify:engine` 单独检查引擎原生依赖与语言服务。
+
+要验证实际 Windows 发行包，可让端到端用例直接启动解包后的程序。用例覆盖没有系统工具和已选项目工具两种环境，检查本地终端、Git 仓库操作和离线 MCP 服务。
 
 ```powershell
-$env:AETHER_ENGINE_TGZ = 'D:\dev\ai-agent-engine\release\agent-engine-2.0.0-win32-x64.tgz'
-$env:AETHER_NODE_BINARY = 'C:\Program Files\nodejs\node.exe'
-npm run build:win
+$env:AETHER_E2E_PACKAGED_EXE = (Resolve-Path '.\dist\win-unpacked\aether-code.exe').Path
+npx --no-install playwright test --config e2e/config/playwright.config.ts e2e/windows-bundled-toolchains.spec.ts --output .e2e-tmp/windows-toolchain-qa/e2e
 ```
-
-`prepare:engine` 会准备独立 Node、语言服务和配套运行时，不应只复制 `dist/main.js`。可单独运行 `npm run prepare:engine` 与 `npm run verify:engine` 检查 Windows 运行时。
 
 仓库也有 `build:mac` 与 `build:linux`，当前脚本直接运行 electron-vite 和 electron-builder，不包含与 Windows 相同的完整文档／类型校验及引擎 staging 流程。脚本存在不等于对应平台发行链已通过验收。
 

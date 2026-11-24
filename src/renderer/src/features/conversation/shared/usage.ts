@@ -452,23 +452,45 @@ export function formatTokens(value: number): string {
   return String(value)
 }
 
-/** 把毫秒格式化成「1h 02m 03s」这类可读时长；不足 1 秒显示 <1s */
+/** 把毫秒格式化成紧凑的中文运行时间；无效值返回 null。 */
+export const MIN_VISIBLE_USAGE_DURATION_MS = 30 * 60_000
+
 export function formatDuration(startedAt?: number, endedAt?: number): string | null {
   if (!startedAt || !endedAt || endedAt < startedAt) return null
   return formatElapsedDuration(endedAt - startedAt)
 }
 
-/** Aggregate execution time has no single start/end pair. */
+/** Runtime is intentionally omitted for short sessions to keep the compact row quiet. */
+export function formatVisibleDuration(startedAt?: number, endedAt?: number): string | null {
+  if (!startedAt || !endedAt || endedAt < startedAt) return null
+  return formatVisibleElapsedDuration(endedAt - startedAt)
+}
+
+/** Runtime is intentionally omitted for short sessions to keep the compact row quiet. */
+export function formatVisibleElapsedDuration(ms?: number): string | null {
+  if (ms === undefined || !Number.isFinite(ms) || ms <= MIN_VISIBLE_USAGE_DURATION_MS) return null
+  return formatElapsedDuration(ms)
+}
+
+/**
+ * Aggregate execution time has no single start/end pair. Keep the compact
+ * clock readable as the duration grows: 秒、分秒、时分秒，再到天时分秒。
+ */
 export function formatElapsedDuration(ms?: number): string | null {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return null
-  if (ms < 1000) return '<1s'
+  if (ms < 1000) return '<1秒'
   const totalSeconds = Math.round(ms / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  if (totalSeconds < 60) return `${totalSeconds}秒`
   const seconds = totalSeconds % 60
-  if (hours > 0) return `${hours}h${String(minutes).padStart(2, '0')}m`
-  if (minutes > 0) return `${minutes}m${String(seconds).padStart(2, '0')}s`
-  return `${seconds}s`
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  if (totalMinutes < 60) return `${pad(totalMinutes)}分${pad(seconds)}秒`
+  const minutes = totalMinutes % 60
+  const totalHours = Math.floor(totalMinutes / 60)
+  if (totalHours < 24) return `${pad(totalHours)}时${pad(minutes)}分${pad(seconds)}秒`
+  const hours = totalHours % 24
+  const days = Math.floor(totalHours / 24)
+  return `${days}天${pad(hours)}时${pad(minutes)}分${pad(seconds)}秒`
 }
 
 /** 把毫秒格式化成「2026-09-26 14:05:33」这类本地时间戳；无效值返回 null */

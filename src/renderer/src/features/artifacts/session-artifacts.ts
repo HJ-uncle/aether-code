@@ -68,7 +68,7 @@ export function artifactChangeTurnScope(change: EngineFileChange): SessionArtifa
 }
 
 /** Request time is display metadata, never evidence linking a write to a turn. */
-export function buildArtifactTurnOptions(sessionId: string, messages: readonly ChatMessage[], log: unknown): SessionArtifactTurnOption[] {
+export function buildArtifactTurnOptions(sessionId: string, messages: readonly ChatMessage[], log: unknown, net?: unknown, root?: string | null): SessionArtifactTurnOption[] {
   const turns = new Map<string, SessionArtifactTurnOption>()
   const records = ownedArtifactChanges(sessionId, log)
   for (const change of records) {
@@ -80,6 +80,17 @@ export function buildArtifactTurnOptions(sessionId: string, messages: readonly C
       turns.set(key, { key, scope, summary: '历史轮次（请求摘要未加载）', createdAt: change.createdAt, timeSource: 'change' })
     }
   }
+  // A turn whose receipts were all reverted, or cancelled out, still owns raw
+  // records but no reviewable file: offering it only opens an empty panel.
+  // Reuse the panel's own scoping and filtering so the list cannot disagree
+  // with what selecting the entry would show.
+  for (const [key, turn] of turns) {
+    if (turn.scope.kind !== 'turn') continue
+    const scoped = scopeArtifactChanges(sessionId, log, net, turn.scope)
+    const files = filterSessionArtifactFiles(buildSessionArtifactFiles(sessionId, scoped.records, scoped.net, root, turn.scope.turnId))
+    if (files.length) continue
+    turns.delete(key)
+  }
   for (const message of messages) {
     if (message.role !== 'user' || message.run && message.run.sessionId !== sessionId) continue
     const turnId = reliableTurnId(message.conversationId) ??
@@ -87,6 +98,7 @@ export function buildArtifactTurnOptions(sessionId: string, messages: readonly C
     if (!turnId) continue
     const scope: SessionArtifactTurnScope = { kind: 'turn', turnId }
     const key = artifactTurnScopeKey(scope)
+    if (!turns.has(key)) continue
     const existing = turns.get(key)
     if (existing?.timeSource === 'request' && (existing.createdAt ?? Infinity) <= message.createdAt) continue
     const request = userMessageText(message.content).replace(/\s+/g, ' ').trim()

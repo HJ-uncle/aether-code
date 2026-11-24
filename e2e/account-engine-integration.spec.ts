@@ -1,6 +1,7 @@
 /** Isolated Electron -> real account service -> real engine/SQLite contract.
  * Build both repositories first. Only the OS save dialog is stubbed; no real
  * user profile, credentials, clipboard or model provider is accessed. */
+import { registerFixtureAccount } from './fixtures/account-enrollment'
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -31,8 +32,9 @@ test.describe('真实账号集成', () => {
   test.beforeAll(async () => {
     expect(existsSync(engineEntry), '先 build 引擎').toBe(true)
     mkdirSync(temporaryRoot, { recursive: true }); directory = mkdtempSync(join(temporaryRoot, 'integration-'))
-    const profile = join(directory, 'profile'), workspace = join(directory, 'workspace')
-    mkdirSync(profile); mkdirSync(workspace)
+    // Keep the engine's private scratch root separate from the operator-selected project.
+    const profile = join(directory, 'profile'), workspace = join(directory, 'workspace'), engineRoot = join(directory, 'engine-private')
+    mkdirSync(profile); mkdirSync(workspace); mkdirSync(engineRoot)
     const listener = createServer(); await new Promise<void>(done => listener.listen(0, '127.0.0.1', done))
     const address = listener.address(); if (!address || typeof address === 'string') throw new Error('No test port')
     const port = address.port; await new Promise<void>(done => listener.close(() => done()))
@@ -41,7 +43,7 @@ test.describe('真实账号集成', () => {
     writeFileSync(host, `process.on('message', m => { if (m?.command === 'shutdown') process.emit('SIGTERM') });\nawait import(${JSON.stringify(pathToFileURL(engineEntry).href)});\n`)
     runner = spawn(process.execPath, [host], { cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: {
       ...cleanEnv(), AUTH_ENABLED: 'false', DATA_DIR: join(directory, 'engine/state/agent.db'), MEMORY_DB_PATH: join(directory, 'engine/state/memory.db'),
-      ENCRYPTION_KEY: randomBytes(32).toString('hex'), WORKSPACE_ROOT: workspace, AETHER_GLOBAL_DIR: join(directory, 'engine/global'),
+      ENCRYPTION_KEY: randomBytes(32).toString('hex'), WORKSPACE_ROOT: engineRoot, AETHER_GLOBAL_DIR: join(directory, 'engine/global'),
       SKILLS_ROOT: join(directory, 'engine/skills'), MCP_CONFIG_PATH: join(directory, 'engine/mcp.json'), PROGRAMDATA: join(directory, 'managed'),
       AETHER_ENGINE_HOST: '127.0.0.1', AETHER_ENGINE_PORT: String(port), AETHER_INSTANCE_TOKEN: instanceToken, AETHER_DESKTOP_OWNED: '1',
       DEFAULT_SECURITY_MODE: 'standard', HISTORY_BACKEND: 'jsonl', OSM_MODE: 'balanced', ENABLE_LONG_TERM_MEMORY: 'false',
@@ -72,7 +74,7 @@ test.describe('真实账号集成', () => {
     // Preserve the isolated fixture and failure evidence in ignored storage.
   })
   test('创建、无副作用备份、原地重验、权限提示与退出后恢复同一账号', async () => {
-    const account = await page.evaluate(() => window.aether.account.register())
+    const account = await registerFixtureAccount(page, join(directory, 'engine/state/agent.db'))
     expect(account.status).toBe('authenticated'); expect(account.user?.roles).toEqual(['tenant-admin'])
     expect(account.user?.authenticatedAt).toBeTruthy(); expect(account.recovery?.exportedAt).toBeNull()
     const identity = await page.evaluate(() => window.aether.engine.getSnapshot())

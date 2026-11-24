@@ -215,7 +215,7 @@ export async function launchOfficeCampaign() {
   globalThis.__officeCampaign=controller
   try{
     await expect.poll(()=>page.evaluate(()=>window.aether.engine.getSnapshot()).then(v=>v.phase),{timeout:90000}).toBe('ready')
-    const account=await page.evaluate(()=>window.aether.account.register());expect(account.status).toBe('authenticated')
+    const account=await (await import('./diagnostics/fixture-account.mjs')).registerFixtureAccount(page);expect(account.status).toBe('authenticated')
     await expect.poll(()=>page.evaluate(()=>window.aether.engine.getSnapshot()).then(v=>v.accountId)).toBe(account.user.id)
     const created=await request('POST','/models',model);await request('PUT','/models/'+created.id,{isEnabled:true})
     const preflight=await request('POST','/models/'+created.id+'/test',{});artifact('model-preflight.json',{modelId:model.modelId,success:preflight.success});expect(preflight.success).toBe(true)

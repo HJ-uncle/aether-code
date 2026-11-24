@@ -47,7 +47,7 @@ import type {
   GitUserResult
 } from '../../shared/git-types'
 import { assertAllowed } from '../fs/file-service'
-import { resolveGitExecutable } from './git-resolver'
+import { gitProcessEnvironment, resolveGitExecutable } from './git-resolver'
 import { withMainGitOperation, mainGitProcessScope } from './git-operation'
 import { repositoryFailureMetadata } from './repository-lease'
 import { parseGitRemotes } from './parsers'
@@ -233,12 +233,12 @@ function fail(error: unknown): GitResult {
  * 由调用方包成 GitResult 信封。
  */
 async function runGit(cwd: string, args: string[]): Promise<string>{
-  return mainGitProcessScope().run(resolveGitExecutable(), ['-c','core.quotePath=false',...args], {cwd,env:{...process.env,GIT_TERMINAL_PROMPT:'0'},timeoutMs:GIT_TIMEOUT_MS,maxBytes:GIT_MAX_BUFFER})
+  return mainGitProcessScope().run(resolveGitExecutable(), ['-c','core.quotePath=false',...args], {cwd,env:gitProcessEnvironment(),timeoutMs:GIT_TIMEOUT_MS,maxBytes:GIT_MAX_BUFFER})
 }
 
 /** 带 stdin 的 git 调用（目前仅 hunk 撤销的 apply 用） */
 function runGitWithInput(cwd: string, args: string[], input: string): Promise<void>{
-  return mainGitProcessScope().run(resolveGitExecutable(), ['-c','core.quotePath=false',...args], {cwd,env:{...process.env,GIT_TERMINAL_PROMPT:'0'},input,timeoutMs:GIT_TIMEOUT_MS,maxBytes:GIT_MAX_BUFFER}).then(()=>undefined)
+  return mainGitProcessScope().run(resolveGitExecutable(), ['-c','core.quotePath=false',...args], {cwd,env:gitProcessEnvironment(),input,timeoutMs:GIT_TIMEOUT_MS,maxBytes:GIT_MAX_BUFFER}).then(()=>undefined)
 }
 
 /** 校验 cwd 并收窄到工作区白名单内；越界直接抛错（由 IPC 层兜底成信封） */

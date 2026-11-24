@@ -31,6 +31,9 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
+    // Both the desktop and engine verify this binary by hash; the packager excludes this exact name from signing.
+    build: { rollupOptions: { output: { assetFileNames: asset =>
+      asset.names.includes('repository-supervisor.exe') ? 'chunks/repository-supervisor.exe' : 'chunks/[name]-[hash][extname]' } } },
     // 主进程只有 electron 与 Node 内置模块保持外部化
     plugins: [externalizeDepsPlugin(), queueWorkerBundle()]
   },

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState, type JSX } from 'react'
 import { Icon } from '@renderer/ui/icons'
 import { Popover } from '@renderer/ui/Popover'
 import { useHoverDetail } from '@renderer/ui/useHoverDetail'
-import { formatDuration, formatElapsedDuration, formatTimestamp, formatTokens, type UsageDetailRow } from './usage'
+import { formatDuration, formatVisibleDuration, formatElapsedDuration, formatVisibleElapsedDuration, formatTimestamp, formatTokens, type UsageDetailRow } from './usage'
 import { usagePercentage } from './usage-percentage'
 import type { ChatMessage } from '@renderer/core/engine/useChat'
+import { useApp } from '@renderer/core/app-context'
 import { sessionExecutionDuration, sessionExecutionTiming } from './session-duration'
 import './conversation-usage.css'
 
@@ -93,7 +94,8 @@ export function TurnUsage({
   model?: string
   /** 是否仍在输出：进行中用「当前时刻」估算已用时长 */
   streaming: boolean
-}): JSX.Element {
+}): JSX.Element | null {
+  const { settings } = useApp()
   // 进行中时 endedAt 还没有：需要一个随渲染推进的值来累计已用时长
   const [now, setNow] = useState(() => Date.now())
 
@@ -103,8 +105,20 @@ export function TurnUsage({
     return () => window.clearInterval(timer)
   }, [streaming])
 
-  const duration = formatDuration(startedAt, streaming ? now : endedAt)
+  const duration = settings.showConversationUsage
+    ? formatDuration(startedAt, streaming ? now : endedAt)
+    : formatVisibleDuration(startedAt, streaming ? now : endedAt)
   const stamp = formatTimestamp(askedAt)
+
+  if (!settings.showConversationUsage) {
+    if (!duration) return null
+    return (
+      <div className="turn-usage turn-usage--duration-only" aria-label={`本轮使用时间 ${duration}`} title="本轮累计执行用时">
+        <Icon name="clock-outline" size={13} className="turn-usage__duration-icon" aria-hidden="true" />
+        <span className="turn-usage__duration-value">{duration}</span>
+      </div>
+    )
+  }
 
   return (
     <Popover
@@ -185,7 +199,8 @@ export function UsageMeter({
   rounds: number
   summary: UsageDetailRow[]
   messages: readonly ChatMessage[]
-}): JSX.Element {
+}): JSX.Element | null {
+  const { settings } = useApp()
   const timing = useMemo(() => sessionExecutionTiming(messages), [messages])
   const active = timing.intervals.some(interval => interval.end === undefined)
   const [clock, setClock] = useState(() => ({ timing, now: Date.now() }))
@@ -193,14 +208,18 @@ export function UsageMeter({
   const now = clock.timing === timing ? clock.now : Date.now()
 
   useEffect(() => {
-    if (!active) return
+    if (!active || !settings.showConversationUsage) return
     const timer = window.setInterval(() => setClock({ timing, now: Date.now() }), 1000)
     return () => window.clearInterval(timer)
-  }, [timing, active])
+  }, [timing, active, settings.showConversationUsage])
 
-  const duration = formatElapsedDuration(sessionExecutionDuration(timing, now))
+  const duration = settings.showConversationUsage
+    ? formatElapsedDuration(sessionExecutionDuration(timing, now))
+    : formatVisibleElapsedDuration(sessionExecutionDuration(timing, now))
   const durationTitle = '已加载轮次的累计执行用时，含轮内等待，不含轮间空闲；并行时段只计算一次。' +
     (timing.incomplete ? '部分历史记录缺少起止时间，未计入用时。' : '')
+
+  if (!settings.showConversationUsage) return null
 
   return (
     <Popover

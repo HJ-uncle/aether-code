@@ -85,7 +85,9 @@
 .document-preview__toolbar--zoom { justify-content: flex-end; min-height: 36px; padding-block: 3px; }
 .document-preview__header { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; min-height: var(--chrome-h); padding: var(--space-1) var(--space-3); border-bottom: 0.5px solid var(--border); background: var(--bg-surface); }
 .document-preview__header > .document-preview__toolbar--zoom { flex: 0 0 auto; min-height: var(--control-h); padding: 0; }
-.document-preview__body--continuous { padding: 16px; overflow: auto; overscroll-behavior: contain; }
+/* Reserve the scrollbar before pages arrive so fit width does not shrink a
+   second time when the document first becomes scrollable. */
+.document-preview__body--continuous { padding: 16px; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .document-preview__continuous-content { min-width: 0; }
 .document-preview__continuous-page { position: relative; width: 100%; min-height: 200px; margin: 0 auto 16px; overflow: hidden; background: var(--document-paper); }
 .document-preview__continuous-page--pptx { background: transparent; }

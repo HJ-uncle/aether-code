@@ -1002,6 +1002,7 @@
 .work-turn-feedback__heading { display: flex; align-items: center; flex-wrap: wrap; column-gap: 8px; row-gap: 4px; font-size: 12px; line-height: 1.5; }
 .work-turn-feedback__heading > strong { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .work-turn-feedback__heading > span:not(.work-turn-feedback__elapsed) { color: var(--fg-muted); }
+.work-turn-feedback__heading > [role="status"]:first-child { color: var(--fg); font-weight: 550; }
 .work-turn-feedback__controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .work-turn-feedback__elapsed { color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .work-view .work-run-stop { min-width: 72px; min-height: 28px; padding: 3px 8px; flex-shrink: 0; font-size: 12px; white-space: nowrap; }
@@ -1027,6 +1028,39 @@
 .work-turn-feedback__activity > svg { flex-shrink: 0; }
 .work-turn-feedback__activity:hover { color: var(--accent); }
 .work-turn-feedback__activity:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* One paint surface gives both lines the same light at the same x position,
+   even when the label starts after the name or the description wraps. */
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+  @supports (background-clip: text) {
+    [data-feedback-sweep] {
+      --feedback-sweep-width: 9em;
+      --feedback-sweep-edge: calc(100% + var(--feedback-sweep-width));
+      background-color: var(--fg-muted);
+      background-image: linear-gradient(120deg, transparent 8%, var(--fg-strong) 50%, transparent 92%);
+      background-size: var(--feedback-sweep-width) 100%;
+      background-repeat: no-repeat;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: work-feedback-sweep 2.8s linear infinite;
+    }
+    /* A built-in status and its capped agent name fit here even on a much wider card. */
+    [data-feedback-sweep="status"] { --feedback-sweep-end: min(var(--feedback-sweep-edge), 27em); }
+    [data-feedback-sweep] .work-turn-feedback__heading > strong {
+      -webkit-text-fill-color: color-mix(in srgb, currentColor 72%, transparent);
+    }
+    [data-feedback-sweep] .work-turn-feedback__controls,
+    [data-feedback-sweep] .work-turn-feedback__activity:is(:hover, :focus-visible) {
+      background-color: var(--bg-elevated);
+      -webkit-text-fill-color: currentColor;
+    }
+  }
+}
+@keyframes work-feedback-sweep {
+  0%, 8% { background-position: calc(0px - var(--feedback-sweep-width)) center; }
+  92%, 100% { background-position: var(--feedback-sweep-end, var(--feedback-sweep-edge)) center; }
+}
+
 .work-conversation__footer {
   position: relative;
   flex-shrink: 0;

@@ -1,4 +1,5 @@
 /** Real isolated engine + Electron + source-directory child process and $AE permissions. */
+import { fixtureEnrollment } from './fixtures/account-enrollment'
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -51,7 +52,7 @@ test('真实开发模式源码运行、页面刷新、权限保留与撤销及�
     } })
     engine.stdout?.on('data', chunk => { logs = (logs + String(chunk)).slice(-30_000) }); engine.stderr?.on('data', chunk => { logs = (logs + String(chunk)).slice(-30_000) })
     await expect.poll(async () => { if (engine?.exitCode !== null) throw new Error(logs); try { return (await fetch(`${origin}/health`)).ok } catch { return false } }, { timeout: 45_000 }).toBe(true)
-    const accountResponse = await fetch(`${origin}/auth/account/register`, { method: 'POST', headers: { 'x-aether-instance-token': token, 'content-type': 'application/json' }, body: '{}' })
+    const accountResponse = await fetch(`${origin}/auth/account/register`, { method: 'POST', headers: { 'x-aether-instance-token': token, 'content-type': 'application/json' }, body: JSON.stringify({activationCode:await fixtureEnrollment(join(fixture,'agent.db'))}) })
     const account = await accountResponse.json() as { data?: { accessToken?: string }; message?: string }
     if (!accountResponse.ok || !account.data?.accessToken) throw new Error(account.message ?? 'Could not create isolated account')
     accessToken = account.data.accessToken

@@ -1,16 +1,29 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync, lstatSync, rmSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { prepareDevEngine, startDev } from './dev.mjs'
 
+const repo = realpathSync(fileURLToPath(new URL('../', import.meta.url)))
+const fixtures = join(repo, '.e2e-tmp', 'dev-engine-contract')
+const brandIcon = readFileSync(new URL('../src/renderer/src/assets/icon.png', import.meta.url))
+
 function fixture(t) {
-  const parent = mkdtempSync(join(tmpdir(), 'aether-dev-contract-'))
-  t.after(() => { if (dirname(parent) !== resolve(tmpdir()) || !parent.startsWith(join(resolve(tmpdir()), 'aether-dev-contract-'))) throw new Error('fixture cleanup boundary'); rmSync(parent, { recursive: true, force: true }) })
+  for (const directory of [dirname(fixtures), fixtures]) {
+    if (!existsSync(directory)) mkdirSync(directory)
+    assert.equal(realpathSync(directory), directory, 'fixture directory must stay inside the repository')
+  }
+  const parent = mkdtempSync(join(fixtures, 'case-'))
+  t.after(() => {
+    const resolved = realpathSync(parent)
+    assert.ok(!lstatSync(parent).isSymbolicLink() && dirname(resolved) === fixtures && basename(resolved).startsWith('case-'), 'fixture cleanup boundary')
+    rmSync(resolved, { recursive: true, force: true })
+  })
   const root = join(parent, 'client'), engine = join(parent, 'ai-agent-engine'); mkdirSync(root); mkdirSync(engine)
   const write = (name, data = 'asset') => { const file = join(engine, name); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, data) }
   write('package.json', JSON.stringify({ type: 'module', version: 'test' })); write('dist/main.js', 'RUNNING SHARED DIST')
+  write('src/api/http/admin/icon.png', brandIcon)
   for (const path of ['src/terminal/workspace-shell.mjs', 'src/workspace/assets/repository-supervisor.exe', 'src/workspace/assets/repository-supervisor.sha256', 'src/workspace/assets/repository-supervisor.cs', 'src/skills/builtin/test/SKILL.md', 'node_modules/node-pty/.aether-node-pty-patch.json']) write(path)
   const manifest = { buildId: 'sha256:' + 'a'.repeat(64), version: 'test', protocolVersion: 1, subagentSchemaVersion: 1, toolProfiles: ['general', 'code'] }
   const calls = [], runs = async (binary, args, options) => {
@@ -25,6 +38,7 @@ test('development prepares distinct immutable outputs, never rewrites running si
   assert.notEqual(first.entryPath, second.entryPath)
   assert.equal(readFileSync(join(f.engine, 'dist/main.js'), 'utf8'), 'RUNNING SHARED DIST')
   assert.equal(readFileSync(first.entryPath, 'utf8'), 'FRESH ISOLATED OUTPUT')
+  assert.deepEqual(readFileSync(join(dirname(first.entryPath), 'api/http/admin/icon.png')), brandIcon)
   assert.equal(readFileSync(join(dirname(first.entryPath), 'skills/builtin/test/SKILL.md'), 'utf8'), 'asset')
   assert.deepEqual(JSON.parse(readFileSync(join(dirname(first.entryPath), 'runtime/build-manifest.json'), 'utf8')), f.manifest)
   assert.equal(first.environment.AETHER_IDE_ENGINE_ENTRY, first.entryPath)

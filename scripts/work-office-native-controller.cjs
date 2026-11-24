@@ -48,7 +48,7 @@ exports.launch = async function (options = {}) {
   await app.evaluate(({BrowserWindow,dialog},folder)=>{BrowserWindow.getAllWindows()[0].setSize(1550,1000);dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]})},companyRoot)
   await expect.poll(()=>page.evaluate(()=>window.aether.engine.getSnapshot()).then(v=>v.phase),{timeout:90000}).toBe('ready')
   if (!options.resume) {
-    const account=await page.evaluate(()=>window.aether.account.register()); expect(account.status).toBe('authenticated')
+    const account=await (await import('./diagnostics/fixture-account.mjs')).registerFixtureAccount(page); expect(account.status).toBe('authenticated')
     await expect.poll(()=>page.evaluate(()=>window.aether.engine.getSnapshot()).then(v=>v.accountId)).toBe(account.user.id)
   } else {
     await expect.poll(()=>page.evaluate(()=>window.aether.engine.getSnapshot()).then(v=>v.accountId)).toBe(state.engine.accountId)

@@ -556,31 +556,23 @@ test.describe.serial('Work 首页', () => {
     } finally { await setWindow(1440); await setAppearance('light') }
   })
 
-  test('模板追加到最新草稿，引用和附件在切页及重载后保留', async () => {
+  test('点击模板替换当前草稿，清空旧引用并保留新模板', async () => {
     const initial = `请保留已有说明 @${attachments[0].path}`
     const mention = { source: 'file' as const, origin: 'attachment' as const, displayText: '附件1', path: attachments[0].path,
       attachmentId: attachments[0].attachmentId, textOffset: '请保留已有说明 '.length }
     await seed({ homeDraft: initial, homeAttachments: attachments, homeMentions: [mention] })
-    await expect(home().locator('.attach-chip')).toHaveCount(0)
     await expect(composer().locator('.mention-chip--attachment .mention-chip__label')).toHaveText(attachments.map(file => file.name))
-    await composer().press('Control+End'); await composer().press('Shift+Enter'); await composer().pressSequentially('补充要求')
-    expect(chats).toHaveLength(0)
-    await home().getByRole('button', { name: '分析资料', exact: true }).click()
+    await home().getByRole('button', { name: '开始一个任务', exact: true }).click()
     await expect(composer()).toBeFocused()
     let saved = await savedHome()
-    expect(saved.homeDraft).toContain(initial); expect(saved.homeDraft).toContain('补充要求')
-    expect(saved.homeDraft).toContain('请分析我提供的资料')
-    expect(saved.homeAttachments).toEqual(attachments.map(file => ({ ...file, inlineReference: true })))
-    expect(saved.homeMentions).toContainEqual({ ...mention, displayText: attachments[0].name })
-    const draft = saved.homeDraft
-    await page.locator('.work-sidebar').getByRole('button', { name: '项目', exact: true }).click()
-    await expect(home()).toHaveCount(0)
-    await page.locator('.work-sidebar').getByRole('button', { name: /^工作台/ }).click()
-    await expect(composer()).toContainText('补充要求')
-    await page.reload(); await expect(composer()).toBeVisible()
+    expect(saved.homeDraft).toBe('请帮我完成以下任务，先确认目标和约束，再给出清晰、可执行的结果。\n\n任务目标：\n补充背景：\n期望结果：\n')
+    expect(saved.homeDraft).not.toContain(initial)
+    expect(saved.homeMentions).toEqual([])
+    await home().getByRole('button', { name: '分析资料', exact: true }).click()
     saved = await savedHome()
-    expect(saved.homeDraft).toBe(draft); expect(saved.homeAttachments).toEqual(attachments.map(file => ({ ...file, inlineReference: true })))
-    expect(saved.homeMentions).toContainEqual({ ...mention, displayText: attachments[0].name }); expect(chats).toHaveLength(0)
+    expect(saved.homeDraft).toBe('请分析我提供的资料，提取关键数据、变化趋势和需要关注的问题。\n重点关注：')
+    expect(saved.homeMentions).toEqual([])
+    expect(chats).toHaveLength(0)
   })
 
   test('分页前后切换保留焦点，筛选搜索覆盖全量任务并重置页码', async ({}, info) => {

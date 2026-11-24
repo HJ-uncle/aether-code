@@ -7,7 +7,7 @@
 | 功能域 | 当前入口与覆盖范围 | 主要源码 | 对应文档 |
 | --- | --- | --- | --- |
 | app | 工作台、项目、Agent、插件、自动化、监控；管理页按需加载；命令、菜单、设置壳 | [navigation.tsx](../src/renderer/src/app/navigation.tsx)、[pages.tsx](../src/renderer/src/app/pages.tsx)、[ApplicationShell.tsx](../src/renderer/src/app/ApplicationShell.tsx)、[ApplicationView.tsx](../src/renderer/src/app/ApplicationView.tsx) | 使用指南；前端结构 |
-| account | 新建／已有账号登录、恢复文件、第三方登录、资料、重新验证、密钥更换、设备会话 | [AccountSettingsView.tsx](../src/renderer/src/features/account/AccountSettingsView.tsx)、[account/service.ts](../src/main/account/service.ts) | [账号与登录](accounts-and-login.md) |
+| account | 新建／已有账号登录、外部服务 API Key/JWT、恢复文件、第三方登录、资料、重新验证、密钥更换、设备会话 | [AccountSettingsView.tsx](../src/renderer/src/features/account/AccountSettingsView.tsx)、[account/service.ts](../src/main/account/service.ts) | [账号与登录](accounts-and-login.md) |
 | sessions | 首页、侧栏、分页历史、草稿、运行／等待／未读状态、会话菜单、回退和重发 | [sessions](../src/renderer/src/features/sessions/)、[useChat.ts](../src/renderer/src/core/engine/useChat.ts) | 使用指南「会话、补充与下一轮队列」 |
 | composer | 输入、模型／Agent／工作区、附件、@ 引用、资源选择、立即补充／下一轮 | [Composer.tsx](../src/renderer/src/features/composer/Composer.tsx)、[ComposerWorkspace.tsx](../src/renderer/src/features/composer/ComposerWorkspace.tsx) | 使用指南；[工具配置](tool-profiles.md) |
 | conversation | 轮次、过程折叠、工具活动、消息导航、完整历史、队列、用量 | [ConversationView.tsx](../src/renderer/src/features/conversation/ConversationView.tsx)、[NextTurnQueue.tsx](../src/renderer/src/features/conversation/NextTurnQueue.tsx) | 使用指南 |

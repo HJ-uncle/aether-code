@@ -9,16 +9,16 @@ export function adminPageAddress(base: string): URL {
   return service
 }
 
-/** The private instance header may only reach the owned loopback admin namespace. */
+/** Only the verified service's exact origin and /admin/ subtree, including a reverse proxy prefix. */
 export function isAdminWindowRequest(raw: string, page: URL): boolean {
   try {
     const target = new URL(raw)
-    return page.protocol === 'http:' && page.hostname === '127.0.0.1' && target.origin === page.origin &&
+    return target.origin === page.origin && !target.hash && !raw.includes('\\') &&
       !target.username && !target.password && !target.pathname.includes('%') && target.pathname.startsWith(page.pathname)
   } catch { return false }
 }
 
-export async function verifyAdminPage(page: URL, signal: AbortSignal, devSnapshot: boolean): Promise<void> {
+export async function verifyAdminPage(page: URL, signal: AbortSignal, devSnapshot: boolean): Promise<boolean> {
   let response: Response
   try { response = await fetch(page, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(4000)]) }) }
   catch { throw new Error('无法连接管理后台。请检查当前引擎的状态和地址。') }
@@ -26,4 +26,5 @@ export async function verifyAdminPage(page: URL, signal: AbortSignal, devSnapsho
     if (devSnapshot) throw new Error('当前桌面仍在使用旧的开发快照。请先结束运行中的任务，退出桌面开发进程，再从 aether-code 目录重新运行 npm run dev。')
     throw new Error('当前服务没有提供新版管理登录页，或被上游网关拦截。请升级实际运行的引擎，并允许访问 /admin/ 登录页。')
   }
+  return response.headers.get('x-aether-admin-desktop') === '1'
 }

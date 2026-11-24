@@ -109,12 +109,17 @@ export function SettingsDisclosure({
   description,
   children,
   defaultOpen = false,
+  layout = 'compact',
+  onOpenChange,
   className
 }: {
   title: string
   description?: string
   children: ReactNode
   defaultOpen?: boolean
+  /** Use the regular settings row when a disclosure is a peer of ordinary settings. */
+  layout?: 'compact' | 'row'
+  onOpenChange?: (open: boolean) => void
   className?: string
 }): JSX.Element {
   const detailsRef = useRef<HTMLDetailsElement>(null)
@@ -123,11 +128,17 @@ export function SettingsDisclosure({
   }, [defaultOpen])
 
   return (
-    <details ref={detailsRef} className={`sg__disclosure${className ? ` ${className}` : ''}`}>
-      <summary className="sg__disclosure-summary">
-        <span className="sg__disclosure-copy">
-          <span className="sg__disclosure-title">{title}</span>
-          {description ? <span className="sg__disclosure-description">{description}</span> : null}
+    <details
+      ref={detailsRef}
+      className={`sg__disclosure${className ? ` ${className}` : ''}`}
+      onToggle={onOpenChange && (event => {
+        if (event.target === event.currentTarget) onOpenChange(event.currentTarget.open)
+      })}
+    >
+      <summary className={layout === 'row' ? 'sg__disclosure-summary sg__row' : 'sg__disclosure-summary'}>
+        <span className={layout === 'row' ? 'sg__row-text' : 'sg__disclosure-copy'}>
+          <span className={layout === 'row' ? 'sg__row-label' : 'sg__disclosure-title'}>{title}</span>
+          {description ? <span className={layout === 'row' ? 'sg__row-desc' : 'sg__disclosure-description'}>{description}</span> : null}
         </span>
         <span className="sg__disclosure-chevron" aria-hidden="true" />
       </summary>

@@ -6,7 +6,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import type { GitCloneOptions, GitCloneProgressPayload, GitCloneResult, GitResult } from '../../shared/git-types'
 import { assertAllowed } from '../fs/file-service'
-import { resolveGitExecutable } from './git-resolver'
+import { gitProcessEnvironment, resolveGitExecutable } from './git-resolver'
 import { withRepositoryLease, prepareCloneDestinationLock, cloneDestinationLock, repositoryFailureMetadata } from './repository-lease'
 
 const MAX_DIR_NAME_TRIES = 20
@@ -80,7 +80,7 @@ export async function cloneRepository(options: GitCloneOptions, onProgress: (pay
       const identity = lstatSync(cloneTarget)
       report(0, '正在准备克隆…')
       try {
-        await scope.run(resolveGitExecutable(), ['clone', '--progress', '--', url, cloneTarget], { cwd: parent, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeoutMs: CLONE_TIMEOUT_MS, maxBytes: 20 * 1024 * 1024, signal: controller.signal, onStderr: progress })
+        await scope.run(resolveGitExecutable(), ['clone', '--progress', '--', url, cloneTarget], { cwd: parent, env: gitProcessEnvironment(), timeoutMs: CLONE_TIMEOUT_MS, maxBytes: 20 * 1024 * 1024, signal: controller.signal, onStderr: progress })
         return { success: true, finalPath: cloneTarget }
       } catch (error) {
         // close requires durable zero-members proof. Supervisor crashes retain

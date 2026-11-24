@@ -2,18 +2,27 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { tmpdir } from 'node:os'
+import { prepareWindowsToolchains } from './prepare-windows-toolchains.mjs'
+import { verifyWindowsToolchains } from './verify-windows-toolchains.mjs'
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const tempParent = join(appRoot, '.e2e-tmp', 'toolchains')
+for (const directory of [dirname(tempParent), tempParent]) {
+  if (existsSync(directory) && lstatSync(directory).isSymbolicLink()) throw new Error('Linked staging directory: ' + directory)
+  mkdirSync(directory, { recursive: true })
+}
 const artifactPath = process.env.AETHER_ENGINE_TGZ ? realpathSync(resolve(process.env.AETHER_ENGINE_TGZ)) : ''
 if (artifactPath && process.env.AETHER_ENGINE_SOURCE) throw new Error('[engine-runtime] AETHER_ENGINE_TGZ 与 AETHER_ENGINE_SOURCE 不能同时设置')
 let extractedArtifactRoot = ''
 let engineRoot
 if (artifactPath) {
   if (!existsSync(artifactPath) || !lstatSync(artifactPath).isFile()) throw new Error(`[engine-runtime] 引擎 tgz 不存在：${artifactPath}`)
-  extractedArtifactRoot = mkdtempSync(join(tmpdir(), 'aether-engine-artifact-'))
+  extractedArtifactRoot = mkdtempSync(join(tempParent, 'engine-artifact-'))
+  process.on('exit', () => {
+    assertChild(realpathSync(tempParent), realpathSync(extractedArtifactRoot))
+    rmSync(extractedArtifactRoot, { recursive: true, force: true, maxRetries: 3 })
+  })
   // The release is an npm-style archive. Validate its member names before
   // extracting so a malformed artifact cannot write outside the temp directory.
   const entries = run('tar', ['-tzf', artifactPath], { maxBuffer: 128 * 1024 * 1024 }).split(/\r?\n/).filter(Boolean)
@@ -25,13 +34,11 @@ if (artifactPath) {
   }
   run('tar', ['-xzf', artifactPath, '-C', extractedArtifactRoot])
   engineRoot = realpathSync(join(extractedArtifactRoot, 'package'))
-  process.on('exit', () => { try { rmSync(extractedArtifactRoot, { recursive: true, force: true }) } catch {} })
 } else {
   engineRoot = realpathSync(resolve(process.env.AETHER_ENGINE_SOURCE || join(appRoot, '..', 'ai-agent-engine')))
 }
 const stageParent = resolve(appRoot, 'resources', 'engine')
 const target = join(stageParent, 'win32-x64')
-const nodeSource = realpathSync(process.env.AETHER_NODE_BINARY || process.execPath)
 const fail = message => { throw new Error(`[engine-runtime] ${message}`) }
 const json = file => JSON.parse(readFileSync(file, 'utf8'))
 const sha256 = file => `sha256:${createHash('sha256').update(readFileSync(file)).digest('hex')}`
@@ -53,7 +60,10 @@ function copyFile(source, destination) {
 function copyTree(source, destination, keep = () => true) {
   cpSync(source, destination, { recursive: true, filter(file) {
     const rel = relative(source, file)
-    if (lstatSync(file).isSymbolicLink()) fail(`symlinks are not packaged: ${file}`)
+    const stat = lstatSync(file)
+    if (stat.isSymbolicLink()) fail(`symlinks are not packaged: ${file}`)
+    // The packager drops empty Git placeholders. Leave them out of staging so the manifest still verifies every shipped file.
+    if (rel.split(sep).at(-1) === '.gitkeep' && stat.isFile() && stat.size === 0) return false
     if (rel.split(sep).some(part => part === '.git' || part === '.env' || part.startsWith('.env.'))) return false
     return keep(file, rel)
   } })
@@ -79,6 +89,9 @@ if (!artifactPath) {
   const { createBuildManifest } = await import(pathToFileURL(join(engineRoot, 'dist/runtime/build-identity.js')).href)
   if (createBuildManifest(engineRoot).buildId !== manifest.buildId) fail('Engine source changed since its build. Build the engine before staging')
 }
+const toolchains = await prepareWindowsToolchains()
+process.on('exit', toolchains.cleanup)
+const nodeSource = toolchains.nodeBinary
 const nodeInfo = JSON.parse(run(nodeSource, ['-p', 'JSON.stringify({node:process.versions.node,modules:process.versions.modules,napi:process.versions.napi,platform:process.platform,arch:process.arch,electron:process.versions.electron})']))
 if (nodeInfo.platform !== 'win32' || nodeInfo.arch !== 'x64' || nodeInfo.electron || Number(nodeInfo.node.split('.')[0]) < 22) fail('A standalone Windows x64 Node >=22 is required')
 
@@ -154,12 +167,10 @@ const trackedSkills = artifactPath
 if (!trackedSkills.some(file => file.endsWith('SKILL.md'))) fail('No bundled skills found')
 if (artifactPath) copyTree(join(engineRoot, 'SKILLs'), join(target, 'SKILLs'))
 else for (const file of trackedSkills) copyFile(join(engineRoot, file), join(target, 'SKILLs', relative('.aether/skills', file)))
-copyFile(nodeSource, join(target, 'runtime/node.exe'))
-// Preserve the official Node and component notices when supplied by the distribution.
-const license = process.env.AETHER_NODE_LICENSE || [join(dirname(nodeSource), 'LICENSE'), join(appRoot, 'build', 'node-LICENSE')].find(existsSync)
-if (!license) fail('Node LICENSE missing; provide AETHER_NODE_LICENSE or build/node-LICENSE from the exact Node release')
-copyFile(license, join(target, 'runtime/LICENSE'))
+copyTree(toolchains.nodeDir, join(target, 'runtime'))
 copyFile(join(appRoot, 'scripts', 'verify-engine-runtime.mjs'), join(target, 'verify-runtime.mjs'))
+
+verifyWindowsToolchains(join(target, 'runtime'), toolchains.pythonDir, tempParent)
 
 const files = []
 function stableStat(file) {
@@ -183,6 +194,6 @@ writeFileSync(join(target, 'stage-manifest.json'), JSON.stringify({ schemaVersio
   engineVersion: manifest.version, node: nodeInfo, lockSha256: sha256(artifactPath || lockPath),
   dependencies, skillCount: trackedSkills.filter(file => file.endsWith('SKILL.md')).length, files }, null, 2) + '\n')
 console.log(run(join(target, 'runtime/node.exe'), [join(target, 'verify-runtime.mjs')], { cwd: target,
-  env: { SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, PATH: join(target, 'runtime') } }))
+  env: { SystemRoot: process.env.SystemRoot, TEMP: tempParent, TMP: tempParent, PATH: join(target, 'runtime') } }))
 console.log(JSON.stringify({ target, buildId: manifest.buildId, packages: dependencies.length, files: files.length,
   bytes: files.reduce((total, item) => total + item.bytes, 0), node: nodeInfo }))

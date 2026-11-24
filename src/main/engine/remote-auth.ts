@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path'
 import type { RemoteAuthCredential, RemoteAuthStatus } from '../../shared/ipc'
 import { remoteAuthTarget, validateRemoteAuth } from './remote-auth-contract'
-import { readAccountCredential, withExplicitAdvancedAuth } from '../account/credential-store'
+import { advanceCredentialRevision, readAccountCredential, withExplicitAdvancedAuth } from '../account/credential-store'
 
 function credentialPath(url: string): string {
   const target = remoteAuthTarget(url)
@@ -75,7 +75,12 @@ export function withRemoteAuthChange<T>(url: string, value: RemoteAuthCredential
       writeFileSync(temporary, JSON.stringify({ version: 1, encrypted: true, value: safeStorage.encryptString(JSON.stringify(credential)).toString('base64') }), { mode: 0o600 })
       renameSync(temporary, file)
     } else rmSync(file, { force: true })
-    try { return credential ? withExplicitAdvancedAuth(remoteAuthTarget(url), save) : save() } catch (error) {
+    try {
+      const scope = remoteAuthTarget(url)
+      const result = credential ? withExplicitAdvancedAuth(scope, save) : save()
+      advanceCredentialRevision(scope)
+      return result
+    } catch (error) {
       if (previous === null) rmSync(file, { force: true })
       else { writeFileSync(temporary, previous, { mode: 0o600 }); renameSync(temporary, file) }
       throw error

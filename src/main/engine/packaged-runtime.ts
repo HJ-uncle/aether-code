@@ -1,5 +1,5 @@
 import { constants, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
-import { delimiter, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 /** Seed writable skills without replacing user edits; a packaged runtime remains read-only. */
 function copyMissing(source: string, target: string): void {
@@ -15,7 +15,7 @@ function copyMissing(source: string, target: string): void {
   }
 }
 
-export function preparePackagedRuntime(root: string, userData: string, inheritedPath = ''): { cwd: string; env: Record<string, string> } {
+export function preparePackagedRuntime(root: string, userData: string): { cwd: string; env: Record<string, string> } {
   const state = join(userData, 'engine', 'state')
   const skills = join(userData, 'engine', 'skills')
   const seed = join(root, 'SKILLs')
@@ -24,7 +24,6 @@ export function preparePackagedRuntime(root: string, userData: string, inherited
   copyMissing(seed, skills)
   return { cwd: state, env: {
     NODE_ENV: 'production',
-    PATH: join(root, 'runtime') + delimiter + inheritedPath,
     WORKSPACE_ROOT: join(state, 'workspace'),
     QA_LOG_DIR: join(state, 'logs', 'qa'),
     AETHER_GLOBAL_DIR: join(userData, 'engine', 'config'),

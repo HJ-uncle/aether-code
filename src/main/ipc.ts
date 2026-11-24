@@ -63,7 +63,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { requireLocalRuntime, resolveRuntime } from './engine/runtime'
 import { getEnvironmentRemoteInstanceToken, remoteInstanceTokenConfigured } from './engine/remote-token'
-import { applyEngineConnection, assertEngineConnectionAvailable, cancelPendingEngineConnection, stopEngineConnection, connectionKeys, connectionInputForSettings } from './engine/connection'
+import { applyEngineConnection, applyServiceCredential, getServiceCredentialContext, assertEngineConnectionAvailable, cancelPendingEngineConnection, stopEngineConnection, connectionKeys, connectionInputForSettings } from './engine/connection'
 import { remoteAuthStatus } from './engine/remote-auth'
 import { importLocalRuntime } from './engine/import-local-runtime'
 import { canImportLocalRuntime } from './engine/runtime-import-support'
@@ -179,9 +179,24 @@ export function registerIpcHandlers(): void {
     const invoke = (): unknown => {
     switch (action) {
       case 'getState': return accountService.getState()
+      case 'family': return accountService.family(args[0])
+      case 'createChild': return accountService.createChild(args[0], args[1])
+      case 'setChildStatus': return accountService.setChildStatus(args[0], args[1], args[2])
+      case 'enterChild': return accountService.enterChild(args[0], args[1])
+      case 'getServiceCredentialContext': return getServiceCredentialContext(args[0] as string)
+      case 'applyServiceCredential':
+        ensureNotActivatingRuntime()
+        return applyServiceCredential(args[0] as string, args[1] as number, args[2] as RemoteAuthCredential | null)
       case 'setHttpTrust': return accountService.setHttpTrust(args[0] as string, args[1] as boolean, BrowserWindow.fromWebContents(event.sender))
-      case 'register': return accountService.register()
+      case 'activatePrimary': return accountService.activatePrimary(args[0])
+      case 'register': return accountService.register(args[0])
       case 'login': return accountService.login(args[0] as string)
+      case 'childPasswordLogin': return accountService.childPasswordLogin(args[0], args[1], args[2])
+      case 'copyChildResetCode': return accountService.copyChildResetCode(args[0], args[1])
+      case 'childPasswordRecover': return accountService.childPasswordRecover(args[0], args[1], args[2], args[3])
+      case 'getChildLoginInfo': return accountService.getChildLoginInfo(args[0], args[1])
+      case 'setManagedChildLogin': return accountService.setManagedChildLogin(args[0], args[1], args[2])
+      case 'changeOwnChildPassword': return accountService.changeOwnChildPassword(args[0], args[1], args[2])
       case 'reauthenticate': return accountService.reauthenticate(args[0] as string)
       case 'updateProfile': return accountService.updateProfile(args[0] as AccountProfileInput)
       case 'logout': return accountService.logout(args[0] === true)
@@ -191,7 +206,7 @@ export function registerIpcHandlers(): void {
       case 'regenerateRecovery': return accountService.regenerateRecovery()
       case 'copyRecovery': return accountService.copyRecovery()
       case 'importRecovery': return accountService.importRecovery(BrowserWindow.fromWebContents(event.sender))
-      case 'externalLogin': return accountService.externalLogin(args[0] as string, args[1] as 'login' | 'link' | 'reauth', args[2] as string | undefined)
+      case 'externalLogin': return accountService.externalLogin(args[0] as string, args[1] as 'login' | 'link' | 'reauth', args[2] as string | undefined, args[3])
       case 'cancelExternalLogin': return accountService.cancelExternalLogin()
       case 'unlink': return accountService.unlink(args[0] as string)
       default: throw new Error('未知账号操作。')

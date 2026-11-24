@@ -30,10 +30,14 @@ export const SETTINGS_DEFINITIONS: readonly SettingDefinition[] = [
     section: 'appearance', category: '外观 / 图形', scope: 'user', keywords: ['blur', '玻璃', '毛玻璃', '磨砂', '透明度', '卡顿', '性能']
   },
   {
+    key: 'aether.conversationUsage', label: '显示会话用量', description: '显示会话顶部与每轮回复中的 Token 和模型用量；关闭后仅保留超过 30 分钟的运行时间。',
+    section: 'general', category: '引擎管理 / 会话', scope: 'user', keywords: ['usage', 'tokens', 'model', '会话用量', 'Token', '用量', '耗时']
+  },
+  {
     key: 'aether.account.profile', label: '个人账号与登录',
-    description: '管理姓名、邮箱、简介、第三方账号绑定、恢复凭证和登录设备。',
+    description: '管理姓名、邮箱、简介、第三方账号绑定、恢复凭证、登录设备和当前服务的高级认证。',
     section: 'account', category: '个人账号', scope: 'user',
-    keywords: ['account', 'profile', 'login', 'oauth', '个人资料', '登录', '账号', '姓名', '邮箱', '凭证', '备份']
+    keywords: ['account', 'profile', 'login', 'oauth', '个人资料', '登录', '账号', '姓名', '邮箱', '凭证', '备份', '高级认证', 'API Key', 'JWT', 'Bearer']
   },
   {
     key: 'editor.fontFamily',
@@ -168,7 +172,7 @@ export const SETTINGS_DEFINITIONS: readonly SettingDefinition[] = [
     section: 'general',
     category: '引擎管理',
     scope: 'user',
-    keywords: ['engine', 'remote', 'embedded', '引擎', '远程']
+    keywords: ['engine', 'remote', 'embedded', '引擎', '远程', '服务地址', '实例令牌', '管理后台']
   },
   {
     key: 'aether.engine.autoStart',

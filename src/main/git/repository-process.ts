@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 import { promisify } from 'node:util'
-import nativeSupervisorPath from './assets/repository-supervisor.exe?asset'
+import nativeSupervisorPath from './assets/repository-supervisor.exe?asset&asarUnpack'
 
 const packagedExecutable = nativeSupervisorPath
 const packagedSha256 = "3d1e0c4a6b08bd260ff82b4585545376cf4e8b02e0f9ee649c0d07f30243679c"

@@ -24,7 +24,7 @@ function loadSubject() {
   const calls: Array<{ path: string; method: string; authorization: string | null; apiKey: string | null; body: Record<string, unknown> }> = []
   const changes: AccountState[] = []
   const harness = {
-    clipboard: '', identityChanges: 0, cleanup: 0, dialogs: 0, sockets: 0, openedUrls: [] as string[],
+    clipboard: '', failEncryption: false, identityChanges: 0, cleanup: 0, dialogs: 0, sockets: 0, openedUrls: [] as string[],
     target: { scope: endpoint, url: endpoint, headers: {} },
     picked: { canceled: false, filePath: join(fixture, 'recovery.json') },
     respond: async (_path: string, _body: Record<string, unknown>, _init: RequestInit): Promise<unknown> => { throw new Error('Unexpected network request') }
@@ -32,9 +32,9 @@ function loadSubject() {
   const electron = {
     app: { getPath: () => fixture },
     safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'test-encrypted',
-      encryptString: (value: string) => Buffer.from('synthetic-encryption:' + value),
+      encryptString: (value: string) => { if (harness.failEncryption) throw new Error('Synthetic secure storage unavailable'); return Buffer.from('synthetic-encryption:' + value) },
       decryptString: (value: Buffer) => value.toString('utf8').replace(/^synthetic-encryption:/, '') },
-    clipboard: { writeText: (value: string) => { harness.clipboard = value } },
+    clipboard: { writeText: (value: string) => { harness.clipboard = value }, readText: () => harness.clipboard, clear: () => { harness.clipboard = '' } },
     dialog: { showSaveDialog: async () => { harness.dialogs++; return harness.picked } },
     shell: { openExternal: async (url: string) => { harness.openedUrls.push(url) } }
   }
@@ -451,4 +451,208 @@ test('candidate probing never refreshes an inactive account; a committed target 
     expect(calls.map(c => c.path)).toEqual(['/engine/health', '/engine/meta', '/tools', '/refresh', '/tools'])
     expect(JSON.stringify(snapshot)).not.toContain('synthetic-rotated-access-token')
   } finally { await host.stop() }
+})
+
+
+const managedId = '00000000-0000-4000-8000-000000000071'
+const familyParentFixture = (): AccountCredential => ({ ...credential(), user: { ...user(), accountKind: 'primary', mainAccountActivated: true, authenticatedAt: new Date().toISOString() } })
+const familyScope = (c: AccountCredential) => ({ serviceUrl: endpoint, userId: c.user.id, tenantId: c.user.tenantId, sessionId: c.user.sessionId! })
+const familyChildFixture = (): AccountCredential => ({ user: { ...user(), id: managedId, name: '协作空间', accountKind: 'child', mainAccountActivated: false,
+  tenantId: 'account_child_00000000-0000-4000-8000-000000000072', sessionId: 'child-only-session' },
+  accessToken: 'synthetic-child-access-token-123', refreshToken: 'synthetic-child-refresh-token-123', expiresAt: new Date(Date.now() + 900_000).toISOString() })
+
+test('family management pins the service, principal, tenant and session; rejects unactivated or nested callers and incomplete inventories', async () => {
+  const { subject, harness, calls } = loadSubject(), api = subject.accountService, parent = familyParentFixture(), scope = familyScope(parent)
+  subject.saveAccountCredential(endpoint, parent)
+  const item = { id: managedId, name: '办'.repeat(80), status: 'active', createdAt: new Date().toISOString() }
+  for (const stale of [{ ...scope, serviceUrl: otherEndpoint }, { ...scope, userId: 'another' }, { ...scope, tenantId: 'another' }, { ...scope, sessionId: 'another' }]) {
+    await expect(api.createChild(stale, 'example')).rejects.toThrow('已切换')
+  }
+  await expect(api.createChild(scope, 'x\u202ey')).rejects.toThrow('名称')
+  await expect(api.setChildStatus(scope, managedId, 'false')).rejects.toThrow('状态')
+  expect(calls).toEqual([])
+  harness.respond = async (path, body, init) => {
+    if (path === '/children' && init.method === 'POST') return { ...item, name: body.name }
+    if (path === '/children/' + managedId) return { ...item, status: body.status }
+    return { limit: 3, used: 1, children: [{ ...item, recoveryKey: 'unwanted-remote-field' }] }
+  }
+  expect(await api.family(scope)).toEqual({ limit: 3, used: 1, children: [item] })
+  await api.createChild(scope, '  New  '); await api.setChildStatus(scope, managedId, false)
+  expect(calls.map(c => [c.method,c.path,c.body])).toEqual([['GET','/children',{}],['POST','/children',{name:'New'}],['PATCH','/children/'+managedId,{status:'disabled'}]])
+  expect(calls.every(c => c.authorization === 'Bearer ' + parent.accessToken)).toBe(true)
+  harness.respond = async () => ({ used: 2, limit: 3, children: [item] })
+  await expect(api.family(scope)).rejects.toThrow('不完整')
+  const count = calls.length
+  for (const forbidden of [familyChildFixture(), { ...parent, user: { ...parent.user, mainAccountActivated: false } }]) {
+    subject.saveAccountCredential(endpoint, forbidden)
+    await expect(api.family(familyScope(forbidden))).rejects.toThrow('已开通的主账号')
+  }
+  expect(calls).toHaveLength(count)
+})
+
+test('family handoff replaces the encrypted principal, scrubs a copied parent key, and never restores the parent on restart, expiry or logout', async () => {
+  const { subject, harness, calls, changes } = loadSubject(), api = subject.accountService, parent = familyParentFixture(), scope = familyScope(parent), child = familyChildFixture()
+  subject.saveAccountCredential(endpoint, parent)
+  await api.copyRecovery(); expect(harness.clipboard).toBe(parent.recoveryKey)
+  harness.respond = async (path) => { expect(path).toBe('/children/' + managedId + '/enter'); return child }
+  expect(await api.enterChild(scope, managedId)).toMatchObject({status:'authenticated',user:child.user,recovery:{available:false,exportedAt:null}})
+  expect(harness.clipboard).toBe(''); expect(harness.cleanup).toBe(1); expect(harness.identityChanges).toBe(1)
+  for (const secret of [parent.recoveryKey!, parent.accessToken, parent.refreshToken, child.accessToken, child.refreshToken]) expect(JSON.stringify(changes)).not.toContain(secret)
+  await expect(api.family(scope)).rejects.toThrow('已切换')
+  for(const action of [() => api.copyRecovery(), () => api.exportRecovery(), () => api.regenerateRecovery(), () => api.externalLogin('fixture','link')]) await expect(action()).rejects.toThrow('子账号')
+  expect(calls).toHaveLength(1)
+  const restarted = loadSubject(), stored = restarted.subject.readAccountCredential(endpoint)
+  expect(stored).toMatchObject({ managed:true, credential:{user:child.user,accessToken:child.accessToken} })
+  expect(JSON.stringify(stored)).not.toContain(parent.recoveryKey!); expect(JSON.stringify(stored)).not.toContain(parent.refreshToken)
+  restarted.harness.respond = async path => path === '/providers' ? {providers:[],registrationEnabled:true} : new Response(JSON.stringify({code:401,message:'synthetic expired child'}), {status:401})
+  expect(await restarted.subject.accountService.getState()).toMatchObject({ status:'expired', user:child.user })
+  expect(await restarted.subject.accountService.logout()).toMatchObject({ status:'signed-out', user:null })
+  expect(loadSubject().subject.readAccountCredential(endpoint)).toMatchObject({ managed:true, credential:null })
+})
+
+test('family handoff requires an exported parent recovery key or an available linked provider, and rejects every mismatched grant', async () => {
+  const { subject,harness,calls }=loadSubject(), api=subject.accountService, parent=familyParentFixture(), scope=familyScope(parent), child=familyChildFixture()
+  subject.saveAccountCredential(endpoint,{...parent,exportedAt:null})
+  await expect(api.enterChild(scope,managedId)).rejects.toThrow('保存主账号恢复文件'); expect(calls).toEqual([])
+  const federated = { ...parent, recoveryKey:undefined, exportedAt:null, user:{...parent.user,identities:[{providerId:'company',subject:'test'}]} }
+  subject.saveAccountCredential(endpoint,federated); harness.respond=async ()=>({providers:[]})
+  await expect(api.enterChild(scope,managedId)).rejects.toThrow('保存主账号恢复文件'); expect(calls.map(c=>c.path)).toEqual(['/providers'])
+  for(const invalid of [parent, {...child,user:{...child.user,id:'unselected'}}, {...child,user:{...child.user,tenantId:parent.user.tenantId}},
+    {...child,user:{...child.user,sessionId:parent.user.sessionId}}, {...child,user:{...child.user,accountKind:'primary'}}, {...child,refreshToken:parent.refreshToken}, {...child,recoveryKey:parent.recoveryKey}]) {
+    harness.respond=async path=>path==='/providers'?{providers:[{id:'company',type:'oidc',name:'Company'}]}:invalid
+    await expect(api.enterChild(scope,managedId)).rejects.toThrow('所选子账号'); expect(subject.readAccountCredential(endpoint).credential).toEqual(federated)
+  }
+  harness.respond=async path=>path==='/providers'?{providers:[{id:'company',type:'oidc',name:'Company'}]}:child
+  expect((await api.enterChild(scope,managedId)).user?.id).toBe(managedId)
+})
+
+test('family handoff rejects late or unpersistable grants and revokes only the new child session at its original service', async () => {
+  const {subject,harness,calls}=loadSubject(), api=subject.accountService, parent=familyParentFixture(), scope=familyScope(parent), child=familyChildFixture()
+  subject.saveAccountCredential(endpoint,parent)
+  for(const failure of ['write','service']) {
+    harness.target={scope:endpoint,url:endpoint,headers:{}}
+    harness.respond=async path=>{
+      if(path==='/logout') return {loggedOut:true}
+      expect(path).toBe('/children/'+managedId+'/enter')
+      if(failure==='write') harness.failEncryption=true
+      else harness.target={scope:otherEndpoint,url:otherEndpoint,headers:{}}
+      return child
+    }
+    await expect(api.enterChild(scope,managedId)).rejects.toThrow(failure==='write'?'secure storage':'已切换')
+    harness.failEncryption=false
+    expect(calls.at(-1)).toMatchObject({path:'/logout',authorization:'Bearer '+child.accessToken,body:{all:false}})
+    expect(subject.readAccountCredential(endpoint).credential).toEqual(parent)
+    expect(loadSubject().subject.readAccountCredential(endpoint).credential).toEqual(parent)
+    expect(subject.readAccountCredential(otherEndpoint).credential).toBeNull()
+  }
+})
+
+const anonymousChildScope = { serviceUrl: endpoint, userId: null, tenantId: null, sessionId: null }
+const childLoginName = 'fixture.child', childPassword = 'synthetic child password for this test'
+const childResetCode = 'aether_child_reset_' + 'r'.repeat(43)
+
+for (const invalid of ['primary account', 'missing session', 'expired grant', 'default tenant'] as const) {
+  test(`child password login rejects an invalid grant (${invalid}) without saving or publishing it`, async () => {
+    const { subject, harness, calls, changes } = loadSubject(), grant = familyChildFixture()
+    switch (invalid) {
+      case 'primary account': grant.user.accountKind = 'primary'; break
+      case 'missing session': delete grant.user.sessionId; break
+      case 'expired grant': grant.expiresAt = new Date(0).toISOString(); break
+      case 'default tenant': grant.user.tenantId = 'default'; break
+    }
+    harness.respond = async () => grant
+    await expect(subject.accountService.childPasswordLogin(anonymousChildScope, childLoginName, childPassword)).rejects.toThrow('有效的子账号会话')
+    expect(calls).toMatchObject([{ path: '/child-password/login', method: 'POST', authorization: null }])
+    expect(harness.identityChanges).toBe(0)
+    expect(changes).toEqual([])
+    expect(loadSubject().subject.readAccountCredential(endpoint)).toEqual({ managed: false, persistence: 'none', credential: null })
+  })
+}
+
+for (const operation of ['login', 'copy reset code'] as const) {
+  for (const switched of ['service', 'account'] as const) {
+    test(`child password ${operation} ignores a late response after switching ${switched}`, async () => {
+      const { subject, harness, calls, changes } = loadSubject(), child = familyChildFixture()
+      const otherServiceAccount = familyParentFixture()
+      const replacement = { ...child, user: { ...child.user, id: 'another-child', tenantId: 'another-tenant', sessionId: 'another-session' },
+        accessToken: 'synthetic-replacement-access', refreshToken: 'synthetic-replacement-refresh' }
+      const original = operation === 'login' ? null : child
+      if (original) subject.saveAccountCredential(endpoint, original)
+      subject.saveAccountCredential(otherEndpoint, otherServiceAccount)
+      harness.clipboard = 'keep existing clipboard'
+      harness.respond = async () => {
+        // Fetch has captured the original target and authorization; switch before it delivers the response.
+        if (switched === 'service') harness.target = { scope: otherEndpoint, url: otherEndpoint, headers: {} }
+        else subject.saveAccountCredential(endpoint, replacement)
+        return operation === 'login' ? child : { code: childResetCode }
+      }
+      const action = operation === 'login'
+        ? subject.accountService.childPasswordLogin(anonymousChildScope, childLoginName, childPassword)
+        : subject.accountService.copyChildResetCode(familyScope(child), childPassword)
+      await expect(action).rejects.toThrow('已切换')
+      expect(calls).toMatchObject([operation === 'login'
+        ? { path: '/child-password/login', method: 'POST', authorization: null }
+        : { path: '/child-password/reset-code', method: 'POST', authorization: 'Bearer ' + child.accessToken }])
+      expect(harness.clipboard).toBe('keep existing clipboard')
+      expect(harness.identityChanges).toBe(0)
+      expect(changes).toEqual([])
+      for (const store of [subject, loadSubject().subject]) {
+        expect(store.readAccountCredential(endpoint).credential).toEqual(switched === 'account' ? replacement : original)
+        expect(store.readAccountCredential(otherEndpoint).credential).toEqual(otherServiceAccount)
+      }
+    })
+  }
+}
+
+test('child password login preserves the new account if old identity cleanup outlasts the request', async () => {
+  const { subject, harness, changes } = loadSubject(), child = familyChildFixture(), replacement = familyParentFixture()
+  harness.respond = async () => child
+  subject.configureAccountService({
+    target: () => harness.target,
+    beforeIdentityChange: async () => { harness.cleanup++; subject.saveAccountCredential(endpoint, replacement); return null },
+    identityChanged: async () => { harness.identityChanges++ },
+    changed: state => changes.push(state)
+  })
+  await expect(subject.accountService.childPasswordLogin(anonymousChildScope, childLoginName, childPassword)).rejects.toThrow('已切换')
+  expect(harness.cleanup).toBe(1)
+  expect(harness.identityChanges).toBe(0)
+  expect(changes).toEqual([])
+  expect(loadSubject().subject.readAccountCredential(endpoint).credential).toEqual(replacement)
+})
+
+test('child password login persists the session and copies only the reset code without exposing secrets to the renderer', async () => {
+  const login = loadSubject(), child = familyChildFixture()
+  login.harness.respond = async () => child
+  const state = await login.subject.accountService.childPasswordLogin(anonymousChildScope, childLoginName, childPassword)
+  expect(login.calls).toEqual([{ path: '/child-password/login', method: 'POST', authorization: null, apiKey: null,
+    body: { loginName: childLoginName, password: childPassword } }])
+  expect(state).toMatchObject({ status: 'authenticated', user: child.user, persistence: 'encrypted', recovery: { available: false, exportedAt: null } })
+  expect(login.harness.identityChanges).toBe(1)
+  expect(login.changes).toContainEqual(state)
+
+  const restarted = loadSubject()
+  restarted.harness.clipboard = 'replace on successful copy'
+  restarted.harness.respond = async () => ({ code: childResetCode })
+  const result = await restarted.subject.accountService.copyChildResetCode(familyScope(child), childPassword)
+  expect(restarted.calls).toEqual([{ path: '/child-password/reset-code', method: 'POST', authorization: 'Bearer ' + child.accessToken, apiKey: null,
+    body: { currentPassword: childPassword } }])
+  expect(result).toBeUndefined()
+  expect(restarted.harness.clipboard).toBe(childResetCode)
+  expect(restarted.harness.identityChanges).toBe(0)
+  const rendererState = JSON.stringify([state, ...login.changes, ...restarted.changes])
+  for (const secret of [childPassword, child.accessToken, child.refreshToken, childResetCode]) expect(rendererState).not.toContain(secret)
+  const stored = loadSubject().subject.readAccountCredential(endpoint)
+  expect(stored).toMatchObject({ managed: true, persistence: 'encrypted', credential: child })
+  for (const secret of [childPassword, childResetCode]) expect(JSON.stringify(stored)).not.toContain(secret)
+})
+
+test('copying an invalid child reset code leaves the clipboard untouched', async () => {
+  const { subject, harness } = loadSubject(), child = familyChildFixture()
+  subject.saveAccountCredential(endpoint, child)
+  harness.clipboard = 'keep existing clipboard'
+  for (const code of [familyParentFixture().recoveryKey, childResetCode.slice(0, -1)]) {
+    harness.respond = async () => ({ code })
+    await expect(subject.accountService.copyChildResetCode(familyScope(child), childPassword)).rejects.toThrow('子账号自己保存的密码恢复码')
+    expect(harness.clipboard).toBe('keep existing clipboard')
+  }
 })

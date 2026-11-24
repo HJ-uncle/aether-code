@@ -1,5 +1,7 @@
 import { clipboard, dialog, shell, type BrowserWindow, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { delegatedCredential, familyChild, familyChildId, familyName, familyOverview, familyParent } from './family-contract'
+import { checkChildScope, childLoginPath, childProof, loginValue, managementFields, passwordValue, recoveryValue, safeLoginInfo } from './child-login-contract'
 import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import type { AccountProfileInput, AccountProvider, AccountSession, AccountState, AccountUser } from '../../shared/account'
 import { readAccountCredential, saveAccountCredential, validAccountUser, validCredential, type AccountCredential } from './credential-store'
@@ -41,11 +43,22 @@ function assertTarget(t: AccountTarget): void {
 }
 function assertUser(t: AccountTarget, user: unknown): asserts user is AccountUser {
   const current = readAccountCredential(t.scope).credential?.user
-  if (!validAccountUser(user) || !current || current.id !== user.id || current.tenantId !== user.tenantId) throw new Error('账号服务返回了不匹配的个人资料，已保留原登录信息。')
+  if (!validAccountUser(user) || !current || current.id !== user.id || current.tenantId !== user.tenantId || (current.accountKind === 'child' && user.accountKind !== 'child')) throw new Error('账号服务返回了不匹配的个人资料，已保留原登录信息。')
 }
 export function assertAccountTransport(value: string): void {
   if (getAccountTransport(value) !== 'http-untrusted') return
   throw new Error('此服务使用 HTTP。请先确认它属于可信内网，或改用 HTTPS 地址。')
+}
+function enrollmentCode(t: AccountTarget, value: unknown): string {
+  const input = value as { code?: unknown; serviceUrl?: unknown } | null
+  if (!input || typeof input.serviceUrl !== 'string' || input.serviceUrl !== t.url) throw new Error('开通码所属的服务已变化，请从当前服务重新发起创建。')
+  if (typeof input.code !== 'string' || !/^aether_activate_[A-Za-z0-9_-]{43}$/.test(input.code)) throw new Error('请输入管理员签发的完整主账号开通码。')
+  return input.code
+}
+async function requireEnrollmentService(t: AccountTarget): Promise<void> {
+  const capabilities = await request<{ activationCodeRequired?: boolean; registrationEnabled?: boolean }>(t, '/providers')
+  assertTarget(t)
+  if (capabilities?.activationCodeRequired !== true) throw new Error('当前引擎不支持主账号开通码，请更新引擎后再试。')
 }
 function publish(t: AccountTarget, next: Partial<AccountState>): AccountState {
   if (dep().target().scope !== t.scope) return state
@@ -60,10 +73,11 @@ function publish(t: AccountTarget, next: Partial<AccountState>): AccountState {
   dep().changed(state)
   return state
 }
-async function request<T>(t: AccountTarget, path: string, method = 'GET', body?: unknown, authenticated = false, signal?: AbortSignal): Promise<T> {
+async function request<T>(t: AccountTarget, path: string, method = 'GET', body?: unknown, authenticated = false, signal?: AbortSignal, check?: () => void): Promise<T> {
   const headers: Record<string, string> = { ...t.headers, Accept: 'application/json' }
   if (authenticated) {
     await ensureAccountSession(t, signal)
+    check?.()
     const credential = readAccountCredential(t.scope).credential
     if (!credential) throw new AccountHttpError(401, '请先登录账号。')
     headers.Authorization = `Bearer ${credential.accessToken}`
@@ -123,16 +137,60 @@ async function committedIdentity(): Promise<string | null> {
   try { await dep().identityChanged(); return null }
   catch (error) { return '账号已更新，连接资源清理未完成：' + (error instanceof Error ? error.message : String(error)) }
 }
-async function accept(t: AccountTarget, result: AccountCredential): Promise<AccountState> {
+function familyContext(t: AccountTarget, scope: unknown) {
+  const version = generation
+  const check = (): AccountCredential => {
+    assertTarget(t)
+    if (generation !== version) throw new Error('账号已切换，请在当前账号页重试。')
+    return familyParent(scope, t.url, readAccountCredential(t.scope).credential)
+  }
+  const parent = check()
+  const send = async (path: string, method = 'GET', body?: unknown): Promise<unknown> => {
+    const result = await request(t, path, method, body, true, undefined, check)
+    check()
+    return result
+  }
+  return { parent, check, send }
+}
+function childPasswordContext(t: AccountTarget, scope: unknown, caller: 'public' | 'child') {
+  const version = generation
+  const check = (): void => {
+    assertTarget(t)
+    if (version !== generation) throw new Error('服务或账号已切换，请在当前账号页重试。')
+    const current = readAccountCredential(t.scope).credential
+    checkChildScope(scope, t.url, current?.user)
+    if (caller === 'public') {
+      if (current && !(stateScope === t.scope && state.status === 'expired')) throw new Error('请先退出当前账号，再使用子账号密码登录或找回密码。')
+    } else if (current?.user.accountKind !== 'child' || !current.user.sessionId) throw new Error('请先登录自己的子账号。')
+  }
+  check()
+  const send = async <T>(path: string, method = 'GET', body?: unknown): Promise<T> => {
+    const result = await request<T>(t, path, method, body, caller === 'child', undefined, check)
+    check()
+    return result
+  }
+  return { check, send }
+}
+function onlyIndependentLogin(t: AccountTarget): void {
+  if (readAccountCredential(t.scope).credential?.user.accountKind === 'child') throw new Error('子账号请使用自己的密码，或联系主账号重置。')
+}
+async function accept(t: AccountTarget, result: AccountCredential, handoff?: () => AccountCredential, check?: () => void): Promise<AccountState> {
   assertTarget(t)
   if (!validCredential(result)) throw new Error('登录服务返回的会话无效。')
+  check?.()
+  handoff?.()
   const cleanupMessage = await identityCleanup()
   assertTarget(t)
+  check?.()
+  const previous = handoff ? handoff() : readAccountCredential(t.scope).credential
+  if (handoff && cleanupMessage) throw new Error('无法安全切换，已保留主账号。' + cleanupMessage)
+  if (handoff && previous?.recoveryKey && clipboard.readText() === previous.recoveryKey) clipboard.clear()
+  const sameAccount = previous && previous.user.id === result.user.id && previous.user.tenantId === result.user.tenantId
+  const recoveryKey = result.user.accountKind === 'child' ? undefined : result.recoveryKey || (sameAccount ? previous.recoveryKey : undefined)
+  const exportedAt = sameAccount && previous.recoveryKey === recoveryKey ? previous.exportedAt : null
+  const { user, accessToken, refreshToken, expiresAt } = result
+  const entry = saveAccountCredential(t.scope, { user, accessToken, refreshToken, expiresAt, recoveryKey, exportedAt })
   generation++
-  const previous = readAccountCredential(t.scope).credential
-  const recoveryKey = result.recoveryKey || (previous?.user.id === result.user.id ? previous.recoveryKey : undefined)
-  const exportedAt = previous?.user.id === result.user.id && previous.recoveryKey === recoveryKey ? previous.exportedAt : null
-  const entry = saveAccountCredential(t.scope, { ...result, recoveryKey, exportedAt })
   const identityMessage = await committedIdentity()
   return publish(t, { status: 'authenticated', user: result.user, persistence: entry.persistence, message: cleanupMessage ?? identityMessage ?? (entry.persistence === 'session' ? '系统安全存储不可用，当前登录仅在本次运行有效。请备份登录凭证。' : null) })
 }
@@ -197,7 +255,7 @@ export async function ensureAccountSession(t: AccountTarget, signal?: AbortSigna
       if (rejected) {
         saveAccountCredential(t.scope, { ...current, accessToken: 'expired_account_session', expiresAt: new Date(0).toISOString() })
       }
-      publish(t, { status: rejected ? 'expired' : 'offline', user: current.user, message: rejected ? '登录已过期或被撤销，请使用备份凭证或已绑定的第三方账号重新登录。' : '暂时无法校验登录，凭证已保留，连接恢复后会重试。' })
+      publish(t, { status: rejected ? 'expired' : 'offline', user: current.user, message: rejected ? (current.user.accountKind === 'child' ? '登录已过期或被撤销，请使用子账号密码重新登录，或请主账号协助。' : '登录已过期或被撤销，请使用备份凭证或已绑定的第三方账号重新登录。') : '暂时无法校验登录，凭证已保留，连接恢复后会重试。' })
       throw error
     }
   })().finally(() => refreshing.delete(t.scope))
@@ -209,16 +267,16 @@ async function readState(): Promise<AccountState> {
   let t: AccountTarget
   try { t = target() } catch (error) { state = { ...initial(), status: 'unavailable', message: (error as Error).message }; return state }
   if (stateScope !== t.scope) { state = initial(t.url); stateScope = t.scope }
-  let providerState: Pick<AccountState, 'providers' | 'registrationEnabled'> | undefined
+  let providerState: Pick<AccountState, 'providers' | 'registrationEnabled' | 'childPasswordAvailable'> | undefined
   try {
-    const providers = await request<AccountProvider[] | { providers: AccountProvider[]; registrationEnabled: boolean }>(t, '/providers')
+    const providers = await request<AccountProvider[] | { providers: AccountProvider[]; registrationEnabled: boolean; childPasswordAvailable?: boolean }>(t, '/providers')
     assertTarget(t)
     if (version !== generation) return state
     const list = Array.isArray(providers) ? providers : providers.providers
     if (!Array.isArray(list) || !list.every(p => p && typeof p.id === 'string' && typeof p.name === 'string' && ['oidc', 'oauth2', 'credential'].includes(p.type))) throw new Error('第三方登录列表格式无效。')
     // Provider discovery does not validate the session. Broadcasting the previous
     // signed-out snapshot here can race registration and dismiss its onboarding.
-    providerState = { providers: list, registrationEnabled: Array.isArray(providers) ? true : providers.registrationEnabled }
+    providerState = { providers: list, registrationEnabled: Array.isArray(providers) ? true : providers.registrationEnabled, childPasswordAvailable: !Array.isArray(providers) && providers.childPasswordAvailable === true }
     const entry = readAccountCredential(t.scope)
     if (!entry.credential) return publish(t, { ...providerState, status: 'signed-out', user: null, persistence: 'none', message: null })
     const profileRevision = profileRevisions.get(t.scope) ?? 0
@@ -275,9 +333,65 @@ export const accountService = {
     stateFlight = next
     return next
   },
-  register(): Promise<AccountState> { return exclusive(async t => {
+  family(scope: unknown) { return exclusive(async t => {
+    const family = familyContext(t, scope)
+    return familyOverview(await family.send('/children'), family.parent.user.id)
+  }) },
+  createChild(scope: unknown, name: unknown): Promise<void> { return exclusive(async t => {
+    const family = familyContext(t, scope), label = familyName(name)
+    const child = familyChild(await family.send('/children', 'POST', { name: label }), family.parent.user.id)
+    if (child.name !== label || child.status !== 'active') throw new Error('新建子账号的结果不匹配，请刷新核对。')
+  }) },
+  setChildStatus(scope: unknown, childId: unknown, enabled: unknown): Promise<void> { return exclusive(async t => {
+    if (typeof enabled !== 'boolean') throw new Error('子账号状态无效。')
+    const family = familyContext(t, scope), id = familyChildId(childId), status = enabled ? 'active' : 'disabled'
+    const child = familyChild(await family.send('/children/' + id, 'PATCH', { status }), family.parent.user.id)
+    if (child.id !== id || child.status !== status) throw new Error('子账号状态与所选操作不匹配，请刷新核对。')
+  }) },
+  enterChild(scope: unknown, childId: unknown): Promise<AccountState> { return exclusive(async t => {
+    const id = familyChildId(childId), family = familyContext(t, scope), parent = family.parent
+    const backedUp = (entry: AccountCredential): boolean => !!entry.exportedAt && !!entry.recoveryKey
+    let providers = new Set<string>()
+    if (!backedUp(parent) && parent.user.identities.length) {
+      const result = await request<AccountProvider[] | { providers?: AccountProvider[] }>(t, '/providers')
+      const list = Array.isArray(result) ? result : result?.providers
+      if (Array.isArray(list)) providers = new Set(list.filter(p => p && typeof p.id === 'string').map(p => p.id))
+    }
+    const recoverableParent = (): AccountCredential => {
+      const current = family.check()
+      if (!backedUp(current) && !current.user.identities.some(i => providers.has(i.providerId))) throw new Error('请先保存主账号恢复文件，或绑定可用的第三方账号，再切换此设备。')
+      return current
+    }
+    recoverableParent()
+    const result = await request(t, '/children/' + id + '/enter', 'POST', {}, true, undefined, recoverableParent)
+    const next = delegatedCredential(result, parent, id)
+    try { return await accept(t, next, recoverableParent) }
+    catch (error) {
+      // If committing locally failed, revoke only the verified, unused child session.
+      if (readAccountCredential(t.scope).credential?.user.sessionId !== next.user.sessionId) try {
+        await request({ ...t, headers: { ...t.headers, Authorization: 'Bearer ' + next.accessToken } }, '/logout', 'POST', { all: false })
+      } catch { /* A disabled child or revoked parent also invalidates its delegated sessions. */ }
+      throw error
+    }
+  }) },
+  activatePrimary(activation: unknown): Promise<AccountState> { return exclusive(async t => {
+    const code=enrollmentCode(t,activation), original=readAccountCredential(t.scope).credential
+    if (!original || original.user.accountKind !== 'primary' || original.user.mainAccountActivated !== false || (activation as {userId?:unknown})?.userId!==original.user.id) throw new Error('请刷新当前个人账号后再开通。')
+    await requireEnrollmentService(t)
+    const before=readAccountCredential(t.scope).credential
+    if (!before || before.user.id!==original.user.id || before.user.sessionId!==original.user.sessionId) throw new Error('当前登录已变化，请刷新账号状态。')
+    const user=await request<AccountUser>(t,'/activation','POST',{activationCode:code},true)
+    assertTarget(t); assertUser(t,user)
+    const live=readAccountCredential(t.scope).credential
+    if (!live || live.user.id!==original.user.id || live.user.sessionId!==user.sessionId || user.mainAccountActivated!==true) throw new Error('当前登录已变化，请刷新账号状态。')
+    saveAccountCredential(t.scope,{...live,user}); changedProfile(t.scope)
+    return publish(t,{status:'authenticated',user,message:null})
+  }) },
+  register(activation: unknown): Promise<AccountState> { return exclusive(async t => {
     if (readAccountCredential(t.scope).credential && state.status !== 'expired') throw new Error('请先退出当前账号，避免重复创建账号。')
-    return accept(t, await request<AccountCredential>(t, '/register', 'POST', {}))
+    const code = enrollmentCode(t, activation)
+    await requireEnrollmentService(t)
+    return accept(t, await request<AccountCredential>(t, '/register', 'POST', {activationCode:code}))
   }) },
   login(recoveryKey: string): Promise<AccountState> { return exclusive(async t => {
     if (typeof recoveryKey !== 'string' || !recoveryKey.trim() || recoveryKey.length > 16384) throw new Error('请输入有效登录凭证。')
@@ -285,6 +399,7 @@ export const accountService = {
     return accept(t, { ...result, recoveryKey: recoveryKey.trim() })
   }) },
   reauthenticate(recoveryKey: string): Promise<AccountState> { return exclusive(async t => {
+    onlyIndependentLogin(t)
     if (typeof recoveryKey !== 'string' || !recoveryKey.trim() || recoveryKey.length > 4096) throw new Error('请输入有效恢复码。')
     const user = await request<AccountUser>(t, '/reauth', 'POST', { recoveryKey: recoveryKey.trim() }, true)
     assertTarget(t)
@@ -328,6 +443,7 @@ export const accountService = {
     await request(target(), `/sessions/${encodeURIComponent(id)}`, 'DELETE', undefined, true)
   },
   exportRecovery(owner?: BrowserWindow | null): Promise<boolean> { return exclusive(async t => {
+    onlyIndependentLogin(t)
     const credential = readAccountCredential(t.scope).credential
     if (!credential) throw new Error('请先登录再备份。')
     if (!credential.recoveryKey) throw new Error('此设备没有当前恢复码，请先使用“重新生成恢复码”，再保存恢复文件。')
@@ -344,6 +460,7 @@ export const accountService = {
     return true
   }) },
   regenerateRecovery(): Promise<AccountState> { return exclusive(async t => {
+    onlyIndependentLogin(t)
     const current = readAccountCredential(t.scope).credential
     if (!current) throw new Error('请先登录再生成恢复码。')
     const result = await request<{ recoveryKey: string }>(t, '/recovery', 'POST', {}, true)
@@ -355,16 +472,18 @@ export const accountService = {
     return publish(t, { message: null })
   }) },
   copyRecovery(): Promise<void> { return exclusive(async t => {
+    onlyIndependentLogin(t)
     const credential = readAccountCredential(t.scope).credential
     if (!credential?.recoveryKey) throw new Error('此设备没有当前恢复码，请先使用“重新生成恢复码”。')
     clipboard.writeText(credential.recoveryKey)
   }) },
   async importRecovery(owner?: BrowserWindow | null): Promise<AccountState | null> {
-    const t = target()
+    const t = target(), originalGeneration = generation
     const options: OpenDialogOptions = { title: '导入账号备份', properties: ['openFile'], filters: [{ name: 'Aether 账号备份', extensions: ['json'] }] }
     const picked = owner && !owner.isDestroyed() ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
     if (picked.canceled || !picked.filePaths[0]) return null
     assertTarget(t)
+    if (originalGeneration !== generation) throw new Error('账号已切换，本次导入已取消。')
     const path = picked.filePaths[0]
     if (statSync(path).size > 65536) throw new Error('备份文件过大。')
     const backup = JSON.parse(readFileSync(path, 'utf8'))
@@ -372,8 +491,15 @@ export const accountService = {
     if (backup.version !== 1 || typeof backup.recoveryKey !== 'string' || (!sameLocal && backup.serviceUrl !== t.url)) throw new Error('备份与当前服务地址不匹配，请先连接备份对应的服务。')
     return accountService.login(backup.recoveryKey)
   },
-  externalLogin(providerId: string, mode: 'login' | 'link' | 'reauth', credential?: string): Promise<AccountState> { return exclusive(async t => {
+  externalLogin(providerId: string, mode: 'login' | 'link' | 'reauth', credential?: string, activation?: unknown): Promise<AccountState> { return exclusive(async t => {
     if (typeof providerId !== 'string' || !/^[a-zA-Z0-9_.-]{1,80}$/.test(providerId) || !['login', 'link', 'reauth'].includes(mode)) throw new Error('第三方登录参数无效。')
+    if (mode !== 'login') onlyIndependentLogin(t)
+    if (activation !== undefined && mode !== 'login') throw new Error('开通码仅用于新建主账号。')
+    const enrollment = activation === undefined ? {} : { activationCode: enrollmentCode(t, activation) }
+    if (mode === 'login') {
+      if (readAccountCredential(t.scope).credential && state.status !== 'expired') throw new Error('请先退出当前账号，再使用第三方登录。')
+      await requireEnrollmentService(t)
+    }
     const finish = async (result: AccountCredential | AccountUser): Promise<AccountState> => {
       assertTarget(t)
       if (mode === 'login') return accept(t, result as AccountCredential)
@@ -388,12 +514,12 @@ export const accountService = {
     }
     if (credential !== undefined) {
       if (typeof credential !== 'string' || !credential.trim() || credential.length > 16384) throw new Error('第三方凭证无效。')
-      return finish(await request(t, '/external/credential', 'POST', { providerId, mode, credential }, mode !== 'login'))
+      return finish(await request(t, '/external/credential', 'POST', { providerId, mode, credential, ...enrollment }, mode !== 'login'))
     }
     externalAbort = new AbortController()
     const signal = externalAbort.signal
     try {
-      const started = await request<{ authorizationUrl: string; flowId: string; pollToken: string }>(t, '/external/start', 'POST', { providerId, mode }, mode !== 'login', signal)
+      const started = await request<{ authorizationUrl: string; flowId: string; pollToken: string }>(t, '/external/start', 'POST', { providerId, mode, ...enrollment }, mode !== 'login', signal)
       const url = new URL(started.authorizationUrl)
       if (url.username || url.password || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw new Error('第三方授权地址必须使用 HTTPS。')
       await shell.openExternal(url.toString())
@@ -413,7 +539,40 @@ export const accountService = {
     } finally { externalAbort = null }
   }) },
   async cancelExternalLogin(): Promise<void> { externalAbort?.abort() },
+  childPasswordLogin(scope: unknown, name: unknown, password: unknown): Promise<AccountState> { return exclusive(async t => {
+    const ctx = childPasswordContext(t, scope, 'public')
+    const result = await ctx.send<unknown>('/child-password/login', 'POST', { loginName: loginValue(name), password: passwordValue(password) })
+    if (!validCredential(result) || result.user.accountKind !== 'child' || !result.user.sessionId || result.user.tenantId === 'default' || Date.parse(result.expiresAt) <= Date.now()) {
+      throw new Error('登录服务未返回有效的子账号会话。')
+    }
+    return accept(t, result, undefined, ctx.check)
+  }) },
+  copyChildResetCode(scope: unknown, currentPassword: unknown): Promise<void> { return exclusive(async t => {
+    const ctx = childPasswordContext(t, scope, 'child')
+    const response = await ctx.send<{ code: unknown }>('/child-password/reset-code', 'POST', { currentPassword: passwordValue(currentPassword) })
+    ctx.check()
+    clipboard.writeText(recoveryValue(response.code))
+  }) },
+  childPasswordRecover(scope: unknown, name: unknown, key: unknown, password: unknown): Promise<void> { return exclusive(async t => {
+    await childPasswordContext(t, scope, 'public').send('/child-password/recover', 'POST', {
+      loginName: loginValue(name), recoveryKey: recoveryValue(key), newPassword: passwordValue(password, true)
+    })
+  }) },
+  getChildLoginInfo(scope: unknown, childId: unknown) { return exclusive(async t => {
+    const ctx = childId === undefined ? childPasswordContext(t, scope, 'child') : familyContext(t, scope)
+    return safeLoginInfo(await ctx.send(childLoginPath(childId)))
+  }) },
+  setManagedChildLogin(scope: unknown, childId: unknown, input: unknown) { return exclusive(async t => {
+    const ctx = familyContext(t, scope)
+    return safeLoginInfo(await ctx.send(childLoginPath(childId, true), 'PUT', managementFields(input)))
+  }) },
+  changeOwnChildPassword(scope: unknown, proof: unknown, password: unknown): Promise<void> { return exclusive(async t => {
+    await childPasswordContext(t, scope, 'child').send(childLoginPath(undefined), 'POST', {
+      ...childProof(proof), newPassword: passwordValue(password, true)
+    })
+  }) },
   unlink(providerId: string): Promise<AccountState> { return exclusive(async t => {
+    onlyIndependentLogin(t)
     if (typeof providerId !== 'string' || !/^[a-zA-Z0-9_.-]{1,80}$/.test(providerId)) throw new Error('第三方标识无效。')
     const user = await request<AccountUser>(t, `/identities/${encodeURIComponent(providerId)}`, 'DELETE', undefined, true)
     const previous = readAccountCredential(t.scope).credential

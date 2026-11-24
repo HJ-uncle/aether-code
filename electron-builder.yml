@@ -1,5 +1,8 @@
 appId: com.electron.app
 productName: aether-code
+# Preserve the installed profile name; development checkouts historically use "Aether Code".
+extraMetadata:
+  productName: aether-code
 protocols:
   - name: Aether 会话
     schemes:
@@ -7,20 +10,30 @@ protocols:
 directories:
   buildResources: build
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  - '!.codemaker/**'
-  - '!.cowork-temp/**'
-  - '!.ae/**'
+  # Only built application assets are distributable. Workspaces, user data, cached archives and toolchains must stay outside ASAR.
+  - 'out/**'
+  - 'resources/icon.png'
+  - 'docs/plugin-api/dist/**'
+afterPack: ./scripts/verify-windows-toolchains.mjs
 asarUnpack:
-  - resources/**
+  - resources/icon.png
+  - 'out/main/**/*.ico'
+  - out/main/chunks/repository-supervisor.exe
   - out/main/queue-storage-worker.cjs
 win:
   executableName: aether-code
+  # Re-signing the hash-pinned desktop and engine Git helpers would break their integrity checks.
+  signExts: ['!repository-supervisor.exe']
+  extraResources:
+    # electron-builder omits node_modules at the root of each file set; the engine's own dependencies must stay nested.
+    - from: resources
+      to: .
+      filter:
+        - 'engine/win32-${arch}/**/*'
+        - 'toolchains/win32-${arch}/**/*'
+        # Relocated CPython can regenerate its cache; developer runs may have embedded local paths in it.
+        - '!toolchains/**/__pycache__/**'
+        - '!toolchains/**/*.pyc'
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -45,11 +58,6 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
-extraResources:
-  - from: resources/engine/win32-x64
-    to: engine/win32-x64
-    filter:
-      - '**/*'
 npmRebuild: false
 publish:
   provider: generic

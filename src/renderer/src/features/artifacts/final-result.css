@@ -102,7 +102,6 @@
 .work-final-result__preview-tools:empty { display: none; }
 .work-final-result__page-count { flex: 0 0 auto; }
 .work-final-result__page-count:empty { display: none; }
-.work-final-result__preview-tools > .document-preview__toolbar--zoom { flex-wrap: nowrap; min-height: var(--control-h); padding: 0; }
 @container final-result (max-width: 420px) {
   .work-final-result__size { display: none; }
 }

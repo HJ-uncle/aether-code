@@ -1,12 +1,20 @@
-import { createContext, useContext, useEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Spinner } from '@renderer/ui/ui-primitives'
 import { Icon } from '@renderer/ui/icons'
 import { Select } from '@renderer/ui/Select'
+import './preview-controls.css'
 
 // Undefined keeps standalone previews usable; null reserves a host toolbar
 // while it mounts or while its retained file tab is inactive.
-export const PreviewHeaderTargets = createContext<{ toolbar: HTMLElement | null; title: HTMLElement | null } | undefined>(undefined)
+export const PreviewHeaderTargets = createContext<{ toolbar: HTMLElement | null; title: HTMLElement | null; actions: HTMLElement | null } | undefined>(undefined)
+
+/** File actions and format controls share the owning file's title row. A
+ * reserved, inactive host must not fall back to a second toolbar below it. */
+export function PreviewActions({ children }: { children: ReactNode }): JSX.Element | null {
+  const targets = useContext(PreviewHeaderTargets)
+  return targets?.actions ? createPortal(children, targets.actions) : null
+}
 
 export function PreviewToolbar({ children }: { children: ReactNode }): JSX.Element | null {
   const targets = useContext(PreviewHeaderTargets)
@@ -36,16 +44,33 @@ export function PreviewZoom({ zoom, onZoom }: { zoom: number; onZoom: (zoom: num
   </div>
 }
 
-export function usePreviewWidth(ref: RefObject<HTMLDivElement | null>, enabled = true): number {
+export function usePreviewWidth(ref: RefObject<HTMLDivElement | null>, enabled = true, resizeDelayMs = 0): number {
   const [width, setWidth] = useState(0)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled) return
     const element = ref.current
     if (!element) return
-    const observer = new ResizeObserver(entries => { const next = Math.max(0, Math.round(entries[0]?.contentRect.width || 0)); setWidth(previous => previous === next ? previous : next) })
+    // A retained tab may return at a different width. Measure before paint so
+    // its previous zoom is never shown while waiting for a resize debounce.
+    const contentWidth = (): number => {
+      const style = getComputedStyle(element)
+      return Math.max(0, Math.round(element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)))
+    }
+    const initialWidth = contentWidth()
+    let measured = initialWidth
+    if (initialWidth > 0) setWidth(previous => previous === initialWidth ? previous : initialWidth)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const observer = new ResizeObserver(() => {
+      const next = contentWidth()
+      clearTimeout(timer)
+      if (next <= 0 || next === measured) return
+      const update = (): void => { measured = next; setWidth(previous => previous === next ? previous : next) }
+      if (resizeDelayMs > 0 && measured > 0) timer = setTimeout(update, resizeDelayMs)
+      else update()
+    })
     observer.observe(element)
-    return () => observer.disconnect()
-  }, [ref, enabled])
+    return () => { clearTimeout(timer); observer.disconnect() }
+  }, [ref, enabled, resizeDelayMs])
   return width
 }
 

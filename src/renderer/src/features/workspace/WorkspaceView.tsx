@@ -632,12 +632,10 @@ function SessionResourceFile({ controller, file, onOpenArtifacts, active }: {
     toast.success('已加入对话资料，发送时将上传副本')
   }
   return <div className="work-artifacts-shell__detail work-resource-file" hidden={!active}>
-    {artifactPath ? <div className="work-artifacts-shell__tabs" aria-label="文件成果导航">
-      <button type="button" onClick={openArtifactHistory} title="查看此文件在当前会话中的修改记录">在成果中查看改动</button>
-    </div> : null}
     <ArtifactPanel
     artifact={{ id: file.id, path: file.path, name: file.name, content: null, status: 'ready', createdAt: 0 }}
     workspaceRoot={file.target?.root ?? controller.activeTask?.workspacePath} sessionId={sessionId} externalFile={file.externalFile} externalPath={file.externalPath} inResourceTab active={active}
+    onShowHistory={artifactPath ? openArtifactHistory : undefined}
     onAddToConversation={(item, selection, coverage, mention) => {
       if (mention || selection) {
         addSessionArtifactToConversation(controller, 'workspace', item, selection, coverage, mention)

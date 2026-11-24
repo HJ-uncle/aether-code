@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Aether Code AE monogram</title>
+  <desc id="desc">A geometric AE monogram: an open A joined to a three-bar E, representing agent energy flowing through a code workspace.</desc>
+  <defs>
+    <linearGradient id="background" x1="126" y1="70" x2="902" y2="956" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2A407E"/>
+      <stop offset="0.52" stop-color="#1A2350"/>
+      <stop offset="1" stop-color="#0B1026"/>
+    </linearGradient>
+    <linearGradient id="a-rail" x1="238" y1="820" x2="520" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4B95F1"/>
+      <stop offset="0.54" stop-color="#6E92F2"/>
+      <stop offset="1" stop-color="#8B83F0"/>
+    </linearGradient>
+    <linearGradient id="e-rail" x1="584" y1="210" x2="846" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4F7FF"/>
+      <stop offset="0.58" stop-color="#DDE5FF"/>
+      <stop offset="1" stop-color="#C6B4FF"/>
+    </linearGradient>
+    <radialGradient id="surface" cx="0.34" cy="0.18" r="0.9">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.1"/>
+      <stop offset="0.52" stop-color="#FFFFFF" stop-opacity="0.025"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="230" fill="url(#background)"/>
+  <rect width="1024" height="1024" rx="230" fill="url(#surface)"/>
+  <rect x="4" y="4" width="1016" height="1016" rx="226" fill="none" stroke="#FFFFFF" stroke-opacity="0.09" stroke-width="8"/>
+
+  <!-- Aether's A: two open rails keep the mark active rather than static. -->
+  <path d="M216 812 L390 220 L552 812" fill="none" stroke="url(#a-rail)" stroke-width="96" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M300 548 H492" fill="none" stroke="#F3F6FF" stroke-width="78" stroke-linecap="round"/>
+
+  <!-- Code's E: a vertical spine and three readable editor-like rails. -->
+  <path d="M610 220 V812" fill="none" stroke="url(#e-rail)" stroke-width="92" stroke-linecap="round"/>
+  <path d="M610 220 H828 M610 548 H792 M610 812 H828" fill="none" stroke="url(#e-rail)" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

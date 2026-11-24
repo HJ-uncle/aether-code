@@ -40,7 +40,7 @@ export function EngineSettingsView(): JSX.Element {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
 
   const configChanged = mode !== settings.engineMode || (mode === 'remote'
-    ? !sameAddress(address, settings.remoteBaseUrl) || secrets.instanceToken !== undefined || secrets.authValue !== undefined
+    ? !sameAddress(address, settings.remoteBaseUrl) || secrets.instanceToken !== undefined
     : Number(port) !== settings.preferredPort)
   const onlyStartupChanged = !configChanged && autoStart !== settings.autoStartEngine
   const dirty = configChanged || onlyStartupChanged
@@ -53,7 +53,6 @@ export function EngineSettingsView(): JSX.Element {
   const busy = connecting || closing || savingPreference || runtimeBusy || !settingsLoaded
   const accountNeeded = !switching && mode === 'remote' && snapshot.mode === 'remote' && accountConnectionIssue(snapshot)
   const disconnect = !dirty && !switching && snapshot.phase === 'ready'
-  const checkAccountFirst = !accountNeeded && (configChanged || !matchesLive || snapshot.phase !== 'ready')
   const isExternal = snapshot.mode === 'remote' || snapshot.adopted
   const currentTarget = snapshot.baseUrl || (snapshot.phase !== 'idle' && snapshot.mode === 'remote' && settings.engineMode === 'remote' ? settings.remoteBaseUrl : '')
   const action = connecting ? 'cancel' : accountNeeded && !dirty ? 'account' : disconnect ? 'stop' : 'apply'
@@ -72,10 +71,9 @@ export function EngineSettingsView(): JSX.Element {
     void refreshAccount()
     openAppSettings('account')
   }
-  const apply = async (accountAfter = false): Promise<void> => {
+  const apply = async (): Promise<void> => {
     if (busy) return
     if (chooseVersionFirst) { setAdvanced(true); return }
-    if (accountAfter && !dirty && !checkAccountFirst) { goToAccount(); return }
     const id = connectionEditor.begin('apply')
     if (id === null) return
     try {
@@ -83,12 +81,8 @@ export function EngineSettingsView(): JSX.Element {
         await updateSettings({ autoStartEngine: autoStart })
         if (!connectionEditor.current(id)) return
         connectionEditor.clearDraft()
-        if (!accountAfter || !checkAccountFirst) {
-          connectionEditor.finish(id)
-          if (accountAfter && mounted.current) goToAccount()
-          return
-        }
-        // The preference is saved. Managing an offline account still needs an explicit connection.
+        connectionEditor.finish(id)
+        return
       }
       const parsed = mode === 'embedded' ? Number(port) : settings.preferredPort
       if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) throw new Error('端口必须是 1 至 65535 的整数。')
@@ -96,8 +90,7 @@ export function EngineSettingsView(): JSX.Element {
       const result = await window.aether.engine.applyConnection({ engineMode: mode, preferredPort: parsed,
         remoteBaseUrl: mode === 'remote' ? address.trim() : settings.remoteBaseUrl,
         autoStartEngine: autoStart,
-        ...(secrets.instanceToken !== undefined ? { instanceToken: secrets.instanceToken.trim() } : {}),
-        ...(secrets.authValue !== undefined ? { userCredential: secrets.authValue.trim() ? { type: secrets.authType ?? 'api-key', value: secrets.authValue.trim() } : null } : {}) })
+        ...(secrets.instanceToken !== undefined ? { instanceToken: secrets.instanceToken.trim() } : {}) })
       if (!connectionEditor.current(id)) return
       await refreshSettings()
       if (!connectionEditor.current(id)) return
@@ -105,13 +98,12 @@ export function EngineSettingsView(): JSX.Element {
       connectionEditor.clearDraft()
       if (mounted.current) {
         setSecretInput(null); setCredentialRevision(value => value + 1)
-        if (accountAfter && (result.phase === 'ready' || accountConnectionIssue(result))) goToAccount()
       }
       connectionEditor.finish(id)
     } catch (cause) {
       if (!connectionEditor.current(id)) return
       if (mounted.current && mode === 'embedded' && !onlyStartupChanged) setAdvanced(true)
-      connectionEditor.finish(id, accountErrorMessage(cause, onlyStartupChanged && !accountAfter ? '无法保存启动偏好，请重试。' : '无法应用连接设置，请重试。'))
+      connectionEditor.finish(id, accountErrorMessage(cause, onlyStartupChanged ? '无法保存启动偏好，请重试。' : '无法应用连接设置，请重试。'))
     }
   }
   const lifecycle = async (kind: 'stop' | 'restart'): Promise<void> => {
@@ -125,6 +117,15 @@ export function EngineSettingsView(): JSX.Element {
     } catch (cause) { connectionEditor.finish(id, accountErrorMessage(cause)) }
   }
   return <div className="settings-view settings-view--engine">
+    <SettingsGroup title="会话显示" ariaLabel="会话显示">
+      <SettingsRow label="显示会话用量" description="显示 Token、模型用量与详情；关闭后仅保留超过 30 分钟的运行时间。" ariaLabel="显示会话用量">
+        <Toggle
+          checked={settings.showConversationUsage}
+          label="显示会话用量"
+          onChange={(checked) => void updateSettings({ showConversationUsage: checked })}
+        />
+      </SettingsRow>
+    </SettingsGroup>
     <SettingsGroup title="当前连接" ariaLabel="当前引擎连接">
       <SettingsContent className="engine-status__content">
         <div className="engine-status__hero" aria-live="polite">
@@ -136,7 +137,7 @@ export function EngineSettingsView(): JSX.Element {
         {snapshot.phase === 'error' && (accountConnectionIssue(snapshot)
           ? <p className="engine-connection__note">{snapshot.connectionIssue === 'http-trust-required' ? '此服务使用 HTTP。请在「个人账号」确认是否信任这个地址。' : '已找到这个服务，需要登录后才能开始工作。'}</p>
           : snapshot.error && <p className="engine-connection__error" role="alert">{snapshot.error}</p>)}
-        {snapshot.phase === 'ready' && <SettingsRow label="管理后台" description={isExternal ? '查看服务器状态，管理成员和权限。' : '桌面会连接本机实例，进入后使用管理员凭据登录。'}>
+        {snapshot.phase === 'ready' && <SettingsRow label="管理后台" description={isExternal ? '使用当前服务的身份打开，权限由服务管理员分配。' : '直接打开这台电脑的管理后台。'}>
           <button className="btn" type="button" data-testid="engine-open-admin" disabled={openingAdmin || busy || dirty || switching} onClick={() => void openAdmin()}>{openingAdmin ? '正在打开…' : '打开管理后台'}</button>
         </SettingsRow>}
         {adminError && <p className="engine-connection__error" role="alert">{adminError}</p>}
@@ -165,9 +166,6 @@ export function EngineSettingsView(): JSX.Element {
           <SettingsRow label="服务地址"><input className="field__input sg__input sg__input--wide" aria-label="服务地址" placeholder="https://aether.example.com"
             inputMode="url" autoCapitalize="none" autoComplete="off" spellCheck={false} value={address} disabled={busy}
             onChange={event => { setSecretInput(null); connectionEditor.edit({ address: event.target.value }) }} /></SettingsRow>
-          {action !== 'account' && <SettingsRow label="个人账号" description={checkAccountFirst ? '会先连接上面填写的服务，再打开它的账号页面。' : undefined}>
-            <button type="button" className="btn" aria-label="管理个人账号" disabled={busy} onClick={() => void apply(true)}>管理个人账号</button>
-          </SettingsRow>}
         </>}
         <details className="sg__disclosure engine-connection__advanced" open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)}>
           <summary className="sg__disclosure-summary"><span className="sg__disclosure-title">高级设置</span><span className="sg__disclosure-chevron" aria-hidden="true" /></summary>
@@ -176,7 +174,7 @@ export function EngineSettingsView(): JSX.Element {
             {mode === 'embedded' ? <>
               <SettingsRow label="首选端口" description="端口已被占用时，自动选择可用端口。"><input className="field__input sg__input sg__input--port" type="number" aria-label="首选端口" value={port} min={1} max={65535} disabled={busy} onChange={event => connectionEditor.edit({ port: event.target.value })} /></SettingsRow>
               <EngineLocalRuntimeSettings snapshot={snapshot} embeddedApplied={settings.engineMode === 'embedded'} locked={connecting || closing || savingPreference || !settingsLoaded} configChanged={configChanged} busy={runtimeBusy} setBusy={setRuntimeBusy} onPendingChange={setVersionPending} />
-            </> : <EngineCredentialFields address={address} secrets={secrets} onChange={changeSecrets} disabled={busy} revision={credentialRevision} accountId={snapshot.accountId} />}
+            </> : <EngineCredentialFields address={address} secrets={secrets} onChange={changeSecrets} disabled={busy} revision={credentialRevision} />}
           </div>}
         </details>
       </SettingsGroup>

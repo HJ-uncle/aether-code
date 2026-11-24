@@ -20,7 +20,7 @@ function load(name) {
   return exports
 }
 const { sessionExecutionTiming, sessionExecutionDuration } = load('session-duration.ts')
-const { sumUsage, formatElapsedDuration } = load('usage.ts')
+const { sumUsage, formatElapsedDuration, formatVisibleElapsedDuration } = load('usage.ts')
 const base = 1_800_000_000_000
 const hour = 3_600_000
 
@@ -57,7 +57,7 @@ test('three ten-second turns separated by nearly seven hours total thirty second
   const timing = sessionExecutionTiming(messages)
   assert.equal(timing.incomplete, false)
   assert.equal(sessionExecutionDuration(timing, base + 24 * hour), 30_000)
-  assert.equal(formatElapsedDuration(duration(messages)), '30s')
+  assert.equal(formatElapsedDuration(duration(messages)), '30秒')
   assert.deepEqual(sumUsage(messages), billing)
   assert.equal(billing.total, 330)
   assert.equal(billing.input, 300)
@@ -210,11 +210,17 @@ test('completed children may extend a completed parent but never fill the idle g
 test('zero measured milliseconds and touching execution intervals retain their exact bounds', () => {
   const zero = message(root('zero', base, base))
   assert.equal(duration([zero]), 0)
-  assert.equal(formatElapsedDuration(duration([zero])), '<1s')
+  assert.equal(formatElapsedDuration(duration([zero])), '<1秒')
   const messages = [zero, message(root('first', base, base + 1_000)),
     message(root('second', base + 1_000, base + 3_000))]
   assert.equal(duration(messages), 3_000)
-  assert.equal(formatElapsedDuration(3_661_000), '1h01m')
+  assert.equal(formatElapsedDuration(59_000), '59秒')
+  assert.equal(formatElapsedDuration(60_000), '01分00秒')
+  assert.equal(formatElapsedDuration(8 * 60_000 + 56_000), '08分56秒')
+  assert.equal(formatElapsedDuration(3_661_000), '01时01分01秒')
+  assert.equal(formatElapsedDuration(2 * 24 * 3600_000 + 61_000), '2天00时01分01秒')
+  assert.equal(formatVisibleElapsedDuration(30 * 60_000), null)
+  assert.equal(formatVisibleElapsedDuration(30 * 60_000 + 1_000), '30分01秒')
   for (const value of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -1]) assert.equal(formatElapsedDuration(value), null)
 })
 

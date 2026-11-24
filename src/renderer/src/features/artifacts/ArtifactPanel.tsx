@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import type { SessionArtifact } from '../sessions/state'
 import { isWorkspaceRecoveryPath, paths, readFile, readLocalRecoveryFile, readSessionFile, saveSessionFile, workspaceRecoveryCandidates } from '@renderer/core/workspace/fs-client'
 import { openFileFromChat } from '@renderer/features/conversation/shared/open-file'
 import { Markdown } from '@renderer/features/conversation/shared/Markdown'
 import { Icon } from '@renderer/ui/icons'
-import { IconButton, Spinner } from '@renderer/ui/ui-primitives'
+import { Spinner } from '@renderer/ui/ui-primitives'
+import { ActionMenu, type ActionMenuItem } from '@renderer/ui/ActionMenu'
 import { toast } from '@renderer/core/toast'
 import { getEngineSource, isEngineReady, isRemoteEngine, subscribeEngineSource } from '@renderer/core/engine/source'
 import { sessionArtifactExportName, sessionArtifactReadFailure, sessionArtifactReadResult, type SessionArtifactContent } from './artifact-content'
@@ -13,6 +14,7 @@ import type { FsFileContent } from '@shared/ipc'
 import { hasBinaryFileSignature, hasOfficeFileSignature } from '@shared/file-signature'
 import { FilePreview } from '../editor/FilePreview'
 import { FileGlyph } from '../explorer/FileGlyph'
+import { PreviewActions, PreviewHeaderTargets } from '../documents/preview-controls'
 import { isLargeSessionText } from '../workspace/TextPreview'
 import { CodePreview } from '../workspace/CodePreview'
 import type { Mention } from '../conversation/shared/mention-context'
@@ -30,6 +32,8 @@ export interface ArtifactPanelProps {
   sessionId?: string
   onAddToConversation?: (artifact: SessionArtifact, selection?: string, selectionCoverage?: SessionArtifactContent['coverage'], reference?: Mention) => void
   onOpenFile?: (artifact: SessionArtifact) => void
+  openFileLabel?: string
+  onShowHistory?: () => void
   artifacts?: SessionArtifact[]
   onSelect?: (id: string) => void
   inResourceTab?: boolean
@@ -111,9 +115,29 @@ async function readExternalFile(file: File): Promise<FsFileContent> {
  * so preview reads the workspace before falling back to the receipt content. */
 export function ArtifactPanel(props: ArtifactPanelProps): JSX.Element {
   const epoch = useSyncExternalStore(subscribeEngineSource, getEngineSource)
+  const inheritedHeader = useContext(PreviewHeaderTargets)
+  const [previewToolbar, setPreviewToolbar] = useState<HTMLDivElement | null>(null)
+  const [previewActions, setPreviewActions] = useState<HTMLDivElement | null>(null)
+  const [previewTitle, setPreviewTitle] = useState<HTMLSpanElement | null>(null)
   // Remount at an identity change so old content and selections never become
   // actionable during the first render of another task or engine connection.
-  return <ArtifactContent key={JSON.stringify([epoch, props.sessionId, props.workspaceRoot, props.externalPath, props.externalFile?.name, props.artifact?.id, props.artifact?.path])} {...props} epoch={epoch} />
+  const content = <ArtifactContent key={JSON.stringify([epoch, props.sessionId, props.workspaceRoot, props.externalPath, props.externalFile?.name, props.artifact?.id, props.artifact?.path])} {...props} epoch={epoch} />
+  if (inheritedHeader !== undefined || !props.artifact) return content
+  const active = props.active !== false
+  // Workspace and external-file tabs need the same title-row slots as the
+  // change ledger. Providing them here also covers future ArtifactPanel hosts.
+  return <PreviewHeaderTargets.Provider value={{ toolbar: active ? previewToolbar : null, title: active ? previewTitle : null, actions: active ? previewActions : null }}>
+    <div className="work-artifact-panel-v2__layout">
+      <header className="work-artifact-panel-v2__header">
+        <div className="work-artifact-panel-v2__identity"><FileGlyph name={props.artifact.name} size={16} />
+          <strong title={props.artifact.path}>{props.artifact.name}</strong><span ref={setPreviewTitle} className="file-preview-page-count" />
+        </div>
+        <div ref={setPreviewToolbar} className="file-preview-tools" />
+        <div ref={setPreviewActions} className="file-preview-actions" />
+      </header>
+      {content}
+    </div>
+  </PreviewHeaderTargets.Provider>
 }
 
 function ArtifactContent({
@@ -122,6 +146,8 @@ function ArtifactContent({
   sessionId,
   onAddToConversation,
   onOpenFile,
+  openFileLabel = '在新标签页打开',
+  onShowHistory,
   inResourceTab = false,
   active = true,
   reveal,
@@ -343,9 +369,26 @@ function ArtifactContent({
   const referenceLabel = '添加到对话'
   const copyLabel = value?.coverage === 'partial' ? '复制片段' : value?.coverage === 'receipt' ? '复制回执' : '复制'
   const saveLabel = saving ? '正在保存…' : value?.isBinary ? '保存原文件' : value?.coverage === 'partial' ? '保存预览片段' : value?.coverage === 'receipt' ? '保存历史回执' : '保存副本'
+  const fileActions: ActionMenuItem[] = [
+    ...(!inResourceTab || onOpenFile ? [{ id: 'open', label: openFileLabel, icon: 'file' as const, disabled: !artifact.path,
+      onSelect: () => {
+        if (epoch !== getEngineSource()) return
+        if (onOpenFile) onOpenFile(artifact)
+        else void openFileFromChat(artifact.path, sessionId ? { sessionId, workspaceRoot: workspaceRoot ?? undefined } : undefined)
+          .catch((reason: unknown) => toast.error(reason instanceof Error ? reason.message : String(reason)))
+      } }] : []),
+    ...(onShowHistory ? [{ id: 'history', label: '在成果中查看改动', icon: 'clock-outline' as const, onSelect: onShowHistory }] : []),
+    ...(isMarkdown(artifact.name) ? [{ id: 'mode', label: mode === 'preview' ? '查看 Markdown 源码' : '预览 Markdown', icon: 'eye-outline' as const,
+      onSelect: () => setMode(mode === 'preview' ? 'source' : 'preview') }] : []),
+    { id: 'refresh', label: '刷新成果预览', icon: 'refresh', disabled: loading || !artifact.path,
+      onSelect: () => { if (epoch === getEngineSource()) setReadVersion(version => version + 1) } },
+    ...(content !== null ? [{ id: 'copy', label: copyLabel, icon: 'copy' as const, onSelect: copy }] : []),
+    { id: 'save', label: saveLabel, icon: 'download', onSelect: download,
+      disabled: saving || (content === null && !(value?.isBinary && (externalFile || externalPath ? Boolean(value.base64 || value.bytes) : Boolean(sessionId)))) }
+  ]
   return (
     <section className="work-artifact-panel-v2" aria-label="成果预览" data-document-session={sessionId} data-document-path={artifact.path} data-document-active={active ? 'true' : 'false'} data-workbench-request={requestRevision} data-file-read-status={loading ? 'loading' : value?.coverage ?? 'unavailable'} data-resource-tab={inResourceTab ? 'true' : 'false'} data-producer-child-session={artifact.producerChildSessionId} data-producer-run={artifact.producerRunId}>
-      <div className="work-artifact-panel-v2__toolbar" role="group" aria-label="文件预览操作">
+      <PreviewActions><div className="work-artifact-panel-v2__actions" role="group" aria-label="文件预览操作">
         {canRun ? <button type="button" className="work-artifact-panel-v2__action work-artifact-panel-v2__action--primary"
           aria-label="在浏览器中运行" title="在当前任务浏览器中运行 HTML"
           disabled={!active || loading || running || !runPath || !runRoot || value?.coverage !== 'current'}
@@ -357,52 +400,16 @@ function ArtifactContent({
               sessionId: !externalPath && isEngineReady() ? sessionId : undefined }) }
             finally { runningRef.current = false; if (mounted.current) setRunning(false) }
           })}>
-          {running ? <Spinner size={14} /> : <Icon name="play" size={14} />}<span className="work-artifact-panel-v2__action-label">{running ? '正在打开…' : '运行'}</span>
+          {running ? <Spinner size={14} /> : <Icon name="play" size={14} />}
         </button> : null}
         <button type="button" className="work-artifact-panel-v2__action work-artifact-panel-v2__action--primary work-artifact-panel-v2__action--reference"
           aria-label={referenceLabel} title={referenceLabel}
           onPointerDown={event => { if (selection || codeSelections.length) event.preventDefault() }}
           onClick={addReference} disabled={!active || !onAddToConversation || !artifact.path}>
-          <Icon name="plus" size={14} /><span className="work-artifact-panel-v2__action-label">添加到对话</span>
+          <Icon name="plus" size={14} />
         </button>
-        {isMarkdown(artifact.name) ? <div className="work-artifact-panel-v2__modes" role="group" aria-label="文件显示方式">
-          <button type="button" aria-label="预览" title="预览" aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>
-            <Icon name="eye-outline" size={14} /><span className="work-artifact-panel-v2__mode-label">预览</span>
-          </button>
-          <button type="button" aria-label={language} title="查看 Markdown 源码" aria-pressed={mode === 'source'} onClick={() => setMode('source')}>
-            {language}
-          </button>
-        </div> : null}
-        <div className="work-artifact-panel-v2__file-actions">
-          {!inResourceTab && <IconButton icon="file" size={14} label="在资源中打开" title="在资源中打开"
-            className="work-artifact-panel-v2__action"
-            disabled={!artifact.path}
-            onClick={() => {
-              if (epoch !== getEngineSource()) return
-              if (onOpenFile) onOpenFile(artifact)
-              else void openFileFromChat(
-                  artifact.path,
-                  sessionId ? { sessionId, workspaceRoot: workspaceRoot ?? undefined } : undefined
-                ).catch((reason: unknown) =>
-                  toast.error(reason instanceof Error ? reason.message : String(reason))
-                )
-            }}
-          />}
-          <IconButton icon="refresh" size={14} label="刷新成果预览"
-            className="work-artifact-panel-v2__action"
-            onClick={() => { if (epoch === getEngineSource()) setReadVersion(value => value + 1) }}
-            disabled={loading || !artifact.path}
-            title="重新读取文件，更新预览"
-          />
-          <IconButton icon="copy" size={14} label={copyLabel} title={copyLabel}
-            className="work-artifact-panel-v2__action" onClick={() => void copy()} disabled={content === null} />
-          <IconButton icon="download" size={14} label={saveLabel} title={saveLabel}
-            className="work-artifact-panel-v2__action"
-            onClick={() => void download()}
-            disabled={saving || (content === null && !(value?.isBinary && (externalFile || externalPath ? Boolean(value.base64 || value.bytes) : Boolean(sessionId))))}
-          />
-        </div>
-      </div>
+        <ActionMenu label="文件操作" disabled={!active} items={fileActions} />
+      </div></PreviewActions>
       {value && value.coverage !== 'current' && value.coverage !== 'unavailable' ? (
         <div className="work-artifact-panel-v2__notice" role="status">
           <Icon name="warning" size={14} />

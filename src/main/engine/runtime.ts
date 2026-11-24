@@ -7,6 +7,7 @@ import { parseEngineManifest, type EngineManifest } from './protocol'
 import { selectRuntimeEntry } from './runtime-location'
 import { canImportLocalRuntime } from './runtime-import-support'
 import { preparePackagedRuntime } from './packaged-runtime'
+import { localToolchainEnvironment } from '../local-toolchains'
 import { developmentRuntimeEnvironment } from './development-runtime'
 import { getActiveRuntimeId, getLocalRuntimeRoot } from './local-runtime-store'
 
@@ -89,9 +90,15 @@ export function requireLocalRuntime(): ResolvedRuntime {
 }
 
 export function runtimeEnvironment(runtime: ResolvedRuntime): { cwd: string; env: Record<string, string> } {
-  return runtime.source === 'bundled' || runtime.source === 'imported'
-    ? preparePackagedRuntime(runtime.root, app.getPath('userData'), process.env.PATH)
+  const standalone = runtime.source === 'bundled' || runtime.source === 'imported'
+  const config = standalone
+    ? preparePackagedRuntime(runtime.root, app.getPath('userData'))
     : developmentRuntimeEnvironment(runtime.entryPath, app.getPath('userData'), process.env.WORKSPACE_ROOT)
+  return { cwd: config.cwd, env: {
+    ...config.env, ...localToolchainEnvironment('engine', standalone ? runtime.nodePath : undefined),
+    // The engine and its internal services use the pinned executable independently of project commands.
+    ...(standalone ? { AETHER_ENGINE_NODE: runtime.nodePath } : { ELECTRON_RUN_AS_NODE: '1' })
+  } }
 }
 
 /** The engine owns the schema and success marker; retrying never imports conversation history. */
@@ -104,13 +111,14 @@ export async function migrateLegacyModels(
   if (!existsSync(source)) return
   const entry = join(dirname(runtime.entryPath), 'storage', 'dev-migration.js')
   if (!existsSync(entry)) throw new Error('引擎缺少开发模型配置迁移入口，请重新构建引擎')
+  const config = runtimeEnvironment(runtime)
   try {
     await promisify(execFile)(
       runtime.nodePath,
       [entry, '--source-db', source, '--dest-db', engineDataFile()],
       {
-        cwd: runtimeEnvironment(runtime).cwd,
-        env: { ...process.env, ...runtimeEnvironment(runtime).env, ELECTRON_RUN_AS_NODE: '1', ENCRYPTION_KEY: encryptionKey },
+        cwd: config.cwd,
+        env: { ...process.env, ...config.env, ENCRYPTION_KEY: encryptionKey },
         signal,
         timeout: 30_000,
         windowsHide: true,

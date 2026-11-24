@@ -1,22 +1,23 @@
 /**
  * Aether 应用图标生成器。
  *
- * 设计：「启 A 光门」—— 粗笔画字母 A（横杠是字母自带的），
- *       顶端一颗四角星，深蓝圆角底。除 A 与星之外没有任何多余线条。
+ * 设计：「AE 协作字标」—— Aether 的 A 与 Code 的 E 由同一组圆角轨道构成，
+ *       A 的开放结构代表探索，E 的三条横轨代表代码与工作区；不依赖泛 AI 符号。
+ *       SVG 母版位于 src/renderer/src/assets/aether-logo.svg，图标生成与渲染层共用这一事实来源。
  *
  * 为什么用 Electron 而不是 sharp / ImageMagick：
  *   SVG 母版直接交给 Chromium 的 canvas 按目标尺寸精确栅格化，
  *   不需要任何新增依赖（本机无 ImageMagick / Inkscape，仓库也无 sharp）。
  *   Electron 本身就是本项目的既有依赖，零成本。
  *
- * 为什么用矢量母版而不是 AI 生成图：
- *   矢量母版逐尺寸渲染可控、可复现，改一处颜色/比例即可全量重出；
- *   AI 生成图不受控（曾在 A 上多加一根贯穿全图的横线），不适合作为图标事实来源。
+ * 为什么用矢量母版而不是位图：
+ *   逐尺寸渲染可控、可复现，改一处颜色/比例即可全量重出；
+ *   同一母版可以用于应用图标、菜单栏品牌位和后续官网/插件入口。
  *
  * 用法（在仓库根目录）：
  *   node_modules\electron\dist\electron.exe scripts\icon\generate-icons.cjs
  *
- * 产出（全部以 ARTWORK 为唯一事实来源）：
+ * 产出（全部以 aether-logo.svg 为唯一事实来源）：
  *   build/icon.png        512×512   Linux 打包图标
  *   build/icon.ico        16/24/32/48/64/128/256   Windows 打包 + exe/快捷方式/安装器
  *   build/icon.icns       16/32/64/128/256/512/1024  macOS 打包
@@ -27,7 +28,7 @@
  *       文件名不可更改。
  */
 const { app, BrowserWindow } = require('electron')
-const { writeFileSync, mkdirSync } = require('node:fs')
+const { writeFileSync, readFileSync, mkdirSync } = require('node:fs')
 const { join } = require('node:path')
 
 const ROOT = join(__dirname, '..', '..')
@@ -52,43 +53,7 @@ function flushLog(extra) {
 // ─────────────────────────────────────────────────────────────
 // 母版矢量图（唯一事实来源）
 // ─────────────────────────────────────────────────────────────
-const ARTWORK = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="bg" x1="0.15" y1="0" x2="0.85" y2="1">
-      <stop offset="0" stop-color="#313F78"/>
-      <stop offset="0.55" stop-color="#1A2350"/>
-      <stop offset="1" stop-color="#0A0F26"/>
-    </linearGradient>
-    <!-- userSpaceOnUse：A 的两条腿与横杠共用同一套纵向渐变坐标，
-         否则每段路径按各自 bbox 计算渐变，横杠处会出现色差 -->
-    <linearGradient id="aStroke" gradientUnits="userSpaceOnUse"
-                    x1="0" y1="838" x2="0" y2="372">
-      <stop offset="0" stop-color="#7FD8FF"/>
-      <stop offset="0.6" stop-color="#C9F2FF"/>
-      <stop offset="1" stop-color="#F4FEFF"/>
-    </linearGradient>
-    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#4FC8FF" stop-opacity="0.28"/>
-      <stop offset="0.6" stop-color="#4FC8FF" stop-opacity="0.07"/>
-      <stop offset="1" stop-color="#4FC8FF" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-
-  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#bg)"/>
-  <rect x="3" y="3" width="1018" height="1018" rx="227" fill="none"
-        stroke="#FFFFFF" stroke-opacity="0.07" stroke-width="6"/>
-  <circle cx="512" cy="590" r="400" fill="url(#halo)"/>
-
-  <path d="M272 838 L512 372 L752 838" fill="none"
-        stroke="url(#aStroke)" stroke-width="104"
-        stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M353 680 L671 680" stroke="url(#aStroke)" stroke-width="104"
-        stroke-linecap="round"/>
-
-  <path d="M512 164 L528 224 L588 240 L528 256 L512 316 L496 256 L436 240 L496 224 Z"
-        fill="#EAFBFF"/>
-</svg>`
+const ARTWORK = readFileSync(join(ROOT, 'src', 'renderer', 'src', 'assets', 'aether-logo.svg'), 'utf8')
 
 // ─────────────────────────────────────────────────────────────
 // ICO / ICNS 打包（均为「内嵌 PNG」容器格式，无需图像库）
@@ -233,3 +198,6 @@ main().catch((err) => {
   flushLog('失败: ' + (err && err.stack ? err.stack : String(err)))
   app.exit(1)
 })
+
+
+

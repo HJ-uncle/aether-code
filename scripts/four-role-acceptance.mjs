@@ -490,7 +490,7 @@ export async function launchController(options) {
     page.on('pageerror', error => { state.errors.push({ at: Date.now(), message: scrub(error.message) }); save() })
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1050))
     await expect.poll(() => page.evaluate(() => window.aether.engine.getSnapshot()).then(value => value.phase), { timeout: 90_000 }).toBe('ready')
-    const account = await page.evaluate(() => window.aether.account.register())
+    const account = await (await import('./diagnostics/fixture-account.mjs')).registerFixtureAccount(page)
     assert.equal(account.status, 'authenticated', 'Isolated account registration failed')
     await expect.poll(() => page.evaluate(() => window.aether.engine.getSnapshot()).then(value => value.accountId), { timeout: 30_000 }).toBe(account.user.id)
     const identity = await page.evaluate(() => window.aether.engine.getSnapshot())

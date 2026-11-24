@@ -15,6 +15,12 @@ export interface AccountCredential {
 }
 interface Entry { credential: AccountCredential | null; persistence: 'encrypted' | 'session' | 'none'; managed: boolean }
 const cache = new Map<string, Entry>()
+// App windows share this main process. Only credential mutations create an entry; reads never grow it.
+const credentialRevisions = new Map<string, number>()
+export function serviceCredentialRevision(scope: string): number { return credentialRevisions.get(scope) ?? 0 }
+export function advanceCredentialRevision(scope: string): void {
+  if (scope !== 'embedded') credentialRevisions.set(scope, serviceCredentialRevision(scope) + 1)
+}
 function file(scope: string): string {
   return join(app.getPath('userData'), 'accounts', createHash('sha256').update(scope).digest('hex') + '.json')
 }
@@ -46,7 +52,7 @@ export function validCredential(value: unknown): value is AccountCredential {
     typeof v.refreshToken === 'string' && /^[\x21-\x7e]{16,16384}$/.test(v.refreshToken) &&
     typeof v.expiresAt === 'string' && Number.isFinite(Date.parse(v.expiresAt)) &&
     (v.exportedAt === undefined || v.exportedAt === null || (typeof v.exportedAt === 'string' && Number.isFinite(Date.parse(v.exportedAt)))) &&
-    validAccountUser(v.user)
+    validAccountUser(v.user) && (v.user.accountKind !== 'child' || v.recoveryKey === undefined)
 }
 export function validAccountUser(value: unknown): value is AccountUser {
   if (!value || typeof value !== 'object') return false
@@ -54,6 +60,10 @@ export function validAccountUser(value: unknown): value is AccountUser {
   const optionalText = (item: unknown): boolean => item === null || typeof item === 'string'
   const data = (item: unknown): boolean => !!item && typeof item === 'object' && !Array.isArray(item)
   return typeof user.id === 'string' && !!user.id && typeof user.tenantId === 'string' && !!user.tenantId &&
+    (user.accountKind === undefined || user.accountKind === 'primary' || user.accountKind === 'child') &&
+    (user.mainAccountActivated === undefined || typeof user.mainAccountActivated === 'boolean') &&
+    !(user.accountKind === 'child' && user.mainAccountActivated === true) &&
+    (user.sessionId === undefined || (typeof user.sessionId === 'string' && !!user.sessionId)) &&
     typeof user.name === 'string' && optionalText(user.email) && optionalText(user.avatarUrl) && optionalText(user.bio) &&
     typeof user.createdAt === 'string' && Number.isFinite(Date.parse(user.createdAt)) && data(user.userData) &&
     (user.authenticatedAt === undefined || (typeof user.authenticatedAt === 'string' && Number.isFinite(Date.parse(user.authenticatedAt)))) &&
@@ -77,6 +87,7 @@ export function saveAccountCredential(scope: string, credential: AccountCredenti
     renameSync(temporary, path)
   } finally { rmSync(temporary, { force: true }) }
   cache.set(scope, entry)
+  advanceCredentialRevision(scope)
   return entry
 }
 

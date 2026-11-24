@@ -387,6 +387,7 @@ function getModifiedKeys(
   if (settings.autoStartEngine !== DEFAULT_SETTINGS.autoStartEngine) modified.add('aether.engine.autoStart')
   if (settings.appearance !== DEFAULT_SETTINGS.appearance) modified.add('aether.appearance.theme')
   if (settings.accent !== DEFAULT_SETTINGS.accent || settings.customAccentColor !== DEFAULT_SETTINGS.customAccentColor) modified.add('aether.appearance.accent')
+  if (settings.showConversationUsage !== DEFAULT_SETTINGS.showConversationUsage) modified.add('aether.conversationUsage')
   if (settings.lastModelId !== DEFAULT_SETTINGS.lastModelId) modified.add('aether.models.default')
   return modified
 }

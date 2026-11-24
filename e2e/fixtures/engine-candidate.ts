@@ -1,7 +1,7 @@
 /** A disposable B endpoint for the connection handshake and account login. The
  * ready A service uses the full ResourceSettingsFixture. Each server only binds
  * to loopback. No renderer IPC handlers or production identity checks are mocked. */
-import { createServer, type ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
 
 const accessToken = 'fixture-access-only-for-engine-b', refreshToken = 'fixture-refresh-only-for-engine-b'
@@ -15,16 +15,20 @@ const respond = (res: ServerResponse, data: unknown, status = 200, message = 'ok
 export class EngineCandidateFixture {
   origin = ''
   behavior: 'ready' | 'incompatible' | 'token' | 'login' | 'hold' | 'unavailable' = 'ready'
-  expectedCredentialDigests?: { instanceToken: string; apiKey: string }
-  readonly requests: Array<{ path: string; token: string; apiKey: string; bearer: string }> = []
+  expectedCredentialDigests?: { instanceToken?: string; apiKey?: string; bearer?: string }
+  adminHandler?: (request: IncomingMessage, response: ServerResponse, isPersonalAccount: boolean) => void
+  readonly requests: Array<{ method: string; path: string; token: string; apiKey: string; bearer: string }> = []
   readonly workspaceBinds: string[] = []
   readonly graphQueries: Array<{ root: string | null; sessionId: string | null }> = []
   private readonly held = new Set<ServerResponse>()
   private readonly server = createServer((req, res) => { void (async () => {
     const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
-    const receipt = { path, token: String(req.headers['x-aether-instance-token'] ?? ''),
+    const receipt = { method: req.method ?? 'GET', path, token: String(req.headers['x-aether-instance-token'] ?? ''),
       apiKey: String(req.headers['x-api-key'] ?? ''), bearer: String(req.headers.authorization ?? '') }
     this.requests.push(receipt)
+    if (this.adminHandler && path.startsWith('/admin/')) {
+      this.adminHandler(req, res, receipt.bearer === `Bearer ${accessToken}`); return
+    }
     if (path === '/health') {
       if (this.behavior === 'unavailable') return respond(res, null, 503, 'Temporarily unavailable')
       if (this.behavior !== 'hold') return respond(res, { status: 'ok' })
@@ -42,8 +46,13 @@ export class EngineCandidateFixture {
     if (path === '/api/v1/tools') {
       if (this.expectedCredentialDigests) {
         const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
-        if (digest(receipt.token) !== this.expectedCredentialDigests.instanceToken) return respond(res, null, 401, 'Invalid or missing instance token')
-        if (digest(receipt.apiKey) !== this.expectedCredentialDigests.apiKey) return respond(res, null, 401, 'Invalid API key')
+        if (this.expectedCredentialDigests.instanceToken && digest(receipt.token) !== this.expectedCredentialDigests.instanceToken) return respond(res, null, 401, 'Invalid or missing instance token')
+        const expected = this.expectedCredentialDigests
+        if (expected.apiKey || expected.bearer) {
+          if (!receipt.apiKey && !receipt.bearer) return respond(res, null, 401, 'Authentication required')
+          if (expected.apiKey && digest(receipt.apiKey) !== expected.apiKey) return respond(res, null, 401, 'Invalid API key')
+          if (expected.bearer && digest(receipt.bearer.replace(/^Bearer /, '')) !== expected.bearer) return respond(res, null, 401, 'Invalid bearer token')
+        }
       }
       if (this.behavior === 'token') return respond(res, null, 401, 'Invalid or missing instance token')
       if (this.behavior === 'login' && receipt.bearer !== `Bearer ${accessToken}`) return respond(res, null, 401, receipt.apiKey ? 'Invalid API key' : 'Authentication required')

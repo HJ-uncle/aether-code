@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import { appIcon, nativeWindowIcon } from './window-icon'
 import { engineHost } from './engine/host'
 import { initializeRemoteInstanceTokens } from './engine/remote-token'
 import { cancelPendingEngineConnection } from './engine/connection'
@@ -114,7 +114,7 @@ function createWindow(): void {
     // （Windows/Linux 生效；macOS 保留原生红绿灯更符合平台习惯）
     ...(process.platform === 'darwin' ? {} : { frame: false }),
     backgroundColor: '#1e1e1e',
-    ...(process.platform === 'linux' ? { icon } : {}),
+    icon: nativeWindowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -126,7 +126,7 @@ function createWindow(): void {
   })
   if (winState.maximized) mainWindow.maximize()
   trackWindowState(mainWindow)
-  attachPluginBackground(mainWindow, icon)
+  attachPluginBackground(mainWindow, appIcon)
   registerBrowserIpc(mainWindow)
   bindConversationLinkWindow(mainWindow)
 

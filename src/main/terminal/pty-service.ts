@@ -13,6 +13,7 @@ import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, rmSync } fro
 import { tmpdir } from 'node:os'
 import type { TerminalCleanupError, TerminalCreateInput, TerminalExitInfo } from '@shared/ipc'
 import { PtyLifecycle } from './pty-lifecycle'
+import { localToolchainEnvironment } from '../local-toolchains'
 
 interface TerminalSession { pty: IPty; lifecycle: PtyLifecycle; closing?: Promise<void> }
 const terminals = new Map<string, TerminalSession>()
@@ -107,7 +108,7 @@ function cleanupTemporaryHome(homeDir: string | undefined): void {
 }
 
 function pickShell(): ShellSpec {
-  const env = envRecord()
+  const env = { ...envRecord(), ...localToolchainEnvironment('terminal') }
   if (platform() === 'win32') {
     const pwsh = findOnPath('pwsh.exe')
     if (pwsh) {

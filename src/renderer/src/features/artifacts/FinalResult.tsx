@@ -44,14 +44,14 @@ function FinalAssetPreview({ result, item, active }: { result: FinalResult; item
   }
   return <DocumentMenuProvider value={{ identity: `${source}:${result.sessionId}:${result.runId}:${item.assetId}`, path: item.path, active: active && current,
     getExtraItems: () => [{ id: 'download', label: '下载', disabled: !asset || !current, onSelect: download }] }}>
-    <PreviewHeaderTargets.Provider value={{ toolbar: active && current ? previewToolbar : null, title: active && current ? previewTitle : null }}>
+    <PreviewHeaderTargets.Provider value={{ toolbar: active && current ? previewToolbar : null, title: active && current ? previewTitle : null, actions: null }}>
     <section className="work-final-result" aria-label="交付物预览" data-final-result-session={result.sessionId}
     data-final-result-run={result.runId} data-final-result-item={item.id} data-final-result-asset={item.assetId}>
     <header className="work-final-result__toolbar">
       <FileGlyph name={finalResultPreviewFormat(item)} size={16} />
       <div className="work-final-result__title"><strong title={item.path}>{item.name}</strong><div ref={setPreviewTitle} className="work-final-result__page-count" /></div>
       <span className="work-final-result__size">{formatSize(item.size)}</span>
-      <div ref={setPreviewToolbar} className="work-final-result__preview-tools" />
+      <div ref={setPreviewToolbar} className="work-final-result__preview-tools file-preview-tools" />
       <button type="button" className="work-quiet-button" aria-label={`下载 ${item.name}`} disabled={!active || !asset || !current} onClick={download}>
         <Icon name="download" size={14} />下载
       </button>

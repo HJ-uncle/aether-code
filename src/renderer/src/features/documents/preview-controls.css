@@ -1,0 +1,3 @@
+.file-preview-tools, .file-preview-actions, .file-preview-page-count { display: flex; flex: 0 0 auto; align-items: center; min-width: 0; gap: var(--space-1); }
+.file-preview-tools:empty, .file-preview-actions:empty, .file-preview-page-count:empty { display: none; }
+.file-preview-tools > .document-preview__toolbar--zoom { flex-wrap: nowrap; min-height: var(--control-h); padding: 0; }

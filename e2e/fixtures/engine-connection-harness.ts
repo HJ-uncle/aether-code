@@ -7,8 +7,8 @@ import {
   type Locator,
   type Page
 } from '@playwright/test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import type { AppSettings, EngineSnapshot } from '../../src/shared/ipc'
 import { EngineCandidateFixture } from './engine-candidate'
 import {
@@ -18,8 +18,7 @@ import {
   resourceWorkspace
 } from './resource-settings'
 
-const root = resolve(__dirname, '../..'),
-  profiles = join(root, '.e2e-tmp', 'engine-connection-flow')
+const root = resolve(__dirname, '../..')
 const onlyForA = 'advanced-fixture-key-only-for-engine-a'
 let app: ElectronApplication | undefined,
   a: ResourceSettingsFixture,
@@ -43,6 +42,13 @@ async function advanced(): Promise<void> {
     .filter({ hasText: /^高级设置$/ })
   if (!(await summary.evaluate((el) => (el.parentElement as HTMLDetailsElement).open)))
     await summary.click()
+}
+/** Account credentials always belong to the selected service, never to an engine draft. */
+const accountCredentials = (): Locator => settings().locator('details').filter({ has: page.locator('summary').getByText('服务访问凭据', { exact: true }) })
+async function accountAdvanced(): Promise<void> {
+  const disclosure = accountCredentials()
+  await expect(disclosure).toBeVisible()
+  if (!(await disclosure.evaluate(el => (el as HTMLDetailsElement).open))) await disclosure.locator('summary').click()
 }
 async function launch(
   initial: 'a' | 'b' | 'local' = 'a',
@@ -100,6 +106,7 @@ async function launch(
       `--user-data-dir=${profile}`
     ],
     cwd: root,
+    artifactsDir: join(profile, 'electron-artifacts'),
     env
   })
   page = await app.firstWindow()
@@ -153,18 +160,25 @@ export {
   open,
   advanced,
   launch,
+  accountCredentials,
+  accountAdvanced,
   stillA,
   size
 }
 
-function removeTestProfile(directory: string): void {
-  const target = resolve(directory)
-  if (dirname(target) !== profiles || !basename(target).startsWith('profile-'))
+function removeTestProfile(directory: string, profiles: string): void {
+  const expected = join(realpathSync(root), '.e2e-tmp', basename(profiles))
+  const target = realpathSync(directory)
+  if (relative(expected, realpathSync(profiles)) !== '' || relative(expected, dirname(target)) !== '' ||
+      !/^profile-[a-z0-9]{6}$/i.test(basename(target)) || lstatSync(directory).isSymbolicLink())
     throw new Error('Invalid fixture cleanup path')
   rmSync(target, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 })
 }
 
-export function registerConnectionHarness({ captureOnFailure = true } = {}): void {
+export function registerConnectionHarness({
+  captureOnFailure = true, profileArea = 'engine-connection-flow'
+}: { captureOnFailure?: boolean; profileArea?: 'engine-connection-flow' | 'child-password-desktop' | 'account-family-handoff' } = {}): void {
+  const profiles = join(root, '.e2e-tmp', profileArea)
   test.beforeEach(async () => {
     mkdirSync(profiles, { recursive: true })
     profile = mkdtempSync(join(profiles, 'profile-'))
@@ -195,7 +209,7 @@ export function registerConnectionHarness({ captureOnFailure = true } = {}): voi
       } finally {
         app = undefined
         await Promise.all([a.close(), b.close()])
-        removeTestProfile(profile)
+        removeTestProfile(profile, profiles)
       }
     }
   })
