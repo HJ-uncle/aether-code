@@ -37,6 +37,7 @@ import '../features/conversation/shared/apple-chat-panels.css'
 import { useSessionResources, sessionResourceBrowserTabs, selectSessionResource } from '../features/workspace/resource-store'
 import { type HomeFilter, Home } from '../features/sessions/Home'
 import { TaskStatus as TaskStatus } from '../features/sessions/TaskStatus'
+import { currentAppearance } from '@renderer/core/theme/palette'
 import { unreadCompletedTaskCount } from '@shared/taskbar'
 import { partitionCommandJobs } from '@renderer/core/engine/command-job-state'
 import { type TerminalPanelProps } from '../features/terminal/TerminalPanel'
@@ -185,10 +186,13 @@ export function ApplicationView(): JSX.Element {
   const handledFileReveal = useRef({ scope: fileResourceScope, revision: fileResources.reveal, selected: fileResources.selected })
   const activeTasks = useMemo(() => controller.tasks.filter((item) => !item.archived), [controller.tasks])
   const completedUnreadCount = useMemo(() => unreadCompletedTaskCount(activeTasks), [activeTasks])
-  useEffect(() => {
-    // Keep the native taskbar marker on the same completion-read state as Work.
-    // The main process owns the platform-specific icon implementation.
-    void window.aether.window.setCompletionBadge(completedUnreadCount).catch(() => undefined)
+  useLayoutEffect(() => {
+    // Include the resolved theme so system-mode changes also redraw an existing badge.
+    const paint = (): void => { void window.aether.window.setCompletionBadge(completedUnreadCount, currentAppearance()).catch(() => undefined) }
+    paint()
+    const observer = new MutationObserver(paint)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-appearance'] })
+    return () => observer.disconnect()
   }, [completedUnreadCount, browserSource])
   const runningCount = useMemo(() => activeTasks.filter(item => item.status === 'running').length, [activeTasks])
   const waiting = useMemo(() => activeTasks.filter((item) => item.status === 'waiting').length, [activeTasks])

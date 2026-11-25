@@ -2,17 +2,17 @@ import { app, type BrowserWindow, nativeImage, screen } from 'electron'
 import { execFile } from 'node:child_process'
 import { win32 } from 'node:path'
 import { createCanvas } from '@napi-rs/canvas'
-import { normalizeTaskbarBadgeCount, taskbarBadgeText } from '../shared/taskbar'
+import { normalizeTaskbarBadgeCount, taskbarBadgeText, type TaskbarBadgeAppearance } from '../shared/taskbar'
 
 const BADGE_SIZE = 16
-const BADGE_BACKGROUND = '#1b1b20'
-const BADGE_FOREGROUND = '#ffffff'
-const pendingWindowsBadges = new WeakMap<BrowserWindow, number>()
+const BADGE_DARK = '#1b1b20'
+const BADGE_LIGHT = '#ffffff'
+const pendingWindowsBadges = new WeakMap<BrowserWindow, { count: number; appearance: TaskbarBadgeAppearance }>()
 
-export function updateTaskbarCompletionBadge(window: BrowserWindow, value: number): void {
+export function updateTaskbarCompletionBadge(window: BrowserWindow, value: number, appearance: TaskbarBadgeAppearance): void {
   const count = normalizeTaskbarBadgeCount(value)
   if (process.platform === 'win32') {
-    setWindowsBadge(window, count)
+    setWindowsBadge(window, count, appearance)
     return
   }
   if (process.platform === 'darwin') {
@@ -24,10 +24,12 @@ export function updateTaskbarCompletionBadge(window: BrowserWindow, value: numbe
   }
 }
 
-function setWindowsBadge(window: BrowserWindow, count: number): void {
+function setWindowsBadge(window: BrowserWindow, count: number, appearance: TaskbarBadgeAppearance): void {
   if (window.isDestroyed()) return
-  if (pendingWindowsBadges.has(window)) {
-    pendingWindowsBadges.set(window, count)
+  const pending = pendingWindowsBadges.get(window)
+  if (pending) {
+    pending.count = count
+    pending.appearance = appearance
     return
   }
   if (!count) {
@@ -38,7 +40,7 @@ function setWindowsBadge(window: BrowserWindow, count: number): void {
   const label = taskbarBadgeText(count)
   const description = `${label} 个已完成会话待查看`
   const scale = screen.getPrimaryDisplay().scaleFactor
-  const png = createBadgePng(label, Math.round(BADGE_SIZE * scale))
+  const png = createBadgePng(label, Math.round(BADGE_SIZE * scale), appearance)
   const handle = window.getNativeWindowHandle()
   const hwnd = handle.length === 8 ? handle.readBigInt64LE() : handle.readInt32LE()
   const powershell = win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
@@ -46,13 +48,13 @@ function setWindowsBadge(window: BrowserWindow, count: number): void {
   const encoded = Buffer.from(command, 'utf16le').toString('base64')
 
   // The Electron overlay API downsamples to 16×16 before the taskbar gets the image.
-  pendingWindowsBadges.set(window, count)
+  pendingWindowsBadges.set(window, { count, appearance })
   execFile(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 10000 }, error => {
-    const latest = pendingWindowsBadges.get(window) ?? count
+    const latest = pendingWindowsBadges.get(window) ?? { count, appearance }
     pendingWindowsBadges.delete(window)
     if (window.isDestroyed()) return
-    if (latest !== count) {
-      setWindowsBadge(window, latest)
+    if (latest.count !== count || latest.appearance !== appearance) {
+      setWindowsBadge(window, latest.count, latest.appearance)
     } else if (error) {
       console.warn('[taskbar] Direct Windows overlay failed; using Electron overlay:', error.code ?? error.name)
       window.setOverlayIcon(nativeImage.createFromBuffer(png), description)
@@ -60,17 +62,17 @@ function setWindowsBadge(window: BrowserWindow, count: number): void {
   })
 }
 
-function createBadgePng(label: string, size: number): Buffer {
+function createBadgePng(label: string, size: number, appearance: TaskbarBadgeAppearance): Buffer {
   const canvas = createCanvas(size, size)
   const ctx = canvas.getContext('2d')
   const center = size / 2
-  ctx.fillStyle = BADGE_BACKGROUND
+  ctx.fillStyle = appearance === 'dark' ? BADGE_DARK : BADGE_LIGHT
   ctx.beginPath()
   ctx.arc(center, center, center, 0, Math.PI * 2)
   ctx.fill()
 
   const fontSize = label.length === 1 ? 13 : label.length === 2 ? 11 : 9
-  ctx.fillStyle = BADGE_FOREGROUND
+  ctx.fillStyle = appearance === 'dark' ? BADGE_LIGHT : BADGE_DARK
   ctx.font = `500 ${fontSize * size / BADGE_SIZE}px "Segoe UI"`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'

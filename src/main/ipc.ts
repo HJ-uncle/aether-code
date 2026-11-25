@@ -533,10 +533,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.windowIsMaximized, (event) => windowOf(event)?.isMaximized() ?? false)
   ipcMain.handle(IPC.invoke.windowGetVisibility, event =>
     readWindowVisibility(assertTrustedRenderer(event, '窗口可见性读取')))
-  ipcMain.handle(IPC.invoke.windowSetCompletionBadge, (event, value: unknown) => {
+  ipcMain.handle(IPC.invoke.windowSetCompletionBadge, (event, value: unknown, appearance: unknown) => {
     const owner = assertTrustedRenderer(event, '任务栏完成标记更新')
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new Error('任务栏完成标记无效')
-    updateTaskbarCompletionBadge(owner, value)
+    if (appearance !== 'dark' && appearance !== 'light') throw new Error('任务栏完成标记主题无效')
+    updateTaskbarCompletionBadge(owner, value, appearance)
   })
 
   // ── 设置 ──

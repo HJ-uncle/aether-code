@@ -36,10 +36,10 @@ function sameEntry(a: ActivityHistoryEntry, b: ActivityHistoryEntry): boolean {
     a.updatedAt === b.updatedAt && a.readAt === b.readAt
 }
 
-function merge(values: readonly ActivityHistoryEntry[]): ActivityHistoryEntry[] {
+function merge(values: readonly ActivityHistoryEntry[], previous: readonly ActivityHistoryEntry[] = entries): ActivityHistoryEntry[] {
   const unique = new Map<string, ActivityHistoryEntry>()
   const previousById = new Map<string, ActivityHistoryEntry>()
-  for (const entry of entries) previousById.set(entry.id, entry)
+  for (const entry of previous) previousById.set(entry.id, entry)
   for (const value of values) {
     if (!valid(value)) continue
     const label = value.label.slice(0, 512)
@@ -64,7 +64,7 @@ function load(): ActivityHistoryEntry[] {
   try {
     const raw = localStorage.getItem(sessionStorageKey(STORAGE_KEY, storageSource))
     const parsed: unknown = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? merge(parsed as ActivityHistoryEntry[]) : []
+    return Array.isArray(parsed) ? merge(parsed as ActivityHistoryEntry[], []) : []
   } catch { return [] }
 }
 

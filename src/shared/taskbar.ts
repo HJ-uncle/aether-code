@@ -4,6 +4,7 @@
  * and main process from drifting when the count grows beyond a single digit.
  */
 export const TASKBAR_BADGE_MAX_COUNT = 99
+export type TaskbarBadgeAppearance = 'dark' | 'light'
 
 export function normalizeTaskbarBadgeCount(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 0

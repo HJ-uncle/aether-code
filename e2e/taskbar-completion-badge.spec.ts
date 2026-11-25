@@ -78,17 +78,27 @@ test.describe('Work 完成任务栏标记', () => {
         window.focus()
       })
       await expect(page.locator('.workbench')).toBeVisible()
-      await app.evaluate(({ BrowserWindow, app: electronApp }) => {
+      await app.evaluate(async ({ BrowserWindow, app: electronApp, ipcMain }) => {
         const globals = globalThis as typeof globalThis & {
           __taskbarBadge: { calls: Array<{ kind: string; value: string | number; description?: string }> }
+          __taskbarOriginalHandler?: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
+          __taskbarThemeCalls: Array<{ count: number; appearance: string }>
         }
         globals.__taskbarBadge = { calls: [] }
+        globals.__taskbarThemeCalls = []
+        const channel = 'window:set-completion-badge'
+        const original = ipcMain._invokeHandlers.get(channel)
+        globals.__taskbarOriginalHandler = original
+        ipcMain.removeHandler(channel)
+        ipcMain.handle(channel, async (event, count: number, appearance: string) => {
+          if (globals.__taskbarThemeCalls) globals.__taskbarThemeCalls.push({ count, appearance })
+          globals.__taskbarBadge.calls.push({ kind: 'overlay', value: count > 0 ? 'set' : 'clear', description: `${count}` })
+          return original?.(event, count, appearance)
+        })
         if (process.platform === 'win32') {
           Object.defineProperty(BrowserWindow.prototype, 'setOverlayIcon', {
             configurable: true,
-            value: (overlay: unknown, description: string) => {
-              globals.__taskbarBadge.calls.push({ kind: 'overlay', value: overlay ? 'set' : 'clear', description })
-            }
+            value: () => undefined
           })
         } else if (process.platform === 'darwin' && electronApp.dock) {
           Object.defineProperty(electronApp.dock, 'setBadge', {
@@ -133,6 +143,22 @@ test.describe('Work 完成任务栏标记', () => {
           rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
         }
       }
+    })
+
+    test('未读数不变时，切换深浅主题仍重新提交角标', async () => {
+      await expect.poll(async () => (await lastBadge())?.description).toBe('2')
+      await page.getByRole('complementary', { name: '应用导航', exact: true }).getByRole('button', { name: '设置', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: '设置', exact: true })
+      await settings.getByRole('tab', { name: '外观', exact: true }).click()
+      for (const appearance of ['light', 'dark', 'light']) {
+        await settings.getByRole('radio', { name: appearance === 'dark' ? '深色' : '浅色', exact: true }).click()
+        await expect(page.locator('html')).toHaveAttribute('data-appearance', appearance)
+        await expect.poll(async () => app!.evaluate(() => (globalThis as typeof globalThis & {
+          __taskbarThemeCalls: Array<{ count: number; appearance: string }>
+        }).__taskbarThemeCalls.at(-1))).toEqual({ count: 2, appearance })
+      }
+      await page.keyboard.press('Escape')
+      await expect(settings).toHaveCount(0)
     })
 
     test('未读完成数显示在原生应用图标，打开会话后同步减少并清空', async () => {

@@ -590,7 +590,7 @@ const api = {
     close: (): Promise<void> => ipcRenderer.invoke(IPC.invoke.windowClose),
     isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.invoke.windowIsMaximized),
     getVisibility: (): Promise<boolean> => ipcRenderer.invoke(IPC.invoke.windowGetVisibility),
-    setCompletionBadge: (count: number): Promise<void> => ipcRenderer.invoke(IPC.invoke.windowSetCompletionBadge, count),
+    setCompletionBadge: (count: number, appearance: 'dark' | 'light'): Promise<void> => ipcRenderer.invoke(IPC.invoke.windowSetCompletionBadge, count, appearance),
     onVisibility: (listener: (visible: boolean) => void): (() => void) => {
       const handler = (_event: unknown, visible: unknown): void => { if (typeof visible === 'boolean') listener(visible) }
       ipcRenderer.on(IPC.event.windowVisibility, handler)
