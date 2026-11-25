@@ -256,7 +256,7 @@
 }
 .work-composer-wrap {
   flex-shrink: 0;
-  padding: 12px var(--work-content-inset, var(--space-5)) 14px;
+  padding: 0px var(--work-content-inset, var(--space-5)) 12px;
 }
 .work-composer-wrap--home {
   padding: 0;

@@ -66,9 +66,14 @@ export function useWorkspaceActivity(sessionId: string | null): {
   useEffect(() => {
     for (const job of tray.jobs) if (job.sessionId === sessionId && job.background) ingestCommandJob(job)
   }, [sessionId, tray.jobs])
+  // liveHistory is rebuilt each render, so depend on a content signature
+  // rather than the array reference. Otherwise rememberServiceHistory would
+  // trigger a notify → re-render → new array → effect loop.
+  const liveHistoryKey = liveHistory.map(item => `${item.id}:${item.updatedAt}:${item.status}:${item.label}:${item.detail}`).join('|')
   useEffect(() => {
     for (const item of liveHistory) rememberServiceHistory(item, sessionId)
-  }, [sessionId, liveHistory])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, liveHistoryKey])
   useEffect(() => {
     if (!sessionId || !ready || !visible) return
     let disposed = false

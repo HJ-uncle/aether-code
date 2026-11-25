@@ -4,8 +4,9 @@ import { BrowserSnapshotResult } from './BrowserSnapshotResult'
 import { parseToolResult, type ParsedToolResult, type ToolResultImage } from './tool-result'
 import { AutomationCard } from '../../automations/AutomationCard'
 import { parseAutomationReceipt } from '../../automations/automation-draft'
-import { looksLikeStructuredResult, ToolResultData } from './ToolResultData'
+import { looksLikeStructuredResult } from './ToolResultData'
 import { parseToolResultData } from './tool-result-data'
+import { Markdown } from './Markdown'
 import { useToolImageGallery } from './ToolImageGalleryProvider'
 import { buildToolImageGallery, toolImageReference, type ToolImageGalleryGroup } from './tool-image-gallery'
 import { CommandReceipts, LegacyCommandResult } from './CommandReceipt'
@@ -88,11 +89,11 @@ export const ToolResult = memo(function ToolResult({
   if (commandReceipts) return <CommandReceipts receipts={commandReceipts} metadata={metadata} context={fileContext} active={active} args={toolArgs} />
   if (isCommandTool(toolName)) return <LegacyCommandResult text={commandLogText(result.text, toolName, metadata)} metadata={metadata} args={toolArgs} />
   if (receipt) return <><AutomationCard receipt={receipt} />{surfaceMode === 'code' ? <details className="automation-card-receipt"><summary>原始收据</summary><pre className={textClassName}>{result.text}</pre></details> : null}</>
-  if (data) return <ToolResultData data={data} raw={result.text} surfaceMode={surfaceMode} />
+  if (data) return <Markdown text={`\`\`\`json\n${result.text}\n\`\`\``} fileContext={fileContext} readOnly />
   if (!result.images.length && !result.browserSnapshots?.length) {
     // Unbounded or incomplete JSON is not a useful user-facing fallback. Keep
     // ordinary prose/logs verbatim, without exposing a second diagnostic view.
-    if (surfaceMode === 'work' && looksLikeStructuredResult(result.text)) return <div className="tool-result__summary">结果已返回，暂无可展示的摘要</div>
+    if (surfaceMode === 'work' && looksLikeStructuredResult(result.text)) return <Markdown text={`\`\`\`\n${result.text}\n\`\`\``} fileContext={fileContext} readOnly />
     return <pre className={textClassName}>{result.text}</pre>
   }
   return (

@@ -29,12 +29,33 @@ function valid(value: unknown): value is ActivityHistoryEntry {
     Number.isFinite(item.updatedAt) && Number.isFinite(item.readAt)
 }
 
+function sameEntry(a: ActivityHistoryEntry, b: ActivityHistoryEntry): boolean {
+  return a.id === b.id && a.kind === b.kind && a.sessionId === b.sessionId &&
+    a.label === b.label && a.detail === b.detail && a.status === b.status &&
+    a.statusLabel === b.statusLabel && a.tone === b.tone &&
+    a.updatedAt === b.updatedAt && a.readAt === b.readAt
+}
+
 function merge(values: readonly ActivityHistoryEntry[]): ActivityHistoryEntry[] {
   const unique = new Map<string, ActivityHistoryEntry>()
+  const previousById = new Map<string, ActivityHistoryEntry>()
+  for (const entry of entries) previousById.set(entry.id, entry)
   for (const value of values) {
     if (!valid(value)) continue
-    const previous = unique.get(value.id)
-    if (!previous || value.updatedAt >= previous.updatedAt) unique.set(value.id, { ...value, label: value.label.slice(0, 512), detail: value.detail.slice(0, 1024) })
+    const label = value.label.slice(0, 512)
+    const detail = value.detail.slice(0, 1024)
+    const existing = unique.get(value.id)
+    if (existing && existing.updatedAt > value.updatedAt) continue
+    const candidate: ActivityHistoryEntry = label === value.label && detail === value.detail
+      ? value
+      : { ...value, label, detail }
+    // Reuse the previous reference when nothing actually changed so the
+    // caller's referential-equality bail-out in `remember` can fire. Without
+    // this, every merge produces fresh objects and we notify subscribers on
+    // every render even when the persisted history is identical.
+    const prior = previousById.get(value.id)
+    const nextEntry = prior && sameEntry(prior, candidate) ? prior : candidate
+    unique.set(value.id, nextEntry)
   }
   return [...unique.values()].sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)).slice(0, HISTORY_LIMIT)
 }

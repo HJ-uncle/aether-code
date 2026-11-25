@@ -239,15 +239,15 @@
     "frontend/src/main/engine/protocol.ts": "f0d351d48eab2d29bf112ce802d7e9a9b6d2489fdbf61dbab1b032da2c617349",
     "frontend/src/main/engine/request-timeout.ts": "7f9a61c52eecfc757aa6d87439f6e3afbe9cfe33cda5a61cae81de5a47f9a460",
     "frontend/src/main/index.ts": "f72dceb7d376eac48c64e26debfde2c7d8e20be72df655546b4c44955c853e33",
-    "frontend/src/main/ipc.ts": "71ffbee842f365ada9e03dd8760c9b32cc698b4d2d84ed95f3b5e20163e19d67",
+    "frontend/src/main/ipc.ts": "fb152cf910c898f0d5dd79b965313fe551b07a0fd0a53eb6e7309eb61858458d",
     "frontend/src/main/plugin-background.ts": "42aed8933a424c54734969cb606f2a2013d6ff6cc914c48b56b4445bc19474ef",
     "frontend/src/main/plugin-download.ts": "6d7a3cd82ccdcac941e84d7ebbe5d2b4fb9b152912e6bb249a4e0dece1121105",
     "frontend/src/main/plugin-host.ts": "e16957fdded3a75a8ca5a153127be16950bec9584977ba4374995bb473ff6f33",
     "frontend/src/main/plugin-ui-documents.ts": "d64803c643a763f809d1ed892a14031977981609b32f387aa31ab0bae47e4b0e",
     "frontend/src/main/plugin-ui.ts": "c426cce43ea5c27100d36a3e3ee99936c9590b573b3035ec79b33230f7b901ca",
     "frontend/src/main/protocol-schemes.ts": "2d4ebc4347b8c5ffe82d54b0ff2a1a6cdadbcc98fed76463e1c858e7a3d80809",
-    "frontend/src/preload/index.ts": "555fac3f3be4df9bb9ad832fdb2d90649b4c496dc27ad91d42d351d1cdbdba08",
-    "frontend/src/renderer/src/app/ApplicationView.tsx": "fc626912f86d32b552c96691c7d05e2dae1f378336af2256a31496ec80ee2cd3",
+    "frontend/src/preload/index.ts": "e5bf0fe037e7d32d8c980cd941febb6e7daad0f3aa20159cb14a58c8b0e18911",
+    "frontend/src/renderer/src/app/ApplicationView.tsx": "3ffb099b5f01ee72d7e42ff3b2cb3792c49b62aa6000a2163ec7ee48b84f212a",
     "frontend/src/renderer/src/app/MenuBar.tsx": "aff830613cb4a05d4ae2d06b7b5d6b9ae2138d6d8ec37066ca8bdb05530ecba1",
     "frontend/src/renderer/src/app/pages.tsx": "8a4eef4237642c8755a16d575fdce801f90b215612fa60968cfde058fce2d491",
     "frontend/src/renderer/src/app/StatusBar.tsx": "840934ce063772bbd7da257419042e5eeb301f99bff06f527518b2792253fa0a",
@@ -337,5 +337,5 @@
     "scripts/serve.mjs": "e38c0a3107b45231f4f9a3b8bf46a64e0f9533069af55b7283ec8421e97df286",
     "template.html": "aaf4224e4c67d87eedee6c8b9bc81721b63205952791303ee8a3324a86dd9f6c"
   },
-  "reviewedAt": "2026-11-24T18:24:45.832Z"
+  "reviewedAt": "2026-11-25T04:16:46.278Z"
 }

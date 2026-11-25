@@ -9,6 +9,7 @@
 import { app, dialog, ipcMain, webContents, BrowserWindow, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IPC } from '../shared/ipc'
 import { readWindowVisibility } from './window-visibility'
+import { updateTaskbarCompletionBadge } from './window-taskbar'
 import { registerOfficeRender } from './office-render'
 import { accountService, configureAccountService } from './account/service'
 import { registerSessionNextTurnQueue } from './session-next-turn-ipc'
@@ -532,6 +533,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.invoke.windowIsMaximized, (event) => windowOf(event)?.isMaximized() ?? false)
   ipcMain.handle(IPC.invoke.windowGetVisibility, event =>
     readWindowVisibility(assertTrustedRenderer(event, '窗口可见性读取')))
+  ipcMain.handle(IPC.invoke.windowSetCompletionBadge, (event, value: unknown) => {
+    const owner = assertTrustedRenderer(event, '任务栏完成标记更新')
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new Error('任务栏完成标记无效')
+    updateTaskbarCompletionBadge(owner, value)
+  })
 
   // ── 设置 ──
   ipcMain.handle(IPC.invoke.settingsGet, () => getSettings())

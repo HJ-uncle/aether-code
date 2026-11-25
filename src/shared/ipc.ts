@@ -174,7 +174,9 @@ export const IPC = {
     windowToggleMaximize: 'window:toggle-maximize',
     windowClose: 'window:close',
     windowIsMaximized: 'window:is-maximized',
-    windowGetVisibility: 'window:get-visibility'
+    windowGetVisibility: 'window:get-visibility',
+    /** Update the native app icon with the number of unread completed sessions. */
+    windowSetCompletionBadge: 'window:set-completion-badge'
   },
   /** 主进程 → 渲染进程（send） */
   event: {
