@@ -84,11 +84,17 @@
 <h2 id="models-list"><code>$AE.models.list()</code></h2>
 <p>列出平台已配置且启用的模型，供用户选择。</p>
 <pre><code class="language-ts">$AE.models.list(): Promise&lt;{
-  models: Array&lt;{ id: string; modelId: string; name: string; provider: string }&gt;;
+  models: Array&lt;{
+    id: string; modelId: string; name: string; provider: string;
+    capabilities: {
+      vision?: boolean; thinking?: boolean; toolCalling?: boolean;
+      jsonMode?: boolean; streamUsage?: boolean; contextWindow?: number;
+    };
+  }&gt;;
 }&gt;
 </code></pre>
 <p><strong>参数：</strong>无。<strong>权限：</strong><code>models.read</code>。</p>
-<p><strong>返回：</strong><code>id</code> 是平台模型配置 ID，<code>modelId</code> 是提供方模型名，<code>name</code> 是显示名称。列表不包含密钥或连接凭据；建议将选中的 <code>id</code> 传给 AI 或 Agent，以区分同名模型配置。</p>
+<p><strong>返回：</strong><code>id</code> 是平台模型配置 ID，<code>modelId</code> 是提供方模型名，<code>name</code> 是显示名称，<code>capabilities</code> 是宿主根据已配置模型和能力规则计算出的只读摘要，当前包含视觉、思考、工具调用、JSON 输出、流式用量和上下文窗口能力。列表不包含密钥、连接地址或其他凭据；能力未声明时会省略对应字段。建议将选中的 <code>id</code> 传给 AI 或 Agent，以区分同名模型配置，并在发送图片或启用思考前检查能力摘要。</p>
 <pre><code class="language-js">const { models } = await $AE.models.list();
 </code></pre>
 <a id="ai"></a>
@@ -97,9 +103,19 @@
 <pre><code class="language-ts">$AE.ai.run(args: {
   modelId: string;
   prompt?: string;
-  messages?: Array&lt;{ role: &#39;user&#39; | &#39;assistant&#39;; content: string }&gt;;
+  messages?: Array&lt;{
+    role: &#39;user&#39; | &#39;assistant&#39;;
+    content: string | Array&lt;
+      | { type: &#39;text&#39;; text: string }
+      | { type: &#39;image_url&#39;; image_url: { url: string; detail?: &#39;auto&#39; | &#39;low&#39; | &#39;high&#39; } }
+    &gt;;
+  }&gt;;
   systemPrompt?: string;
   maxTokens?: number;
+  thinking?: boolean;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  temperature?: number;
+  responseFormat?: 'text' | 'json';
 }): Promise&lt;{
   text: string;
   model: string;
@@ -107,9 +123,20 @@
 }&gt;
 </code></pre>
 <p><strong>权限：</strong><code>ai.run</code>；只有调用模型目录时才另需 <code>models.read</code>。</p>
-<p><strong>参数：</strong><code>modelId</code> 接受已启用模型的配置 ID 或模型名，为 1–4,096 字符。<code>prompt</code> 与 <code>messages</code> 至少提供一种；两者同时提供时，<code>prompt</code> 追加为最后一条用户消息。消息、提示词不设插件专属长度上限；<code>maxTokens</code> 为正整数，省略时沿用平台输出配置。实际上下文和输出仍取决于所选模型。</p>
+<p><strong>参数：</strong><code>modelId</code> 接受已启用模型的配置 ID 或模型名，为 1–4,096 字符。<code>prompt</code> 与 <code>messages</code> 至少提供一种；两者同时提供时，<code>prompt</code> 追加为最后一条用户消息。<code>messages.content</code> 可以是纯文本，也可以是 <code>text</code> 与 <code>image_url</code> 内容块；图片只接受 HTTPS 地址或受限的图片 Base64 data URL，单条最多 32 个内容块、单次图片内容总量最多 16 MiB。发送图片前应检查 <code>$AE.models.list()</code> 返回的 <code>capabilities.vision</code>；不支持视觉的模型会按适配器策略降级。<code>maxTokens</code> 为正整数，省略时沿用平台输出配置。<code>thinking</code> 只控制本次调用，省略时继承模型配置；设为 <code>false</code> 时关闭本次思考，不能同时传 <code>reasoningEffort</code>。<code>reasoningEffort</code> 可选 <code>low</code>、<code>medium</code>、<code>high</code>；<code>temperature</code> 范围为 0–2；<code>responseFormat</code> 可选 <code>text</code> 或 <code>json</code>，JSON 结果仍通过返回值的 <code>text</code> 字符串提供，宿主会校验最终结果必须是 JSON 对象。具体模型不支持某参数时由适配器按兼容策略处理。实际上下文和输出仍取决于所选模型。</p>
 <p><strong>返回：</strong>完整可见正文、实际模型名称和 token 用量。空正文、输出截断或未完成的工具调用会报错，不会伪装成完整结果。此方法不自动读取会话，也不执行工具；需要工具循环时使用 <a href="#agents-run">agents.run</a>。模型调用产生正常费用。</p>
-<pre><code class="language-js">const { text } = await $AE.ai.run({ modelId, prompt: &#39;检查这份需求：&#39; + requirement });
+<pre><code class="language-js">const { models } = await $AE.models.list();
+const model = models.find(item =&gt; item.capabilities.vision) ?? models[0];
+const { text } = await $AE.ai.run({
+  modelId: model.id,
+  messages: [{ role: 'user', content: [
+    { type: 'text', text: '检查这张图片中的问题' },
+    { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } }
+  ] }],
+  thinking: false,
+  temperature: 0.2,
+  responseFormat: 'json'
+});
 </code></pre>
 <h2 id="ai-stream"><code>$AE.ai.stream(args, options?)</code> · 流式输出</h2>
 <p>通过 <code>onEvent</code> 逐段接收 <code>text-delta</code> 事件，将每段 <code>event.text</code> 追加到页面，即可边生成边显示正文。生成结束后，Promise 返回与 <code>ai.run()</code> 相同的完整结果。页面和宿主启动的 Node 工具均可使用。</p>
@@ -265,10 +292,15 @@ type AgentPending = {
   mcpServerIds?: string[];
   disabledTools?: string[];
   customTools?: Array&lt;{ name: string; tool: string }&gt;;
+  thinking?: boolean;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  temperature?: number;
+  maxTokens?: number;
 }): Promise&lt;AgentRun&gt;
 </code></pre>
 <p><strong>权限：</strong><code>agents.manage</code>，以及任务实际需要的其他平台能力；读取任务状态另需 <code>agents.read</code>。</p>
 <p><strong>参数：</strong><code>modelId</code> 接受已启用模型的配置 ID 或模型名，最长 256 字符。<code>task</code> 是非空需求；<code>description</code> 是可选的任务摘要。<code>resumeRunId</code> 必须属于当前插件与会话，是该 <code>childSessionId</code> 的最新执行，并处于 <code>succeeded</code>、<code>failed</code>、<code>cancelled</code>、<code>blocked</code> 或 <code>interrupted</code> 状态。同一子会话有活动执行时不能再次接续，也不能从过期执行分叉。有待答复的请求时，应先由用户答复或取消；不能用新任务跳过确认。</p>
+<p><strong>模型参数：</strong><code>thinking</code>、<code>reasoningEffort</code>、<code>temperature</code>（0–2）和 <code>maxTokens</code>（正整数，最多 1,000,000）只影响本次调用；实际输出仍受模型上下文和任务预算限制。续跑省略这些字段时继承原调用，显式传入则更新本次调用。模型不支持某参数时由适配器按兼容策略处理。</p>
 <p><strong>返回：</strong>任务接纳后的快照，返回不代表任务已完成。用 <code>runId</code> 查询后续状态。接续会创建新 <code>runId</code>，复用原 <code>childSessionId</code> 和上下文；要求原工作区仍匹配，可调整身份、提示词、挂载与工具配置，实际执行始终检查当前授权和用户禁用名单。</p>
 <p><strong>运行策略：</strong>不增加插件专属 Agent 并发配额或任务时限。Agent 复用平台工具注册、模型执行与安全检查。工作区变化、插件停用或撤销授权会阻止后续执行。调用使用正常模型额度。</p>
 <p><strong>工具授权：</strong><code>agents.manage</code> 管理任务；<code>engine.tools</code> 开放下方六类、35 个内置工具，执行沿用绑定会话的安全策略。<code>agents.tools()</code> 返回准确名称、参数及可用性；未授权或已禁用的工具不会提供给模型。</p>

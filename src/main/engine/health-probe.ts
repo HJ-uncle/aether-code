@@ -16,8 +16,10 @@ export function isHealthProbeCurrent(
   transport: AbortController,
   snapshot: ProbeSnapshot
 ): boolean {
+  const probeable = snapshot.phase === 'ready' ||
+    (snapshot.phase === 'error' && snapshot.mode === 'embedded' && Boolean(snapshot.baseUrl))
   return !lease.transport.signal.aborted && lease.generation === generation &&
-    lease.transport === transport && snapshot.phase === 'ready' &&
+    lease.transport === transport && probeable &&
     lease.snapshot.mode === snapshot.mode && lease.snapshot.baseUrl === snapshot.baseUrl &&
     lease.snapshot.instanceId === snapshot.instanceId &&
     (lease.snapshot.accountId ?? null) === (snapshot.accountId ?? null)

@@ -10,6 +10,7 @@ import { isExplicitRequestRejection } from '../../shared/stream-event'
 import type { EngineHealthDiagnostics } from '../../shared/engine-diagnostics'
 import { getSettings } from '../settings-store'
 import { logger } from './logger'
+import { recordNativeDiagnostic } from '../native-diagnostics'
 import { ensureEncryptionKey } from './secrets'
 import { getEnvironmentRemoteInstanceToken, getRemoteInstanceToken } from './remote-token'
 import { ConnectionProbeError, probeEngineMeta, probeEngineTools, probeRemoteConnection, recoverCommittedAccount, remoteProofCurrent, type RemoteConnectionProof } from './remote-probe'
@@ -111,7 +112,7 @@ export class EngineHost extends EventEmitter {
       checkIntervalMs: HEALTH_INTERVAL_MS,
       failureThreshold: HEALTH_FAILURE_THRESHOLD,
       timeoutMs: HEALTH_TIMEOUT_MS,
-      checking: this.snapshot.phase === 'ready' && this.healthCheckOwner === this.transportController
+      checking: (this.snapshot.phase === 'ready' || this.snapshot.phase === 'error') && this.healthCheckOwner === this.transportController
     }
   }
 
@@ -613,48 +614,79 @@ export class EngineHost extends EventEmitter {
     const { baseUrl, instanceId } = snapshot
     const generation = this.generation
     const transport = this.transportController
-    if (!baseUrl || this.snapshot.phase !== 'ready') return
+    // A local health outage keeps the last known URL so the same watcher can
+    // recover the connection once the engine responds again. Startup and
+    // process-exit errors clear baseUrl and therefore stop here.
+    if (!baseUrl || (this.snapshot.phase !== 'ready' && !(this.snapshot.phase === 'error' && this.snapshot.mode === 'embedded'))) return
     if (this.healthCheckOwner === transport) return
     this.healthCheckOwner = transport
     const lease = { snapshot, generation, transport }
     const current = (): boolean => isHealthProbeCurrent(lease, this.generation, this.transportController, this.snapshot)
     const startedAt = performance.now()
+    let endpoint: 'health' | 'meta' = 'health'
     try {
       const signal = AbortSignal.any([transport.signal, AbortSignal.timeout(HEALTH_TIMEOUT_MS)])
       const health = await fetch(`${baseUrl}/health`, { signal, redirect: 'error' })
-      if (!health.ok) throw new Error(String(health.status))
+      if (!health.ok) throw new Error(`HTTP ${health.status}`)
       assertEngineHealth(await health.json())
+      endpoint = 'meta'
       const response = await fetch(`${baseUrl}/meta`, { signal, redirect: 'error' })
-      if (!response.ok) throw new Error(String(response.status))
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const meta = parseEngineMeta(await response.json(), snapshot.buildId ?? undefined)
       if (meta.instanceId !== instanceId) throw new Error('引擎实例已变化')
       if (current()) {
+        const previousFailures = this.healthFailures
         this.healthFailures = 0
         this.healthLastSuccessAt = Date.now()
         this.healthLastCheckedAt = this.healthLastSuccessAt
         this.healthLastLatencyMs = performance.now() - startedAt
+        if (previousFailures > 0) {
+          recordNativeDiagnostic('engine-health-recovered', {
+            mode: snapshot.mode,
+            previousFailures,
+            latencyMs: Math.round(this.healthLastLatencyMs),
+            pid: snapshot.pid ?? undefined
+          })
+        }
+        if (this.snapshot.phase === 'error' && this.snapshot.baseUrl === baseUrl && this.snapshot.mode === 'embedded') {
+          this.patch({ phase: 'ready', error: null })
+        }
       }
-    } catch {
+    } catch (error) {
       // Account changes abort the old transport without changing generation.
       // Its abort/late response must never make the new identity look unhealthy.
       if (!current()) return
       this.healthLastCheckedAt = Date.now()
       this.healthLastLatencyMs = performance.now() - startedAt
-      if (++this.healthFailures >= HEALTH_FAILURE_THRESHOLD) {
+      const reason = error instanceof Error ? error.message : String(error)
+      const errorName = error instanceof Error ? error.name : typeof error
+      const failureCount = ++this.healthFailures
+      // Keep a durable record with the stage and timing. Do not write the URL,
+      // request body, or remote credentials to the local diagnostic journal.
+      recordNativeDiagnostic('engine-health-failure', {
+        mode: snapshot.mode,
+        endpoint,
+        reason: reason.slice(0, 256),
+        errorName,
+        consecutiveFailures: failureCount,
+        latencyMs: Math.round(this.healthLastLatencyMs),
+        pid: snapshot.pid ?? undefined,
+        instanceId: snapshot.instanceId ?? undefined
+      })
+      logger.warn(`[engine-health] ${endpoint} 检查失败（第 ${failureCount} 次，${Math.round(this.healthLastLatencyMs)}ms）：${reason.slice(0, 256)}`)
+      if (failureCount >= HEALTH_FAILURE_THRESHOLD) {
         if (this.snapshot.mode === 'remote') {
           this.scheduleRemoteReconnect(
             `远端引擎失去响应或已重启（连续 ${this.healthFailures} 次检查失败）`
           )
-        } else {
-          // Embedded processes are owned by this desktop and cannot be
-          // repaired by reconnecting. Preserve the existing terminal error
-          // state for local callers.
-          this.stopHealthWatch()
-          this.transportController.abort()
+        } else if (this.snapshot.phase !== 'error') {
+          // Keep the last known URL, transport and watcher alive. A busy local
+          // event loop can miss several probes without the process being dead;
+          // clearing them here turned a transient stall into a permanent error
+          // until the user manually restarted the engine.
           this.patch({
             phase: 'error',
-            baseUrl: '',
-            error: `引擎失去响应（连续 ${this.healthFailures} 次检查失败）`
+            error: `引擎暂时失去响应（连续 ${this.healthFailures} 次检查失败），正在自动恢复`
           })
         }
       }
@@ -662,7 +694,6 @@ export class EngineHost extends EventEmitter {
       if (this.healthCheckOwner === transport) this.healthCheckOwner = null
     }
   }
-
   // ==================== 流式请求 ====================
 
   /**
